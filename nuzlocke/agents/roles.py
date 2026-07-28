@@ -20,11 +20,17 @@ from nuzlocke.state.models import (
     TaskEnvelope,
 )
 
+_JSON_SEP = (",", ":")
+
 
 def _images(obs: PlayerObservation) -> list[Path]:
     if obs.screenshot_path and Path(obs.screenshot_path).exists():
         return [Path(obs.screenshot_path)]
     return []
+
+
+def _dumps(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, separators=_JSON_SEP)
 
 
 def _obs_payload(obs: PlayerObservation, *, vision_only: bool) -> dict[str, Any]:
@@ -50,8 +56,7 @@ def _with_extras(
     if walkthrough_hint and walkthrough_hint.strip():
         payload["walkthrough_hint"] = walkthrough_hint.strip()
         payload["walkthrough_skill"] = (
-            "skills/pokemon-red-walkthrough/ — use when stuck; "
-            "hint above is already the relevant excerpt"
+            "hint above is the relevant excerpt — do not browse skill files"
         )
     return payload
 
@@ -104,83 +109,57 @@ def decide_director(
         )
 
     stuck = int(summary.get("stuck_score") or 0)
-    if stuck < 6:
-        objective = "Make safe progress toward Oak / Viridian / Pewter"
-        if not vision_only and obs.map_name and "House" in obs.map_name:
-            objective = (
-                "If the SCREEN shows overworld, leave the house toward Oak; "
-                "if it shows naming/dialog, resolve that first"
-            )
-        elif vision_only:
-            objective = (
-                "Read the screenshot only: clear menus/dialog/naming, then "
-                "leave home and reach Oak's lab for a starter"
-            )
-        elif not obs.party:
-            objective = "Obtain a starter from Professor Oak (screen-first)"
+    noop = int(summary.get("noop_streak") or 0)
+    # Recovery owns the next vision call — never spend a Director LLM turn too.
+    if stuck >= 6 or noop >= 2:
         return DirectorDecision(
-            mode=GameMode.OVERWORLD,
-            owner=AgentRole.OVERWORLD,
-            objective=objective,
+            mode=GameMode.RECOVERY,
+            owner=AgentRole.RECOVERY,
+            objective="Break the stuck/noop loop using screenshot + walkthrough hint",
             constraints=[
-                "About 1-3 real-time actions per prompt (~every 2s)",
+                "Max 4 actions",
                 "Screenshot is ground truth",
-                "Do not walk while a text box or naming grid is visible",
-                "Use memory: do not repeat failed walks / false outdoors guesses",
+                "Do not repeat the same failed walks",
             ],
             success=[],
-            abort=["battle_started", "stuck_score >= 6"],
+            abort=["battle_started"],
             narration=(
-                "Fast route → overworld (vision-only)."
-                if vision_only
-                else f"Fast route → overworld (RAM map={obs.map_name or 'unknown'})."
+                f"Stuck path → recovery (stuck={stuck}, noop={noop}); "
+                "no Director LLM."
             ),
         )
 
-    user = json.dumps(
-        _with_extras(
-            {
-                "summary": summary,
-                **_obs_payload(obs, vision_only=vision_only),
-            },
-            memory=memory,
-            walkthrough_hint=walkthrough_hint,
+    objective = "Make safe progress toward Oak / Viridian / Pewter"
+    if not vision_only and obs.map_name and "House" in obs.map_name:
+        objective = (
+            "If the SCREEN shows overworld, leave the house toward Oak; "
+            "if it shows naming/dialog, resolve that first"
+        )
+    elif vision_only:
+        objective = (
+            "Read the screenshot only: clear menus/dialog/naming, then "
+            "leave home and reach Oak's lab for a starter"
+        )
+    elif not obs.party:
+        objective = "Obtain a starter from Professor Oak (screen-first)"
+    return DirectorDecision(
+        mode=GameMode.OVERWORLD,
+        owner=AgentRole.OVERWORLD,
+        objective=objective,
+        constraints=[
+            "About 1-3 real-time actions per prompt (~every 2s)",
+            "Screenshot is ground truth",
+            "Do not walk while a text box or naming grid is visible",
+            "Use memory: do not repeat failed walks / false outdoors guesses",
+        ],
+        success=[],
+        abort=["battle_started", "stuck_score >= 6"],
+        narration=(
+            "Fast route → overworld (vision-only)."
+            if vision_only
+            else f"Fast route → overworld (RAM map={obs.map_name or 'unknown'})."
         ),
-        indent=2,
     )
-    resp = llm.complete(
-        role=AgentRole.DIRECTOR,
-        system=prompts.DIRECTOR_SYSTEM,
-        user=user,
-        schema_hint=prompts.DIRECTOR_SCHEMA,
-        image_paths=_images(obs),
-    )
-    data = resp.parsed or {}
-    try:
-        return DirectorDecision.model_validate(
-            {
-                "mode": data.get("mode", "overworld"),
-                "owner": data.get("owner", "overworld"),
-                "objective": data.get("objective")
-                or "Make safe progress toward Viridian / Pewter",
-                "constraints": data.get("constraints")
-                or ["Max 8 actions", "Trust screenshot over RAM"],
-                "success": data.get("success") or [],
-                "abort": data.get("abort")
-                or ["battle_started", "stuck_score >= 3"],
-                "narration": data.get("narration") or resp.raw_text[:400],
-                "stop_run": bool(data.get("stop_run", False)),
-                "stop_reason": data.get("stop_reason"),
-            }
-        )
-    except Exception:
-        return DirectorDecision(
-            mode=GameMode.OVERWORLD,
-            owner=AgentRole.OVERWORLD,
-            objective="Advance story safely; trust the screenshot",
-            constraints=["Max 6 actions"],
-            narration="Director parse fallback — defaulting to overworld.",
-        )
 
 
 def propose_overworld(
@@ -192,35 +171,22 @@ def propose_overworld(
     vision_only: bool = False,
     walkthrough_hint: str | None = None,
 ) -> ActionProposal:
-    reminder = (
-        "Look at the attached screenshot before acting. "
-        "Propose 1-3 actions to play immediately in real time. "
-        "Text box / Oak intro → prefer skip_dialog (not one A per line). "
-        "Naming letter grid → navigate to END + A (never skip_dialog). "
-        "You will be prompted again soon (~2s cadence). "
-        "Honor MEMORY: do not oscillate on failed up/down walks; "
-        "furniture is not outdoors; stairs are a specific floor tile. "
-        "If walkthrough_hint is present, follow that story beat. "
-        "If a YES/NO prompt is visible, press_up then press_a."
-    )
-    if vision_only:
-        reminder += " Vision-only mode: ignore any urge to use RAM; screen only."
-    user = json.dumps(
+    user = _dumps(
         _with_extras(
             {
                 "task": task.model_dump(mode="json"),
                 **_obs_payload(obs, vision_only=vision_only),
-                "reminder": reminder,
             },
             memory=memory,
             walkthrough_hint=walkthrough_hint,
-        ),
-        indent=2,
+        )
     )
+    system = prompts.OVERWORLD_SYSTEM
+    if vision_only:
+        system += "\nVISION-ONLY: screenshot is the sole state input.\n"
     resp = llm.complete(
         role=AgentRole.OVERWORLD,
-        system=prompts.OVERWORLD_SYSTEM
-        + ("\nVISION-ONLY: screenshot is the sole state input.\n" if vision_only else ""),
+        system=system,
         user=user,
         schema_hint=prompts.OVERWORLD_SCHEMA,
         image_paths=_images(obs),
@@ -254,7 +220,7 @@ def propose_battle(
     vision_only: bool = False,
     walkthrough_hint: str | None = None,
 ) -> ActionProposal:
-    user = json.dumps(
+    user = _dumps(
         _with_extras(
             {
                 "task": task.model_dump(mode="json"),
@@ -263,8 +229,7 @@ def propose_battle(
             },
             memory=memory,
             walkthrough_hint=walkthrough_hint,
-        ),
-        indent=2,
+        )
     )
     resp = llm.complete(
         role=AgentRole.BATTLE,
@@ -312,20 +277,15 @@ def advise_recovery(
     payload: dict[str, Any] = {
         "stuck_score": stuck_score,
         **_obs_payload(obs, vision_only=vision_only),
-        "reminder": (
-            "Use the screenshot. Text → skip_dialog. Naming grid → END. "
-            "Use MEMORY and walkthrough_hint to avoid repeating failed walks."
-        ),
     }
     if not vision_only:
         payload["recent_positions"] = recent_positions
-    user = json.dumps(
+    user = _dumps(
         _with_extras(
             payload,
             memory=memory,
             walkthrough_hint=walkthrough_hint,
-        ),
-        indent=2,
+        )
     )
     resp = llm.complete(
         role=AgentRole.RECOVERY,

@@ -28,7 +28,11 @@ from nuzlocke.state.models import AgentRole, LLMResponse
 
 
 class CursorProvider(LLMProvider):
-    """Role calls via local Cursor agents. Watch runs under Filter > Source > SDK."""
+    """Role calls via local Cursor agents. Watch runs under Filter > Source > SDK.
+
+    Each ``complete()`` uses a fresh agent so conversation history (and prior
+    screenshots) cannot accumulate across turns.
+    """
 
     name = "cursor"
 
@@ -104,19 +108,27 @@ class CursorProvider(LLMProvider):
             json.dumps(payload, indent=2), encoding="utf-8"
         )
         schema_text = (
-            json.dumps(schema_hint, indent=2)
+            json.dumps(schema_hint, separators=(",", ":"))
             if schema_hint
             else "a JSON object"
         )
+        has_walkthrough_hint = '"walkthrough_hint"' in user
+        if has_walkthrough_hint:
+            skill_rule = (
+                "- A walkthrough_hint is already in the user payload — follow it. "
+                "Do NOT Read skill files or browse the repo."
+            )
+        else:
+            skill_rule = (
+                "- Do NOT browse the repo. Stay JSON-only "
+                "(orchestrator injects walkthrough excerpts when stuck)."
+            )
         prompt_text = f"""You are the Nuzlocke '{role.value}' role agent.
 
 Rules:
 - The attached screenshot is ground truth. Prefer it over RAM JSON if they disagree.
-- Do NOT edit project source files.
-- Do NOT change the emulator.
-- You MAY read the walkthrough skill files under skills/pokemon-red-walkthrough/
-  (SKILL.md + reference.md) when stuck or when the user payload includes a
-  walkthrough_hint / stuck flag. Otherwise do not browse the repo.
+- Do NOT edit project source files or change the emulator.
+{skill_rule}
 - Reply with ONLY a single JSON object matching this schema (no markdown prose):
 {schema_text}
 
@@ -151,92 +163,102 @@ User / observation:
         chunks: list[str] = []
         last_err: Exception | None = None
         result = None
-        for attempt in range(self.max_retries):
-            chunks = []
-            try:
-                send_opts = SendOptions(local={"force": True}) if attempt else None
-                run = (
-                    self._agent.send(message, send_opts)
-                    if send_opts is not None
-                    else self._agent.send(message)
-                )
-                for event in run.stream():
-                    text = _stream_text(event)
-                    if not text:
-                        continue
-                    chunks.append(text)
-                    if self.on_stream and len(text.strip()) > 0:
-                        now = time.time()
-                        if now - self._last_stream_push < 0.5:
+        try:
+            for attempt in range(self.max_retries):
+                chunks = []
+                try:
+                    send_opts = SendOptions(local={"force": True}) if attempt else None
+                    run = (
+                        self._agent.send(message, send_opts)
+                        if send_opts is not None
+                        else self._agent.send(message)
+                    )
+                    for event in run.stream():
+                        text = _stream_text(event)
+                        if not text:
                             continue
-                        self._last_stream_push = now
-                        snippet = text.strip().replace("\n", " ")
-                        if len(snippet) > 220:
-                            snippet = snippet[:217] + "…"
-                        self.on_stream(f"[{role.value}] {snippet}")
-                result = run.wait()
-            except CursorAgentError as err:
-                last_err = err
+                        chunks.append(text)
+                        if self.on_stream and len(text.strip()) > 0:
+                            now = time.time()
+                            if now - self._last_stream_push < 0.5:
+                                continue
+                            self._last_stream_push = now
+                            snippet = text.strip().replace("\n", " ")
+                            if len(snippet) > 220:
+                                snippet = snippet[:217] + "…"
+                            self.on_stream(f"[{role.value}] {snippet}")
+                    result = run.wait()
+                except CursorAgentError as err:
+                    last_err = err
+                    if self.on_stream:
+                        self.on_stream(
+                            f"[{role.value}] startup error "
+                            f"(retry {attempt + 1}/{self.max_retries}): {err}"
+                        )
+                    if attempt < self.max_retries - 1:
+                        self._recreate_agent()
+                        time.sleep(1.5 * (attempt + 1))
+                        continue
+                    raise RuntimeError(
+                        f"Cursor agent startup failed: {err} "
+                        f"(retryable={err.is_retryable})"
+                    ) from err
+
+                if result.status != "error":
+                    break
+                last_err = RuntimeError(f"Cursor run failed: {result.id}")
                 if self.on_stream:
                     self.on_stream(
-                        f"[{role.value}] startup error "
-                        f"(retry {attempt + 1}/{self.max_retries}): {err}"
+                        f"[{role.value}] run error {result.id}, "
+                        f"retry {attempt + 1}/{self.max_retries}…"
                     )
                 if attempt < self.max_retries - 1:
                     self._recreate_agent()
-                    time.sleep(1.5 * (attempt + 1))
-                    continue
-                raise RuntimeError(
-                    f"Cursor agent startup failed: {err} "
-                    f"(retryable={err.is_retryable})"
-                ) from err
+                    time.sleep(1.25 * (attempt + 1))
+            else:
+                if isinstance(last_err, CursorAgentError):
+                    raise RuntimeError(
+                        f"Cursor agent startup failed: {last_err} "
+                        f"(retryable={last_err.is_retryable})"
+                    ) from last_err
+                raise RuntimeError(str(last_err) if last_err else "Cursor run failed")
 
-            if result.status != "error":
-                break
-            last_err = RuntimeError(f"Cursor run failed: {result.id}")
-            if self.on_stream:
-                self.on_stream(
-                    f"[{role.value}] run error {result.id}, "
-                    f"retry {attempt + 1}/{self.max_retries}…"
-                )
-            if attempt < self.max_retries - 1:
-                self._recreate_agent()
-                time.sleep(1.25 * (attempt + 1))
-        else:
-            if isinstance(last_err, CursorAgentError):
-                raise RuntimeError(
-                    f"Cursor agent startup failed: {last_err} "
-                    f"(retryable={last_err.is_retryable})"
-                ) from last_err
-            raise RuntimeError(str(last_err) if last_err else "Cursor run failed")
-
-        assert result is not None
-        text = result.result or "".join(chunks)
-        parsed = extract_json_object(text)
-        usage = None
-        if getattr(result, "usage", None) is not None:
-            u = result.usage
-            usage = {
-                "input_tokens": getattr(u, "input_tokens", None),
-                "output_tokens": getattr(u, "output_tokens", None),
-                "total_tokens": getattr(u, "total_tokens", None),
-            }
-        return LLMResponse(
-            role=role,
-            raw_text=text,
-            parsed=parsed,
-            model=self.model
-            + (
-                "[" + ",".join(f"{k}={v}" for k, v in self.model_params.items()) + "]"
-                if self.model_params
-                else ""
-            ),
-            provider=self.name,
-            usage=usage,
-        )
+            assert result is not None
+            text = result.result or "".join(chunks)
+            parsed = extract_json_object(text)
+            usage = None
+            if getattr(result, "usage", None) is not None:
+                u = result.usage
+                usage = {
+                    "input_tokens": getattr(u, "input_tokens", None),
+                    "output_tokens": getattr(u, "output_tokens", None),
+                    "total_tokens": getattr(u, "total_tokens", None),
+                }
+            return LLMResponse(
+                role=role,
+                raw_text=text,
+                parsed=parsed,
+                model=self.model
+                + (
+                    "["
+                    + ",".join(f"{k}={v}" for k, v in self.model_params.items())
+                    + "]"
+                    if self.model_params
+                    else ""
+                ),
+                provider=self.name,
+                usage=usage,
+            )
+        finally:
+            # Fresh agent next turn — prevents multi-turn history + prior images
+            # from compounding token cost across a long run.
+            self._recreate_agent()
 
     def close(self) -> None:
-        self._agent.close()
+        try:
+            self._agent.close()
+        except Exception:
+            pass
 
 
 def _stream_text(event: Any) -> str:

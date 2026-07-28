@@ -19,12 +19,13 @@ Working:
 - **Input-ready gating:** LLM is prompted only when the joypad is free; dialog/animations are auto-advanced or waited out
 - **OptMem** durable memory per run (`runs/<id>/memory`) — wake before prompt, note after step
 - **Walkthrough skill** (`.cursor/skills/pokemon-red-walkthrough/`) — excerpt injected when stuck; copied into agent workspace
-- Optional **vision-only** mode: prompts get screenshot + memory (+ walkthrough when stuck), no RAM JSON
+- Optional **vision-only** mode (default **on**): prompts get screenshot + memory (+ walkthrough when stuck), no RAM JSON
 - Prompt cadence ~2s; announce actions → execute with 0.1s per-press gap
 - Overworld: short bursts (~1–3 actions, max 8); Battle: up to 4 menu actions when input-ready
 - Action Arbiter is the only writer of button presses; early-stop on dialog / battle / map change
 - Append-only `runs/<run-id>/events.jsonl` + SQLite; dashboard events (`reasoning` / `decision` / `action` / …)
-- Cursor provider retries (default 5) + agent recreate; orchestrator **fallback macro** if LLM still fails
+- Cursor provider: **fresh agent each turn** (no multi-turn history bleed) + retries; orchestrator **fallback macro** if LLM still fails
+- Mid-burst execute uses light `/state` peeks; full screenshot only at cycle boundaries
 
 Partial / stub:
 
@@ -107,9 +108,9 @@ Role LLMs omit RAM map/coords/collision/dialog JSON — screenshot + OptMem (+ w
 
 | Source | Default |
 |--------|---------|
-| `config/run.yaml` → `vision_only` | `false` |
+| `config/run.yaml` → `vision_only` | `true` |
 | CLI `--vision-only` / `--with-ram` | overrides YAML |
-| Env `NUZLOCKE_VISION_ONLY=1` | overrides YAML when CLI omitted |
+| Env `NUZLOCKE_VISION_ONLY=0` | include RAM JSON when CLI omitted |
 
 ### OptMem
 
@@ -121,7 +122,7 @@ Disable: `memory.enabled: false` or `NUZLOCKE_MEMORY=0`.
 
 `.cursor/skills/pokemon-red-walkthrough/` — early-game Red/Red-Star guide (`SKILL.md` + `reference.md`).
 
-When stuck (`noop ≥ 2` or `stuck ≥ 3`), the orchestrator injects a relevant `walkthrough_hint`. The skill is copied into `agent_workspace/skills/` for on-demand `Read`.
+When stuck (`noop ≥ 2` or `stuck ≥ 3`), the orchestrator injects a relevant `walkthrough_hint`. Director stays deterministic on stuck/noop ≥ 2 and routes to Recovery (one vision call). Skill files live in `agent_workspace/skills/` but agents should not `Read` them when a hint is already present.
 
 ### Screenshots / media resolution
 
@@ -129,7 +130,7 @@ Frames are native **160×144** RGBA PNGs. Cursor `SDKImage` supports optional pi
 
 ### Cost (order of magnitude)
 
-~1800 vision prompts / hour on `gemini-3.6-flash` with thinking off: roughly **~$10–15/hr** at Google list rates (Cursor usage pool; Teams may add $0.25/M). Sonnet is several× more.
+~1800 vision prompts / hour on `gemini-3.6-flash` with thinking off: roughly **~$10–15/hr** at Google list rates (Cursor usage pool; Teams may add $0.25/M). Sonnet is several× more. Keeping Cursor turns one-shot (recreate agent each complete) prevents history+prior-image token growth over long runs.
 
 ---
 
@@ -139,11 +140,11 @@ Frames are native **160×144** RGBA PNGs. Cursor `SDKImage` supports optional pi
 # No LLM — observe + walk a few tiles (env / arbiter / events smoke)
 uv run nuzlocke smoke --rom /path/to/game.gb
 
-# Autonomous segment — until dashboard STOP
+# Autonomous segment — until dashboard STOP (vision-only by default)
 uv run nuzlocke run --rom /path/to/game.gb
 
-# Vision-only (screenshot + memory, no RAM in prompts)
-uv run nuzlocke run --rom /path/to/game.gb --vision-only
+# Include RAM JSON in prompts
+uv run nuzlocke run --rom /path/to/game.gb --with-ram
 
 # Optional cap for smoke / CI
 uv run nuzlocke run --rom /path/to/game.gb --max-steps 20

@@ -52,7 +52,7 @@ def load_run_config(path: Path | None = None) -> dict[str, Any]:
             "on",
         }
     else:
-        cfg.setdefault("vision_only", False)
+        cfg.setdefault("vision_only", True)
 
     mem = cfg.get("memory") or {}
     if not isinstance(mem, dict):

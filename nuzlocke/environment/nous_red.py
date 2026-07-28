@@ -107,8 +107,13 @@ class NousRedEnvironment:
                 return {"raw": r.text}
         return {}
 
-    def observe(self) -> PlayerObservation:
-        state = self._get_json("/state")
+    def _observation_from_state(
+        self,
+        state: dict[str, Any],
+        *,
+        screenshot_path: str | None = None,
+        collision_ascii: str | None = None,
+    ) -> PlayerObservation:
         player = state.get("player") or {}
         pos = player.get("position") or {}
         map_info = state.get("map") or {}
@@ -119,6 +124,43 @@ class NousRedEnvironment:
             and battle.get("in_battle")
             and (battle.get("type") not in {None, "none", ""})
         )
+        meta = state.get("metadata") or {}
+        map_name = map_info.get("map_name") or pos.get("map_name")
+        map_id = map_info.get("map_id")
+        if map_id is None:
+            map_id = pos.get("map_id")
+        joy_ignore = int(dialog.get("joy_ignore") or 0)
+        # pokemon-agent: dialog.active is joy_ignore bit 5 only.
+        dialog_active = bool(dialog.get("active"))
+        return PlayerObservation(
+            screenshot_path=screenshot_path,
+            map_name=map_name,
+            map_id=map_id,
+            x=pos.get("x"),
+            y=pos.get("y"),
+            facing=player.get("facing"),
+            dialog_active=dialog_active,
+            dialog_text=dialog.get("text"),
+            joy_ignore=joy_ignore,
+            text_box_id=dialog.get("text_box_id"),
+            input_ready=agent_can_act(joy_ignore),
+            in_battle=in_battle,
+            battle=battle if in_battle else None,
+            party=list(state.get("party") or []),
+            bag=list(state.get("bag") or []),
+            badges=list(player.get("badges") or player.get("badges_list") or []),
+            money=player.get("money"),
+            collision_ascii=collision_ascii,
+            frame_count=meta.get("frame_count"),
+            raw_player=player,
+        )
+
+    def peek_state(self) -> PlayerObservation:
+        """Lightweight observe: /state only (no screenshot, no map ASCII)."""
+        return self._observation_from_state(self._get_json("/state"))
+
+    def observe(self) -> PlayerObservation:
+        state = self._get_json("/state")
         collision = None
         try:
             r = self._client.get(f"{self.base_url}/map/ascii")
@@ -136,6 +178,7 @@ class NousRedEnvironment:
             collision = None
 
         shot_path = self.run_dir / "screenshots" / "latest.png"
+        shot_path_str: str | None
         try:
             self.screenshot(str(shot_path))
             # After load/fade the LCD can be blank; nudge once if needed.
@@ -155,35 +198,10 @@ class NousRedEnvironment:
         except httpx.HTTPError:
             shot_path_str = None
 
-        meta = state.get("metadata") or {}
-        map_name = map_info.get("map_name") or pos.get("map_name")
-        map_id = map_info.get("map_id")
-        if map_id is None:
-            map_id = pos.get("map_id")
-        joy_ignore = int(dialog.get("joy_ignore") or 0)
-        # pokemon-agent: dialog.active is joy_ignore bit 5 only.
-        dialog_active = bool(dialog.get("active"))
-        return PlayerObservation(
+        return self._observation_from_state(
+            state,
             screenshot_path=shot_path_str,
-            map_name=map_name,
-            map_id=map_id,
-            x=pos.get("x"),
-            y=pos.get("y"),
-            facing=player.get("facing"),
-            dialog_active=dialog_active,
-            dialog_text=dialog.get("text"),
-            joy_ignore=joy_ignore,
-            text_box_id=dialog.get("text_box_id"),
-            input_ready=agent_can_act(joy_ignore),
-            in_battle=in_battle,
-            battle=battle if in_battle else None,
-            party=list(state.get("party") or []),
-            bag=list(state.get("bag") or []),
-            badges=list(player.get("badges") or player.get("badges_list") or []),
-            money=player.get("money"),
             collision_ascii=collision if isinstance(collision, str) else None,
-            frame_count=meta.get("frame_count"),
-            raw_player=player,
         )
 
     def screenshot(self, path: str | None = None) -> bytes:
@@ -267,13 +285,17 @@ class NousRedEnvironment:
         return obs
 
     def execute(self, actions: list[GameAction]) -> ActionResult:
-        before = self.observe()
+        # Mid-burst uses peek_state (no screenshot). Full observe once at end
+        # (or after skip_dialog, which already observes).
+        before = self.peek_state()
         executed: list[GameAction] = []
         stopped: str | None = None
+        need_full_observe = True
         for i, action in enumerate(actions):
             if action == GameAction.SKIP_DIALOG:
                 after = self.execute_skip_dialog()
                 executed.append(action)
+                need_full_observe = False
                 if is_naming_lock(after.joy_ignore):
                     stopped = "naming_screen"
                     before = after
@@ -297,7 +319,7 @@ class NousRedEnvironment:
 
             self._post_json("/action", {"actions": [action.value]})
             executed.append(action)
-            after = self.observe()
+            after = self.peek_state()
             if after.dialog_active and not before.dialog_active:
                 stopped = "dialog_started"
                 before = after
@@ -317,6 +339,8 @@ class NousRedEnvironment:
             before = after
             if self.press_interval_s > 0 and i + 1 < len(actions):
                 time.sleep(self.press_interval_s)
+        if need_full_observe:
+            before = self.observe()
         return ActionResult(
             executed=executed,
             stopped_early_because=stopped,

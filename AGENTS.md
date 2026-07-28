@@ -23,7 +23,7 @@ uv run nuzlocke run --rom ./red-star-2020-08-18.gb --vision-only
 Watch: http://127.0.0.1:8765/dashboard — press **START** / **PAUSE** / **STOP**.  
 Cursor SDK turns: Agents panel → Filter → Source → SDK.
 
-Default run length: **until dashboard STOP** (`--max-steps -1`).
+Default run length: **until dashboard STOP** (`--max-steps -1`). Vision-only is the default in `config/run.yaml`.
 
 ## Do / don’t
 
@@ -63,21 +63,23 @@ dashboard control
 - Screenshots: native **160×144** PNG from `GET /screenshot`
 - Attached via Cursor `SDKImage.from_file` with `dimension=(160,144)` metadata only
 - **No Gemini `media_resolution`** (low/medium/high) on this SDK path — vision-only does not change image token billing by itself
-- `vision_only` / `--vision-only` / `NUZLOCKE_VISION_ONLY=1`: role prompts get screenshot + OptMem (+ walkthrough when stuck); **no RAM JSON**. Orchestrator still uses RAM for battle/boot routing and stuck scoring
+- `vision_only` default **true** (`--with-ram` / `NUZLOCKE_VISION_ONLY=0` to include RAM JSON). Orchestrator still uses RAM for battle/boot routing and stuck scoring
+- Cursor provider recreates the agent **every turn** so conversation history (and prior screenshots) cannot accumulate
 
 ### Memory (OptMem)
 
 - Vendored CLI: `third_party/optmem/memo` ([VictorTaelin/OptMem](https://github.com/VictorTaelin/OptMem))
 - Per run: `runs/<run-id>/memory/` via `MEMORY_DIR`
 - Orchestrator: `wake` before prompt, `note` after step, deterministic auto-`nap`
-- Disable: `memory.enabled: false` or `NUZLOCKE_MEMORY=0`
+- Default `wake_lines: 24`; disable: `memory.enabled: false` or `NUZLOCKE_MEMORY=0`
 
 ### Walkthrough skill
 
 - Project skill: `.cursor/skills/pokemon-red-walkthrough/` (`SKILL.md` + `reference.md`)
 - Copied into `runs/<run-id>/agent_workspace/skills/pokemon-red-walkthrough/`
 - On stuck (`noop ≥ 2` or `stuck ≥ 3`): orchestrator injects a relevant `walkthrough_hint`
-- Cursor role agents may `Read` those skill files when stuck; otherwise stay JSON-only
+- When a hint is injected, Cursor agents must **not** `Read` skill files (excerpt is enough)
+- Stuck / noop ≥ 2: Director stays deterministic → Recovery (one vision LLM call, never Director+Recovery)
 
 ## Config map
 
@@ -118,7 +120,7 @@ runs/               # per-run artifacts (gitignored)
 
 ## Cost (order of magnitude)
 
-~1800 vision prompts / hour at 2s cadence on `gemini-3.6-flash`: roughly **~$10–15/hr** at Google list rates if thinking stays off (Cursor usage pool; Teams may add $0.25/M). Sonnet is several× more. Screenshots dominate tokens; default Gemini 3 image budget is often ~1120 tokens/image even at 160×144.
+~1800 vision prompts / hour at 2s cadence on `gemini-3.6-flash`: roughly **~$10–15/hr** at Google list rates if thinking stays off (Cursor usage pool; Teams may add $0.25/M). Sonnet is several× more. Screenshots dominate tokens (~1120/image); keeping Cursor turns one-shot (no history bleed) matters more than prompt trimming after a few minutes.
 
 ## Tests / handoff checklist
 
@@ -126,8 +128,9 @@ runs/               # per-run artifacts (gitignored)
 uv run pytest -q          # expect unit tests green
 uv run nuzlocke --help
 # Live review:
-uv run nuzlocke run --rom ./red-star-2020-08-18.gb --vision-only
+uv run nuzlocke run --rom ./red-star-2020-08-18.gb
 # STOP on dashboard when done
+# Optional: --with-ram to include RAM JSON in prompts
 ```
 
 Still stubbed vs `AGENT_READY_PLAN.md`: Encounter / Box / Team / Smogon calc / full referee / FireRed.
