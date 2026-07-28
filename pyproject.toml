@@ -1,0 +1,53 @@
+[project]
+name = "nuzlocke-runner"
+version = "0.1.0"
+description = "Multi-agent Nuzlocke runner for Pokemon Red (FireRed later)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "cursor-sdk>=1.0.24",
+    "httpx>=0.28.0",
+    "pokemon-agent",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    "pyyaml>=6.0.2",
+    "rich>=13.9.0",
+    "typer>=0.15.0",
+    "websockets>=14.0",
+]
+
+[project.optional-dependencies]
+emu = [
+    "pokemon-agent[dashboard]",
+    "pyboy",
+]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.9.0",
+]
+
+[project.scripts]
+nuzlocke = "apps.orchestrator.main:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["nuzlocke", "apps"]
+
+[tool.uv]
+package = true
+
+[tool.uv.sources]
+pokemon-agent = { git = "https://github.com/NousResearch/pokemon-agent" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.0",
+]

@@ -1,0 +1,65 @@
+game: red
+observation_mode: human_assist  # strict_visual | human_assist | debug
+
+# When true, role LLMs get the screenshot (+ OptMem) only — no RAM JSON.
+# Override: --vision-only / NUZLOCKE_VISION_ONLY=1
+vision_only: false
+
+# Absolute path to a legally obtained Pokemon Red/Blue ROM (.gb).
+# Override with --rom or NUZLOCKE_ROM.
+rom_path: /Users/nikolas/Desktop/Projects/260727_AgenticNuzlocke/red-star-2020-08-18.gb
+
+pokemon_agent:
+  host: 127.0.0.1
+  port: 8765
+  # Start pokemon-agent from the orchestrator if not already up.
+  auto_start: true
+  # Emulator speed while waiting is paused; between actions use this.
+  # (Passed through if the server supports it; otherwise dashboard only.)
+  speed: 4
+
+control:
+  # Poll pokemon-agent /control so dashboard START/PAUSE/STOP works.
+  respect_dashboard_control: true
+  poll_interval_s: 0.5
+  max_actions_per_proposal: 8
+  # Overworld: short real-time bursts; battles up to 4 when input-ready.
+
+# Cadence: prompt agent → announce actions → execute at emulator speed →
+# wait so prompts are ~every N seconds (wall clock from cycle start).
+# Override: NUZLOCKE_PROMPT_INTERVAL_S=2
+prompt_interval_s: 2.0
+# Tiny gap between successive button presses within a burst.
+press_interval_s: 0.1
+
+# Only invoke the LLM when the joypad can accept a decision.
+# bit5 dialog → auto mash B+A; bit6 naming → prompt immediately; other → short wait.
+input_ready:
+  enabled: true
+  timeout_s: 3.0
+  auto_advance_dialog: true
+  poll_wait_action: wait_30
+  skip_dialog_max_rounds: 30
+
+# OptMem (https://github.com/VictorTaelin/OptMem) — durable run memory.
+# Orchestrator wakes/notes; role agents receive wake text each prompt.
+# Override enable: NUZLOCKE_MEMORY=0
+memory:
+  enabled: true
+  wake_lines: 48
+  # null → third_party/optmem/memo, else ~/.optmem/memo
+  memo_bin: null
+
+milestones:
+  - id: leave_pallet
+    description: Leave Pallet Town after obtaining a starter
+  - id: viridian
+    description: Reach Viridian City
+  - id: route_1_encounter
+    description: Resolve the first legal Route 1 encounter
+  - id: brock
+    description: Attempt Brock
+
+rare_candy:
+  enabled: true
+  inject_count: 0  # audited injection only when Box Agent requests prep

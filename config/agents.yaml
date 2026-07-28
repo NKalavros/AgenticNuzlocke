@@ -1,0 +1,40 @@
+# LLM backend for role agents.
+# Switch provider without changing orchestration code.
+provider: cursor  # cursor | openai_compatible
+
+cursor:
+  api_key_env: CURSOR_API_KEY
+  # Fast vision loop; pair with OptMem so short context still retains lessons.
+  model: gemini-3.6-flash
+  params:
+    thinking: "false"
+  # Local Cursor agent cwd used for each role call (scratch workspace).
+  # Leave null to use runs/<run-id>/agent_workspace
+  workspace: null
+  # Provider-level retries before the orchestrator falls back.
+  max_retries: 5
+
+# For later: local Qwen / vLLM / Ollama OpenAI-compatible endpoint
+openai_compatible:
+  base_url: http://127.0.0.1:8000/v1
+  api_key_env: OPENAI_API_KEY
+  api_key_default: "not-needed"
+  model: qwen3
+  temperature: 0.2
+  timeout_s: 120
+
+roles:
+  director:
+    max_tokens: 2048
+  overworld:
+    max_tokens: 1024
+  encounter:
+    max_tokens: 1024
+  battle:
+    max_tokens: 1536
+  box:
+    max_tokens: 1024
+  team:
+    max_tokens: 2048
+  recovery:
+    max_tokens: 1024

@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.venv
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Secrets / local config
+.env
+.env.local
+config/local.yaml
+
+# ROMs (never commit)
+*.gb
+*.gbc
+*.gba
+roms/
+
+# Run artifacts
+runs/*
+!runs/.gitkeep
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/

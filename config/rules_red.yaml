@@ -1,0 +1,38 @@
+game: Pokemon Red
+version: 1
+
+clauses:
+  faint_is_death: true
+  first_encounter_only: true
+  encounters_before_pokeballs_do_not_count: true
+  duplicates_clause: true
+  species_clause: true
+  shiny_clause: true
+  nicknames_required: true
+  set_battle_style: true
+  no_items_in_trainer_battles: true
+  poke_balls_allowed_in_wild: true
+  level_caps: true
+  rare_candy_clause: true
+  no_outcome_rollback: true
+  blackout_ends_run: true
+
+level_caps:
+  # Nuzlocke University style caps (highest enemy level for next boss)
+  brock: 14
+  misty: 21
+  lt_surge: 24
+  erika: 29
+  koga: 43
+  saber: 43
+  blaine: 47
+  giovanni: 50
+  elite_four: 62
+
+naming:
+  policy: short_theme
+  max_length: 10
+
+integrity:
+  save_states_crash_recovery_only: true
+  hash_chain_irreversible_events: true
