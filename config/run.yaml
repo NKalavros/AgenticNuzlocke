@@ -42,16 +42,23 @@ input_ready:
   poll_wait_action: wait_30
   skip_dialog_max_rounds: 30
 
-# OptMem (https://github.com/VictorTaelin/OptMem) — durable run memory.
-# Orchestrator wakes/notes; role agents receive wake text each prompt.
+# OptMem — durable run memory (capped append-only notes file, see
+# nuzlocke/memory/optmem.py). Orchestrator wakes/notes; role agents
+# receive wake text each prompt.
 # Override enable: NUZLOCKE_MEMORY=0
 memory:
   enabled: true
   wake_lines: 24
   # Text-only OptMem compression every N prompt cycles (0 = off).
   rollup_every: 25
-  # null → third_party/optmem/memo, else ~/.optmem/memo
-  memo_bin: null
+
+# Crash-recovery checkpoints only (no_outcome_rollback in rules_red.yaml —
+# never used to undo a committed death/encounter). One rolling save-state
+# ("auto") via pokemon-agent's /save; resume with `nuzlocke run --resume <run-id>`.
+checkpoint:
+  enabled: true
+  # Save every N steps, skipped mid-battle and right after a ledger commit.
+  every_steps: 50
 
 milestones:
   - id: leave_pallet
@@ -61,7 +68,25 @@ milestones:
   - id: route_1_encounter
     description: Resolve the first legal Route 1 encounter
   - id: brock
-    description: Attempt Brock
+    description: Attempt Brock (Pewter Gym)
+  - id: misty
+    description: Attempt Misty (Cerulean Gym)
+  - id: lt_surge
+    description: Attempt Lt. Surge (Vermilion Gym)
+  - id: erika
+    description: Attempt Erika (Celadon Gym)
+  - id: koga
+    description: Attempt Koga (Fuchsia Gym)
+  - id: saber
+    description: Attempt Sabrina (Saffron Gym)
+  - id: blaine
+    description: Attempt Blaine (Cinnabar Gym)
+  - id: giovanni
+    description: Attempt Giovanni (Viridian Gym)
+  - id: elite_four
+    description: Challenge the Elite Four
+  - id: champion
+    description: Defeat the Champion and complete the Pokemon League
 
 rare_candy:
   enabled: true

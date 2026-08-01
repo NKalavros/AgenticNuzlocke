@@ -9,6 +9,7 @@ from typing import Any
 
 from nuzlocke.agents import prompts
 from nuzlocke.llm.base import LLMProvider
+from nuzlocke.referee.type_chart import battle_matchup
 from nuzlocke.state.models import (
     ActionProposal,
     AgentRole,
@@ -54,6 +55,7 @@ def _with_extras(
     recent: list[dict[str, Any]] | None = None,
     walkthrough_hint: str | None = None,
     objectives: dict[str, str] | None = None,
+    nuzlocke: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     # Short-term working context (orchestrator ring buffer) — not OptMem.
     if recent:
@@ -68,6 +70,10 @@ def _with_extras(
         )
     if objectives:
         payload["objectives"] = objectives
+    # Deterministic referee bookkeeping: cap/milestone, dead party members,
+    # and frozen (first-eligible) encounters per area.
+    if nuzlocke:
+        payload["nuzlocke"] = nuzlocke
     return payload
 
 
@@ -137,6 +143,25 @@ def objectives_for_dashboard(objectives: dict[str, str]) -> list[dict[str, Any]]
     return out
 
 
+# Next-gym target per badge count, mirroring NuzlockeReferee.MILESTONE_ORDER.
+_NEXT_GYM_TARGET: tuple[str, ...] = (
+    "Pewter City for Brock",
+    "Cerulean City for Misty",
+    "Vermilion City for Lt. Surge",
+    "Celadon City for Erika",
+    "Fuchsia City for Koga",
+    "Saffron City for Sabrina",
+    "Cinnabar Island for Blaine",
+    "Viridian City for Giovanni",
+    "the Pokemon League to challenge the Elite Four and Champion",
+)
+
+
+def _next_gym_target(badge_count: int) -> str:
+    idx = min(max(badge_count, 0), len(_NEXT_GYM_TARGET) - 1)
+    return _NEXT_GYM_TARGET[idx]
+
+
 def decide_director(
     llm: LLMProvider,
     *,
@@ -200,16 +225,17 @@ def decide_director(
             ),
         )
 
-    objective = "Make safe progress toward Oak / Viridian / Pewter"
+    next_target = _next_gym_target(len(obs.badges))
+    objective = f"Make safe progress toward {next_target}"
     if not vision_only and obs.map_name and "House" in obs.map_name:
         objective = (
-            "If the SCREEN shows overworld, leave the house toward Oak; "
-            "if it shows naming/dialog, resolve that first"
+            f"If the SCREEN shows overworld, leave the house and continue toward "
+            f"{next_target}; if it shows naming/dialog, resolve that first"
         )
     elif vision_only:
         objective = (
-            "Read the screenshot only: clear menus/dialog/naming, then "
-            "leave home and reach Oak's lab for a starter"
+            "Read the screenshot only: clear menus/dialog/naming, then continue "
+            f"toward {next_target}"
         )
     elif not obs.party:
         objective = "Obtain a starter from Professor Oak (screen-first)"
@@ -242,6 +268,7 @@ def propose_overworld(
     vision_only: bool = False,
     walkthrough_hint: str | None = None,
     objectives: dict[str, str] | None = None,
+    nuzlocke: dict[str, Any] | None = None,
 ) -> ActionProposal:
     user = _dumps(
         _with_extras(
@@ -253,6 +280,7 @@ def propose_overworld(
             recent=recent,
             walkthrough_hint=walkthrough_hint,
             objectives=objectives,
+            nuzlocke=nuzlocke,
         )
     )
     system = prompts.OVERWORLD_SYSTEM
@@ -297,18 +325,25 @@ def propose_battle(
     vision_only: bool = False,
     walkthrough_hint: str | None = None,
     objectives: dict[str, str] | None = None,
+    nuzlocke: dict[str, Any] | None = None,
 ) -> ActionProposal:
+    enemy_species = str(((obs.battle or {}).get("enemy") or {}).get("species") or "")
+    matchup = battle_matchup(obs.party, enemy_species) if enemy_species else None
+    payload = {
+        "task": task.model_dump(mode="json"),
+        **_obs_payload(obs, vision_only=vision_only),
+        "reminder": "ONE battle input only (optional wait_60 after).",
+    }
+    if matchup:
+        payload["type_matchup"] = matchup
     user = _dumps(
         _with_extras(
-            {
-                "task": task.model_dump(mode="json"),
-                **_obs_payload(obs, vision_only=vision_only),
-                "reminder": "ONE battle input only (optional wait_60 after).",
-            },
+            payload,
             memory=memory,
             recent=recent,
             walkthrough_hint=walkthrough_hint,
             objectives=objectives,
+            nuzlocke=nuzlocke,
         )
     )
     resp = llm.complete(
@@ -354,6 +389,7 @@ def advise_recovery(
     vision_only: bool = False,
     walkthrough_hint: str | None = None,
     objectives: dict[str, str] | None = None,
+    nuzlocke: dict[str, Any] | None = None,
 ) -> RecoveryAdvice:
     payload: dict[str, Any] = {
         "stuck_score": stuck_score,
@@ -368,6 +404,7 @@ def advise_recovery(
             recent=recent,
             walkthrough_hint=walkthrough_hint,
             objectives=objectives,
+            nuzlocke=nuzlocke,
         )
     )
     resp = llm.complete(

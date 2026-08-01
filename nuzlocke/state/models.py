@@ -20,11 +20,12 @@ class GameMode(str, Enum):
 
 
 class AgentRole(str, Enum):
+    """Task owners. Encounter legality, box, and team concerns are handled
+    as deterministic referee bookkeeping (see NuzlockeReferee / LedgerTracker)
+    and Overworld/Battle prompt playbooks, not as separate agent roles."""
+
     DIRECTOR = "director"
     OVERWORLD = "overworld"
-    ENCOUNTER = "encounter"
-    BOX = "box"
-    TEAM = "team"
     BATTLE = "battle"
     RECOVERY = "recovery"
 

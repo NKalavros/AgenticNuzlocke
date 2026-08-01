@@ -29,6 +29,7 @@ class NousRedEnvironment:
         auto_start: bool = True,
         speed: int = 4,
         press_interval_s: float = 0.1,
+        load_state: str | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.run_dir = run_dir
@@ -36,6 +37,7 @@ class NousRedEnvironment:
         self.auto_start = auto_start
         self.speed = speed
         self.press_interval_s = max(0.0, float(press_interval_s))
+        self.load_state = load_state
         self._client = httpx.Client(timeout=60.0)
         self._proc: subprocess.Popen[str] | None = None
         if auto_start:
@@ -62,6 +64,8 @@ class NousRedEnvironment:
             "--data-dir",
             str(data_dir),
         ]
+        if self.load_state and (data_dir / "saves" / f"{self.load_state}.state").exists():
+            cmd += ["--load-state", self.load_state]
         # Best-effort; CLI flags may vary by version.
         log_path = self.run_dir / "pokemon-agent.log"
         log_f = log_path.open("w", encoding="utf-8")
@@ -212,6 +216,32 @@ class NousRedEnvironment:
         if path:
             Path(path).write_bytes(data)
         return data
+
+    def save_checkpoint(self, name: str) -> dict[str, Any]:
+        """Crash-recovery only — never used to undo a committed outcome.
+
+        pokemon-agent writes into a session-scoped folder whenever a
+        dashboard "game session" is active, but /load always reads the flat
+        saves/ dir — verify the save actually landed where /load will find
+        it, and fail loudly rather than silently produce an unloadable
+        checkpoint.
+        """
+        result = self._post_json("/save", {"name": name})
+        if name not in {s.get("name") for s in self.list_checkpoints()}:
+            raise RuntimeError(
+                f"checkpoint '{name}' saved to a session-scoped path that "
+                "pokemon-agent's /load cannot read (a dashboard game session "
+                "is active) — close the active dashboard session for "
+                "checkpointing to work"
+            )
+        return result
+
+    def load_checkpoint(self, name: str) -> dict[str, Any]:
+        return self._post_json("/load", {"name": name})
+
+    def list_checkpoints(self) -> list[dict[str, Any]]:
+        data = self._get_json("/saves")
+        return list(data.get("saves") or [])
 
     def _joy_ignore(self) -> int:
         try:

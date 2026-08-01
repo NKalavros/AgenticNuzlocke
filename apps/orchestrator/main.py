@@ -54,12 +54,20 @@ def run(
         help="Screenshot (+ memory) only for role prompts; omit RAM JSON. "
         "Default from config/run.yaml or NUZLOCKE_VISION_ONLY.",
     ),
+    resume: Optional[str] = typer.Option(
+        None,
+        "--resume",
+        help="Resume an existing run-id (runs/<run-id>/) from its latest "
+        "crash-recovery checkpoint instead of starting a new game.",
+    ),
 ) -> None:
     """Start an autonomous Nuzlocke segment. Runs until STOP unless --max-steps is set."""
     steps = None if max_steps is None or max_steps < 0 else max_steps
     try:
         loop = RunLoop(
             rom_path=rom,
+            run_id=resume,
+            resume=bool(resume),
             provider_override=provider,
             vision_only=vision_only,
         )

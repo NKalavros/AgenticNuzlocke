@@ -20,3 +20,14 @@ def test_excerpt_picks_house_and_stuck() -> None:
 def test_excerpt_lab() -> None:
     text = excerpt_for_context(reason="need starter in oak lab")
     assert "Lab" in text or "starter" in text.lower()
+
+
+def test_unmatched_late_game_context_does_not_leak_early_game_sections() -> None:
+    # No keyword rule matches a mid/late-game map/reason — must not fall
+    # back to Pallet/bedroom-specific hints, only the generic stuck cheatsheet.
+    text = excerpt_for_context(
+        map_name="Fuchsia City", reason="cannot find the Safari Zone exit"
+    )
+    assert "Pallet Town" not in text
+    assert "Red's House" not in text
+    assert "stuck" in text.lower()

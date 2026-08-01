@@ -25,19 +25,3 @@ openai_compatible:
   model: qwen3
   temperature: 0.2
   timeout_s: 120
-
-roles:
-  director:
-    max_tokens: 2048
-  overworld:
-    max_tokens: 1024
-  encounter:
-    max_tokens: 1024
-  battle:
-    max_tokens: 1536
-  box:
-    max_tokens: 1024
-  team:
-    max_tokens: 2048
-  recovery:
-    max_tokens: 1024

@@ -2,7 +2,7 @@
 
 Autonomous **Pokemon Red-family Nuzlocke** driven by configurable LLM role agents and a deterministic action/rules layer.
 
-Emulation, REST API, and the live **Field Log** dashboard come from [NousResearch/pokemon-agent](https://github.com/NousResearch/pokemon-agent) (PyBoy). This repo owns orchestration, OptMem, the walkthrough skill, Nuzlocke bookkeeping stubs, and the LLM provider switch.
+Emulation, REST API, and the live **Field Log** dashboard come from [NousResearch/pokemon-agent](https://github.com/NousResearch/pokemon-agent) (PyBoy). This repo owns orchestration, the Nuzlocke rules engine (level caps, encounter/permadeath ledgers), OptMem, the walkthrough skill, and the LLM provider switch.
 
 - **Operator / agent handoff:** `AGENTS.md` (start here for how to run and what not to break)
 - **Long-form design intent:** `AGENT_READY_PLAN.md` / `PLAN.md` (aspirational; not all built)
@@ -25,13 +25,17 @@ Working:
 - Agent-owned objectives + landmark notes; OptMem text rollup every 25 steps
 - Action Arbiter is the only writer of button presses; early-stop on dialog / battle / map change
 - Append-only `runs/<run-id>/events.jsonl` + SQLite; dashboard events (`reasoning` / `decision` / `action` / …)
-- Cursor provider: **fresh agent each turn** (no multi-turn history bleed) + retries; orchestrator **fallback macro** if LLM still fails
+- Cursor provider: **one durable agent for the whole run**, compacted (self-summarized + recreated) once input context passes `compact_at_tokens`, + retries; orchestrator **fallback macro** if LLM still fails
 - Mid-burst execute uses light `/state` peeks; full screenshot only at cycle boundaries
+- **Nuzlocke referee**: level cap advances automatically with badges earned (through Elite Four), deterministic first-encounter and permadeath ledgers (`nuzlocke/orchestration/ledger.py`) — no separate Encounter/Box/Team agent, just facts injected into the existing Overworld/Battle/Recovery prompts
+- **Battle type hint**: lean Gen-1 type-effectiveness lookup (`nuzlocke/referee/type_chart.py`) surfaced per-party-member against the current enemy — a strategic signal, not a full damage calculator
+- **Crash-recovery checkpoints**: periodic `/save` outside battle and away from a just-committed ledger event; `nuzlocke run --resume <run-id>` reloads the latest checkpoint (never used to undo a committed death — see `no_outcome_rollback`)
+- Milestones extend through all 8 gyms + Elite Four + Champion (`config/run.yaml`)
 
 Partial / stub:
 
-- Encounter, Box, Team Planner, Smogon calc service, full referee ledgers
 - FireRed / mGBA adapter (pokemon-agent marks FireRed as Phase 2)
+- No generation-aware damage calculator (only the lean type-chart hint above)
 
 Known pitfall:
 
@@ -115,7 +119,7 @@ Role LLMs omit RAM map/coords/collision/dialog JSON — screenshot + OptMem (+ w
 
 ### OptMem
 
-[OptMem](https://github.com/VictorTaelin/OptMem) is vendored at `third_party/optmem/memo`. Each run uses `runs/<run-id>/memory/`. Used for durable landmarks/rollups only — not per-step history (that goes in prompt `recent`).
+`nuzlocke/memory/optmem.py` is a small in-repo durable-notes store (a capped, append-only `notes.log` per run — no external CLI). Each run uses `runs/<run-id>/memory/`. Used for durable landmarks/rollups only — not per-step history (that goes in prompt `recent`).
 
 Disable: `memory.enabled: false` or `NUZLOCKE_MEMORY=0`.
 
@@ -131,7 +135,7 @@ Frames are native **160×144** RGBA PNGs. Cursor `SDKImage` supports optional pi
 
 ### Cost (order of magnitude)
 
-~1800 vision prompts / hour on `gemini-3.6-flash` with thinking off: roughly **~$10–15/hr** at Google list rates (Cursor usage pool; Teams may add $0.25/M). Sonnet is several× more. Keeping Cursor turns one-shot (recreate agent each complete) prevents history+prior-image token growth over long runs.
+~1800 vision prompts / hour on `gemini-3.6-flash` with thinking off: roughly **~$10–15/hr** at Google list rates (Cursor usage pool; Teams may add $0.25/M). Sonnet is several× more. The durable agent's periodic self-summarize-and-recreate compaction keeps history+prior-image token growth bounded over long runs.
 
 ---
 
@@ -156,7 +160,7 @@ Artifacts under `runs/<run-id>/`:
 - `manifest.json` — game, model, vision_only, memory flag, rules snapshot
 - `events.jsonl` / `run.sqlite` — proposals, observations, arbiter results
 - `screenshots/latest.png` — last frame sent to vision
-- `memory/` — OptMem LOG + TREE
+- `memory/` — OptMem `notes.log`
 - `agent_workspace/` — Cursor local cwd (includes walkthrough skill copy)
 
 ---
@@ -209,7 +213,7 @@ Note: the OpenAI-compatible path is text-only today (screenshot paths are noted 
 
 | File | Role |
 |------|------|
-| `config/run.yaml` | ROM, ports, cadence, `vision_only`, `input_ready`, OptMem, milestones |
+| `config/run.yaml` | ROM, ports, cadence, `vision_only`, `input_ready`, OptMem, milestones, `checkpoint` |
 | `config/rules_red.yaml` | Nuzlocke clauses + level caps (hashed into the run manifest) |
 | `config/agents.yaml` | Provider, model, retries |
 
@@ -225,15 +229,19 @@ Dashboard START/PAUSE/STOP
         │
         ▼
  RunLoop ──► recent + OptMem wake ──► walkthrough_hint if stuck
-        │
+        │     referee.advance(badges) ──► ledger.update (encounter/death)
         ▼
  Director → Overworld / Battle / Recovery
-        │     screenshot [+ RAM unless vision_only] + memory
+        │     screenshot [+ RAM unless vision_only] + memory + nuzlocke facts
+        │     (Battle also gets a type-effectiveness hint)
         ▼
  announce → ActionArbiter → pokemon-agent /action
         │
         ▼
  recent ring + optional landmark/rollup notes (+ Field Log)
+        │
+        ▼
+ periodic crash-recovery checkpoint (outside battle, away from a fresh ledger commit)
 ```
 
 Important behaviors:
@@ -248,16 +256,15 @@ Layout:
 ```text
 nuzlocke/
   agents/          # prompts + role helpers
-  environment/     # Nous Red HTTP adapter + input-ready wait
+  environment/     # Nous Red HTTP adapter + input-ready wait + checkpoints
   knowledge/       # walkthrough excerpt loader
   llm/             # cursor + openai_compatible providers
-  memory/          # OptMem wrapper
-  orchestration/   # arbiter + run loop
-  referee/         # rules stub
+  memory/          # OptMem (in-repo durable-notes store)
+  orchestration/   # RunLoop, arbiter, stuck/fallback/ledger/checkpoint helpers
+  referee/         # level caps, encounter/death ledgers, Gen-1 type chart
   state/           # pydantic contracts + event store
-apps/orchestrator/ # CLI: nuzlocke smoke | run
+apps/orchestrator/ # CLI: nuzlocke smoke | run [--resume]
 .cursor/skills/    # pokemon-red-walkthrough
-third_party/optmem/
 config/
 runs/
 ```
@@ -270,16 +277,13 @@ runs/
 uv run pytest -q
 ```
 
-Unit coverage: JSON extraction, arbiter owner enforcement, OptMem wrapper, walkthrough excerpts.
+Unit coverage: JSON extraction, arbiter owner enforcement, OptMem wrapper, walkthrough excerpts, stuck/noop tracker, LLM-error fallback, referee cap/encounter/death ledger, type chart, checkpoint gating.
 
 ---
 
 ## Roadmap vs this tree
 
-Next increments aligned with `AGENT_READY_PLAN.md`:
+`AGENT_READY_PLAN.md` is the original, larger aspirational design (separate Encounter/Box/Team LLM agents, a `@smogon/calc` microservice, a hash-chained ledger). This tree deliberately implements a leaner version of the same rules — deterministic bookkeeping in the referee/ledger, surfaced into the existing role prompts, rather than more agent roles — since encounter legality and permadeath tracking don't need model judgment. Remaining gap:
 
-1. Encounter Agent + immutable encounter ledger
-2. Battle Agent + `@smogon/calc` Gen 1 service
-3. Box / rare-candy audit path + Team Planner dossier
-4. Crash-only checkpoints (no outcome rollback)
-5. FireRed adapter behind the same `GameEnvironment` protocol
+1. FireRed adapter behind the same `GameEnvironment` protocol (pokemon-agent itself marks FireRed as Phase 2)
+2. A real generation-aware damage calculator, if the lean type-chart hint proves insufficient

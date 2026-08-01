@@ -7,7 +7,7 @@ Operating notes for humans and coding agents working in this repo. Prefer this f
 Autonomous **Pokemon Red-family Nuzlocke** runner:
 
 - Emulation + Field Log dashboard: [NousResearch/pokemon-agent](https://github.com/NousResearch/pokemon-agent) (PyBoy)
-- Our code: orchestration, Action Arbiter, OptMem, walkthrough skill, Cursor / OpenAI-compatible LLM providers
+- Our code: orchestration, Action Arbiter, the Nuzlocke referee (level caps + encounter/death ledgers), OptMem, walkthrough skill, Cursor / OpenAI-compatible LLM providers
 - Default ROM in config: Red Star (`red-star-2020-08-18.gb`) — legally obtained ROMs are gitignored
 
 ## Quick start
@@ -25,6 +25,8 @@ Cursor SDK turns: Agents panel → Filter → Source → SDK.
 
 Default run length: **until dashboard STOP** (`--max-steps -1`). Vision-only is the default in `config/run.yaml`.
 
+After a crash, resume the same run from its latest checkpoint: `uv run nuzlocke run --resume <run-id>` (see `config/run.yaml` → `checkpoint`, and known pitfall #6 below about active dashboard sessions).
+
 ## Do / don’t
 
 | Do | Don’t |
@@ -40,11 +42,13 @@ Default run length: **until dashboard STOP** (`--max-steps -1`). Vision-only is 
 ```text
 dashboard control
     → wait_until_input_ready   # auto-advance dialog; wait animations
+    → referee.advance(badges) → ledger.update (encounter/death)
     → OptMem wake
     → (if stuck) walkthrough_hint excerpt
-    → Director → Overworld | Battle | Recovery
+    → Director → Overworld | Battle | Recovery   # + nuzlocke facts, battle type hint
     → announce actions → ActionArbiter → /action
     → OptMem note
+    → (periodic, outside battle) crash-recovery checkpoint
     → sleep to prompt_interval_s
 ```
 
@@ -70,9 +74,9 @@ dashboard control
 
 ### Memory (OptMem)
 
-- Vendored CLI: `third_party/optmem/memo` ([VictorTaelin/OptMem](https://github.com/VictorTaelin/OptMem))
-- Per run: `runs/<run-id>/memory/` via `MEMORY_DIR`
-- Orchestrator: `wake` before prompt, `note` after step, deterministic auto-`nap`
+- In-repo module: `nuzlocke/memory/optmem.py` — a capped, append-only `notes.log` per run (no external CLI)
+- Per run: `runs/<run-id>/memory/notes.log`
+- Orchestrator: `wake` before prompt (last `wake_lines` notes), `note` after step
 - Short-term: orchestrator injects `recent` (last ~8 actions + outcomes) into each prompt
 - Long-term OptMem: landmarks / rollups only (not every step). `rollup_every: 25`
 - Agent may emit `objectives` + `landmarks` → dashboard / `LANDMARK` OptMem notes
@@ -101,16 +105,15 @@ Swap model without code changes — edit `config/agents.yaml` (e.g. `claude-sonn
 ```text
 nuzlocke/
   agents/           # prompts + role helpers
-  environment/      # Nous Red HTTP adapter (observe / execute / input-ready)
+  environment/      # Nous Red HTTP adapter (observe / execute / input-ready / checkpoints)
   knowledge/        # walkthrough excerpt loader
   llm/              # cursor + openai_compatible providers
-  memory/           # OptMem wrapper
-  orchestration/    # RunLoop + ActionArbiter
-  referee/          # rules stub
+  memory/           # OptMem (in-repo durable-notes store)
+  orchestration/    # RunLoop, ActionArbiter, stuck/fallback/ledger/checkpoint helpers
+  referee/          # level caps, encounter/death ledgers, Gen-1 type chart
   state/            # pydantic contracts + event store
-apps/orchestrator/  # CLI: nuzlocke smoke | run
+apps/orchestrator/  # CLI: nuzlocke smoke | run [--resume <run-id>]
 .cursor/skills/     # pokemon-red-walkthrough
-third_party/optmem/ # vendored memo CLI
 config/
 runs/               # per-run artifacts (gitignored)
 ```
@@ -122,10 +125,11 @@ runs/               # per-run artifacts (gitignored)
 3. **Battles without input-ready gating** waste many LLM turns on “Enemy used X!” text — gating must stay enabled.
 4. **Naming screen** — walks move the letter cursor; must finish **END**.
 5. pokemon-agent’s `a_until_dialog_end` checks a flat `dialog_active` key incorrectly; we prefer `hold_b_120` + `press_a` / our own ready loop.
+6. pokemon-agent’s `/save` writes into a **session-scoped** folder whenever a dashboard "game session" is active (e.g. New Game/Load clicked in the dashboard), but `/load` always reads the **flat** `data_dir/saves/` dir — `NousRedEnvironment.save_checkpoint` verifies the name shows up in `/saves` and raises loudly if not, rather than silently producing an unloadable checkpoint. Close any active dashboard session for `checkpoint:` auto-saves to work.
 
 ## Cost (order of magnitude)
 
-~1800 vision prompts / hour at 2s cadence on `gemini-3.6-flash`: roughly **~$10–15/hr** at Google list rates if thinking stays off (Cursor usage pool; Teams may add $0.25/M). Sonnet is several× more. Screenshots dominate tokens (~1120/image); keeping Cursor turns one-shot (no history bleed) matters more than prompt trimming after a few minutes.
+~1800 vision prompts / hour at 2s cadence on `gemini-3.6-flash`: roughly **~$10–15/hr** at Google list rates if thinking stays off (Cursor usage pool; Teams may add $0.25/M). Sonnet is several× more. Screenshots dominate tokens (~1120/image); the durable agent's periodic compaction (see Vision section above) matters more than prompt trimming after a few minutes.
 
 ## Tests / handoff checklist
 

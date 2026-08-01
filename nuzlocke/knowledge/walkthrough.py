@@ -78,11 +78,9 @@ def excerpt_for_context(
         if any(k in hay for k in keys):
             add_matching(substr)
 
-    if not picked:
-        for substr in ("2f", "1f", "pallet", "stuck"):
-            add_matching(substr)
-
-    # Always append stuck cheatsheet if not already included and we have room.
+    # Fall back to the generic stuck cheatsheet only — the early-game
+    # sections (2F/1F/Pallet) are location-specific and actively misleading
+    # once a run is past the early game and nothing else matched.
     if not any("stuck" in t.lower() for t, _ in picked):
         add_matching("stuck")
 
