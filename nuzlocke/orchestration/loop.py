@@ -438,30 +438,59 @@ class RunLoop:
                     "llm_error",
                     {"error": str(err), "owner": task.owner.value},
                 )
-                self.env.push_event("alert", f"LLM error (fallback macro): {err}")
-                console.print(f"[yellow]LLM error, using fallback macro:[/yellow] {err}")
-                if task.owner == AgentRole.BATTLE:
+                err_text = str(err)
+                bridge_down = (
+                    "connection refused" in err_text.lower()
+                    or "connecterror" in err_text.lower()
+                    or "bridge request failed" in err_text.lower()
+                )
+                if bridge_down:
+                    self.env.push_event(
+                        "alert",
+                        f"Cursor bridge down — waiting (keep Cursor app open): {err}",
+                    )
+                    console.print(
+                        "[red]Cursor SDK bridge connection refused.[/red] "
+                        "Keep the Cursor app open, then the run will retry."
+                    )
+                    time.sleep(8.0)
                     proposal = ActionProposal(
                         task_id=task.task_id,
-                        agent=AgentRole.BATTLE,
-                        reason="fallback after LLM failure",
-                        actions=[GameAction.PRESS_A],
+                        agent=task.owner
+                        if task.owner
+                        in {AgentRole.OVERWORLD, AgentRole.BATTLE, AgentRole.RECOVERY}
+                        else AgentRole.OVERWORLD,
+                        reason="wait — Cursor bridge unavailable",
+                        actions=[GameAction.WAIT_60],
                     )
-                    self.arbiter.set_owner(AgentRole.BATTLE)
+                    self.arbiter.set_owner(proposal.agent)
                 else:
-                    proposal = ActionProposal(
-                        task_id=task.task_id,
-                        agent=AgentRole.OVERWORLD,
-                        reason="fallback after LLM failure",
-                        actions=[
-                            GameAction.HOLD_B_120,
-                            GameAction.PRESS_A,
-                            GameAction.HOLD_B_120,
-                            GameAction.PRESS_A,
-                            GameAction.WAIT_60,
-                        ],
+                    self.env.push_event("alert", f"LLM error (fallback macro): {err}")
+                    console.print(
+                        f"[yellow]LLM error, using fallback macro:[/yellow] {err}"
                     )
-                    self.arbiter.set_owner(AgentRole.OVERWORLD)
+                    if task.owner == AgentRole.BATTLE:
+                        proposal = ActionProposal(
+                            task_id=task.task_id,
+                            agent=AgentRole.BATTLE,
+                            reason="fallback after LLM failure",
+                            actions=[GameAction.PRESS_A],
+                        )
+                        self.arbiter.set_owner(AgentRole.BATTLE)
+                    else:
+                        proposal = ActionProposal(
+                            task_id=task.task_id,
+                            agent=AgentRole.OVERWORLD,
+                            reason="fallback after LLM failure",
+                            actions=[
+                                GameAction.HOLD_B_120,
+                                GameAction.PRESS_A,
+                                GameAction.HOLD_B_120,
+                                GameAction.PRESS_A,
+                                GameAction.WAIT_60,
+                            ],
+                        )
+                        self.arbiter.set_owner(AgentRole.OVERWORLD)
 
             self._apply_proposal_meta(proposal)
             action_labels = [a.value for a in proposal.actions]

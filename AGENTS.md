@@ -66,7 +66,7 @@ dashboard control
 - Attached via Cursor `SDKImage.from_file` with `dimension=(160,144)` metadata only
 - **No Gemini `media_resolution`** (low/medium/high) on this SDK path — vision-only does not change image token billing by itself
 - `vision_only` default **true** (`--with-ram` / `NUZLOCKE_VISION_ONLY=0` to include RAM JSON). Orchestrator still uses RAM for battle/boot routing and stuck scoring
-- Cursor provider recreates the agent **every turn** so conversation history (and prior screenshots) cannot accumulate
+- Cursor provider keeps one durable agent; every ``compact_every`` turns (default 20) it asks for a short session summary, then recreates with that summary carried forward
 
 ### Memory (OptMem)
 

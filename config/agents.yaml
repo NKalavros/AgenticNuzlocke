@@ -13,6 +13,9 @@ cursor:
   workspace: null
   # Provider-level retries before the orchestrator falls back.
   max_retries: 5
+  # Keep one durable Cursor agent; every N successful turns ask it to compact
+  # a short session summary, then recreate with that summary carried forward.
+  compact_every: 20
 
 # For later: local Qwen / vLLM / Ollama OpenAI-compatible endpoint
 openai_compatible:

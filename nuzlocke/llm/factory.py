@@ -22,6 +22,8 @@ def create_provider(
         cur = agents_cfg.get("cursor") or {}
         api_key_env = cur.get("api_key_env", "CURSOR_API_KEY")
         ws = cur.get("workspace")
+        # compact_every preferred; refresh_every kept as legacy alias.
+        compact = cur.get("compact_every", cur.get("refresh_every", 20))
         return CursorProvider(
             model=cur.get("model", "composer-2.5"),
             model_params=dict(cur.get("params") or {}),
@@ -29,6 +31,7 @@ def create_provider(
             workspace=Path(ws) if ws else workspace,
             on_stream=on_stream,
             max_retries=int(cur.get("max_retries", 5)),
+            compact_every=int(compact),
         )
     if provider == "openai_compatible":
         oai = agents_cfg.get("openai_compatible") or {}
