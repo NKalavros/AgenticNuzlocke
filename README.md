@@ -17,7 +17,7 @@ Working:
 - Configurable LLM backends (`cursor` default, `openai_compatible` stub for local models later)
 - Vision turns: Overworld / Battle / Recovery attach the current **160×144** screenshot
 - **Input-ready gating:** LLM is prompted only when the joypad is free; dialog/animations are auto-advanced or waited out
-- **OptMem** durable memory per run (`runs/<id>/memory`) — wake before prompt, note after step
+- **Short-term `recent`** (last ~8 actions/outcomes) in each prompt; **OptMem** for long-term landmarks/rollups only
 - **Walkthrough skill** (`.cursor/skills/pokemon-red-walkthrough/`) — excerpt injected when stuck; copied into agent workspace
 - Optional **vision-only** mode (default **on**): prompts get screenshot + memory (+ walkthrough when stuck), no RAM JSON
 - Prompt cadence ~1.5s; announce actions → execute with 0.1s per-press gap
@@ -115,7 +115,7 @@ Role LLMs omit RAM map/coords/collision/dialog JSON — screenshot + OptMem (+ w
 
 ### OptMem
 
-[OptMem](https://github.com/VictorTaelin/OptMem) is vendored at `third_party/optmem/memo`. Each run uses `runs/<run-id>/memory/`. Orchestrator `wake` / `note` / auto-`nap`.
+[OptMem](https://github.com/VictorTaelin/OptMem) is vendored at `third_party/optmem/memo`. Each run uses `runs/<run-id>/memory/`. Used for durable landmarks/rollups only — not per-step history (that goes in prompt `recent`).
 
 Disable: `memory.enabled: false` or `NUZLOCKE_MEMORY=0`.
 
@@ -224,7 +224,7 @@ Dashboard START/PAUSE/STOP
  wait_until_input_ready  (auto dialog / wait animations)
         │
         ▼
- RunLoop ──► OptMem wake ──► walkthrough_hint if stuck
+ RunLoop ──► recent + OptMem wake ──► walkthrough_hint if stuck
         │
         ▼
  Director → Overworld / Battle / Recovery
@@ -233,7 +233,7 @@ Dashboard START/PAUSE/STOP
  announce → ActionArbiter → pokemon-agent /action
         │
         ▼
- OptMem note + events (+ Field Log)
+ recent ring + optional landmark/rollup notes (+ Field Log)
 ```
 
 Important behaviors:

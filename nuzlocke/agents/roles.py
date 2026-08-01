@@ -51,9 +51,14 @@ def _with_extras(
     payload: dict[str, Any],
     *,
     memory: str | None = None,
+    recent: list[dict[str, Any]] | None = None,
     walkthrough_hint: str | None = None,
     objectives: dict[str, str] | None = None,
 ) -> dict[str, Any]:
+    # Short-term working context (orchestrator ring buffer) — not OptMem.
+    if recent:
+        payload["recent"] = recent
+    # Long-term OptMem only (landmarks / rollups).
     if memory and memory.strip():
         payload["memory"] = memory.strip()
     if walkthrough_hint and walkthrough_hint.strip():
@@ -186,7 +191,6 @@ def decide_director(
             constraints=[
                 "Max 4 actions",
                 "Screenshot is ground truth",
-                "Do not repeat the same failed walks",
             ],
             success=[],
             abort=["battle_started"],
@@ -217,7 +221,6 @@ def decide_director(
             "About 1-5 logical actions per prompt; prefer walk_*_3/4 on clear paths",
             "Screenshot is ground truth",
             "Do not walk while a text box or naming grid is visible",
-            "Use memory: do not repeat failed walks / false outdoors guesses",
         ],
         success=[],
         abort=["battle_started", "stuck_score >= 6"],
@@ -235,6 +238,7 @@ def propose_overworld(
     task: TaskEnvelope,
     obs: PlayerObservation,
     memory: str | None = None,
+    recent: list[dict[str, Any]] | None = None,
     vision_only: bool = False,
     walkthrough_hint: str | None = None,
     objectives: dict[str, str] | None = None,
@@ -246,6 +250,7 @@ def propose_overworld(
                 **_obs_payload(obs, vision_only=vision_only),
             },
             memory=memory,
+            recent=recent,
             walkthrough_hint=walkthrough_hint,
             objectives=objectives,
         )
@@ -288,6 +293,7 @@ def propose_battle(
     task: TaskEnvelope,
     obs: PlayerObservation,
     memory: str | None = None,
+    recent: list[dict[str, Any]] | None = None,
     vision_only: bool = False,
     walkthrough_hint: str | None = None,
     objectives: dict[str, str] | None = None,
@@ -300,6 +306,7 @@ def propose_battle(
                 "reminder": "ONE battle input only (optional wait_60 after).",
             },
             memory=memory,
+            recent=recent,
             walkthrough_hint=walkthrough_hint,
             objectives=objectives,
         )
@@ -343,6 +350,7 @@ def advise_recovery(
     stuck_score: int,
     recent_positions: list[tuple[str | None, int | None, int | None]],
     memory: str | None = None,
+    recent: list[dict[str, Any]] | None = None,
     vision_only: bool = False,
     walkthrough_hint: str | None = None,
     objectives: dict[str, str] | None = None,
@@ -357,6 +365,7 @@ def advise_recovery(
         _with_extras(
             payload,
             memory=memory,
+            recent=recent,
             walkthrough_hint=walkthrough_hint,
             objectives=objectives,
         )

@@ -73,9 +73,10 @@ dashboard control
 - Vendored CLI: `third_party/optmem/memo` ([VictorTaelin/OptMem](https://github.com/VictorTaelin/OptMem))
 - Per run: `runs/<run-id>/memory/` via `MEMORY_DIR`
 - Orchestrator: `wake` before prompt, `note` after step, deterministic auto-`nap`
-- Default `wake_lines: 24`; `rollup_every: 25` runs a text-only memory compression (no screenshot)
+- Short-term: orchestrator injects `recent` (last ~8 actions + outcomes) into each prompt
+- Long-term OptMem: landmarks / rollups only (not every step). `rollup_every: 25`
 - Agent may emit `objectives` + `landmarks` → dashboard / `LANDMARK` OptMem notes
-- Disable: `memory.enabled: false` or `NUZLOCKE_MEMORY=0`
+- Disable OptMem: `memory.enabled: false` or `NUZLOCKE_MEMORY=0`
 
 ### Walkthrough skill
 

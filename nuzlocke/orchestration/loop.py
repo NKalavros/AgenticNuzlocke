@@ -105,6 +105,9 @@ class RunLoop:
         _install_walkthrough_skill(self.run_dir / "agent_workspace")
         self.stuck_score = 0
         self.recent_positions: list[tuple[str | None, int | None, int | None]] = []
+        # Short-term context for prompts (not OptMem).
+        self.recent_steps: list[dict[str, Any]] = []
+        self._recent_limit = 8
         self._last_fingerprint: tuple | None = None
         self._noop_streak = 0
         self.prompt_interval_s = max(
@@ -296,13 +299,13 @@ class RunLoop:
                 "vision_only": self.vision_only,
                 "input_ready": obs.input_ready,
                 "hint": (
-                    "Last actions did not change the screen/position — "
-                    "do not repeat the same walks; use the screenshot + memory."
+                    f"noop_streak={self._noop_streak}"
                     if self._noop_streak >= 1
                     else None
                 ),
             }
             memory_text = self.memory.wake()
+            recent_ctx = list(self.recent_steps)
             need_guide = self._noop_streak >= 2 or self.stuck_score >= 3
             walkthrough_hint = None
             if need_guide:
@@ -355,6 +358,7 @@ class RunLoop:
                         stuck_score=self.stuck_score,
                         recent_positions=self.recent_positions,
                         memory=memory_text,
+                        recent=recent_ctx,
                         vision_only=self.vision_only,
                         walkthrough_hint=walkthrough_hint
                         or excerpt_for_context(
@@ -395,6 +399,7 @@ class RunLoop:
                         task=task,
                         obs=obs,
                         memory=memory_text,
+                        recent=recent_ctx,
                         vision_only=self.vision_only,
                         walkthrough_hint=walkthrough_hint,
                         objectives=self.objectives,
@@ -405,6 +410,7 @@ class RunLoop:
                         task=task,
                         obs=obs,
                         memory=memory_text,
+                        recent=recent_ctx,
                         vision_only=self.vision_only,
                         walkthrough_hint=walkthrough_hint,
                         objectives=self.objectives,
@@ -422,6 +428,7 @@ class RunLoop:
                         task=task,
                         obs=obs,
                         memory=memory_text,
+                        recent=recent_ctx,
                         vision_only=self.vision_only,
                         walkthrough_hint=walkthrough_hint,
                         objectives=self.objectives,
@@ -509,23 +516,22 @@ class RunLoop:
                 f"{result.status} {[a.value for a in result.executed_actions]}"
                 + (f" [noop={self._noop_streak}]" if self._noop_streak else "")
             )
-            # Durable memory of what was tried and what changed (or didn't).
-            if self.memory.enabled:
-                pos_bit = (
-                    f"RAM {after.map_name or '?'}@({after.x},{after.y})"
-                    if not self.vision_only
-                    else "vision-only"
-                )
-                outcome = (
-                    f"noop x{self._noop_streak}"
-                    if self._noop_streak
-                    else (result.stopped_early_because or "ok")
-                )
-                self.memory.note(
-                    f"step{steps} [{proposal.agent.value}] {proposal.reason[:120]} "
-                    f"→ {[a.value for a in result.executed_actions][:6]} "
-                    f"| {pos_bit} | {outcome}"
-                )
+            outcome = (
+                f"noop x{self._noop_streak}"
+                if self._noop_streak
+                else (result.stopped_early_because or "ok")
+            )
+            # Short-term prompt context only — OptMem stays for landmarks/rollups.
+            self.recent_steps.append(
+                {
+                    "step": steps,
+                    "agent": proposal.agent.value,
+                    "actions": [a.value for a in result.executed_actions][:8],
+                    "outcome": outcome,
+                    "reason": (proposal.reason or "")[:160],
+                }
+            )
+            self.recent_steps = self.recent_steps[-self._recent_limit :]
             steps += 1
             self._maybe_rollup_memory(
                 steps=steps,
@@ -564,11 +570,19 @@ class RunLoop:
             return
         if self._last_recovery_step >= 0 and steps - self._last_recovery_step <= 1:
             return
+        # Roll up from short-term recent + any durable wake (no per-step OptMem spam).
         wake = self.memory.wake()
-        if not wake.strip():
+        recent_bits = [
+            f"s{r.get('step')}:{r.get('actions')}→{r.get('outcome')}"
+            for r in self.recent_steps
+        ]
+        source = "\n".join(
+            [wake, "recent: " + "; ".join(recent_bits) if recent_bits else ""]
+        ).strip()
+        if not source:
             return
         try:
-            notes = rollup_memory(self.llm, memory=wake)
+            notes = rollup_memory(self.llm, memory=source)
         except Exception as err:
             self.env.push_event("alert", f"memory rollup failed: {err}")
             return

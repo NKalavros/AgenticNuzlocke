@@ -1,9 +1,11 @@
 """Thin wrapper around VictorTaelin/OptMem (`memo` CLI).
 
-We drive OptMem from the orchestrator (not from the role LLM) so the ~2s
-JSON action cadence stays intact: wake text is injected into prompts, and
-notes are written after each step. Pending compressions are auto-napped with
-a deterministic join of the source lines (no invented content).
+OptMem holds **long-term** facts only (landmarks, rollups, run meta).
+Short-term step history lives in the orchestrator prompt, not here.
+
+Wake text is injected into role prompts; pending compressions are auto-napped
+deterministically (no invented content). If wake is blocked on homework, we
+drain naps and return empty rather than injecting compression instructions.
 """
 
 from __future__ import annotations
@@ -87,18 +89,28 @@ class OptMem:
         if not self.enabled:
             return ""
         text = self._run(["wake"], check=False)
-        # Drop trailing compression homework from the injected context; we
-        # handle naps ourselves after note().
+        if "Cannot wake" in text:
+            self._auto_nap(text, max_naps=64)
+            text = self._run(["wake"], check=False)
+        if "Cannot wake" in text:
+            # Never inject OptMem homework into the LLM prompt.
+            return ""
+        # Drop trailing compression homework from the injected context.
         lines = []
         for line in text.splitlines():
             if line.startswith("Compress memories"):
                 break
             if line.startswith("Run:"):
                 break
+            if line.startswith("Cannot wake"):
+                continue
+            if line.startswith("Do the ") and "compressions" in line:
+                continue
             lines.append(line)
         return "\n".join(lines).strip()
 
     def note(self, text: str) -> str:
+        """Append a durable long-term note (landmarks / rollups / rare meta)."""
         if not self.enabled:
             return ""
         cleaned = " ".join(str(text).split())
@@ -106,7 +118,7 @@ class OptMem:
             return ""
         cleaned = cleaned[:_ENTRY_MAX]
         out = self._run(["note", cleaned], check=False)
-        self._auto_nap(out)
+        self._auto_nap(out, max_naps=16)
         return out
 
     def recall(self, pattern: str) -> str:
@@ -114,11 +126,10 @@ class OptMem:
             return ""
         return self._run(["recall", pattern], check=False)
 
-    def _auto_nap(self, note_out: str) -> None:
+    def _auto_nap(self, note_out: str, *, max_naps: int = 8) -> None:
         """Satisfy OptMem compressions without an extra LLM round-trip."""
         pending = note_out
-        # Drain a few pending merges so the tree stays healthy.
-        for _ in range(8):
+        for _ in range(max(1, int(max_naps))):
             match = _NAP_ID_RE.search(pending)
             if not match:
                 return
