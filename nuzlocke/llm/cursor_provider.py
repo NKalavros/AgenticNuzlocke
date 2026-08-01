@@ -46,10 +46,9 @@ def _is_bridge_down(err: BaseException) -> bool:
 class CursorProvider(LLMProvider):
     """Role calls via one long-lived local Cursor agent.
 
-    Follow-up ``send`` keeps conversation context. Every ``compact_every``
-    successful turns we ask for a short text summary (no screenshot), then
-    recreate the agent and carry that summary forward — bounds token growth
-    without thrashing the bridge every prompt.
+    Follow-up ``send`` keeps conversation context. When reported (or estimated)
+    input context reaches ``compact_at_tokens``, ask for a short text summary,
+    recreate the agent, and carry that summary forward.
     """
 
     name = "cursor"
@@ -63,7 +62,7 @@ class CursorProvider(LLMProvider):
         workspace: Path,
         on_stream: Callable[[str], None] | None = None,
         max_retries: int = 5,
-        compact_every: int = 20,
+        compact_at_tokens: int = 250_000,
     ) -> None:
         self.model = model
         self.model_params = model_params or {}
@@ -76,9 +75,10 @@ class CursorProvider(LLMProvider):
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.on_stream = on_stream
         self.max_retries = max(1, int(max_retries))
-        self.compact_every = max(0, int(compact_every))
-        self._turns_on_agent = 0
+        self.compact_at_tokens = max(0, int(compact_at_tokens))
         self._session_summary = ""
+        self._last_input_tokens = 0
+        self._est_context_tokens = 0
         self._last_stream_push = 0.0
         self._agent = self._create_agent()
 
@@ -107,7 +107,13 @@ class CursorProvider(LLMProvider):
         except Exception:
             pass
         self._agent = self._create_agent()
-        self._turns_on_agent = 0
+        self._est_context_tokens = max(0, len(self._session_summary) // 4)
+        self._last_input_tokens = 0
+
+    @staticmethod
+    def _estimate_prompt_tokens(prompt_text: str, image_count: int) -> int:
+        # Rough chars→tokens + typical Gemini image budget at 160×144.
+        return len(prompt_text) // 4 + 1120 * max(0, image_count)
 
     def _build_prompt(
         self,
@@ -208,6 +214,11 @@ User / observation:
         except Exception as err:
             if self.on_stream:
                 self.on_stream(f"[cursor] recreate after compact failed: {err}")
+
+    def _should_compact(self, context_tokens: int) -> bool:
+        if self.compact_at_tokens <= 0:
+            return False
+        return context_tokens >= self.compact_at_tokens
 
     def complete(
         self,
@@ -355,8 +366,27 @@ User / observation:
             usage=usage,
         )
 
-        self._turns_on_agent += 1
-        if self.compact_every > 0 and self._turns_on_agent >= self.compact_every:
+        reported = None
+        if usage and usage.get("input_tokens") is not None:
+            try:
+                reported = int(usage["input_tokens"])
+            except (TypeError, ValueError):
+                reported = None
+        if reported is not None and reported > 0:
+            self._last_input_tokens = reported
+            context_tokens = reported
+        else:
+            # Usage missing — grow a coarse estimate so compaction still fires.
+            self._est_context_tokens += self._estimate_prompt_tokens(
+                prompt_text, len(images)
+            )
+            context_tokens = self._est_context_tokens
+        if self.on_stream and context_tokens > 0:
+            self.on_stream(
+                f"[cursor] context≈{context_tokens} tokens "
+                f"(compact≥{self.compact_at_tokens or 'off'})"
+            )
+        if self._should_compact(context_tokens):
             self._compact_and_reset()
         return resp
 
