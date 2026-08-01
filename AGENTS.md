@@ -32,8 +32,8 @@ After a crash, resume the same run from its latest checkpoint: `uv run nuzlocke 
 | Do | Don’t |
 |----|--------|
 | Look for `pokemon-agent` under `.venv/lib/python3.*/site-packages/pokemon_agent/` | Search `$HOME` or the whole disk for packages |
-| Trust **screenshots** over RAM on Red Star | Blind-walk from map/coords alone |
-| Only prompt the LLM when input-ready (orchestrator gate) | Spend LLM turns on dialog/animations |
+| Trust **screenshots** over RAM on Red Star | Blind-walk from map/coords alone, or gate behavior on `joy_ignore`/`dialog_active` |
+| Let the emulator run in real time and just observe on a fixed cadence | Add back RAM-based readiness polling — it was removed after `dialog_active` was confirmed false while a real dialog was on screen |
 | Keep changes scoped; update README/AGENTS when behavior changes | Restart a live run unless the user asks |
 | Commit only when the user asks | Commit ROMs, `.env`, or `runs/*` artifacts |
 
@@ -41,7 +41,7 @@ After a crash, resume the same run from its latest checkpoint: `uv run nuzlocke 
 
 ```text
 dashboard control
-    → wait_until_input_ready   # auto-advance dialog; wait animations
+    → observe()   # screenshot, no RAM-based wait — game runs in real time
     → referee.advance(badges) → ledger.update (encounter/death)
     → OptMem wake
     → (if stuck) walkthrough_hint excerpt
@@ -54,14 +54,10 @@ dashboard control
 
 ### Cadence (`config/run.yaml`)
 
-- `prompt_interval_s: 1.5` — min wall time between **prompt cycles** (`NUZLOCKE_PROMPT_INTERVAL_S`)
+- `prompt_interval_s: 2.0` — wall time between **prompt cycles** (`NUZLOCKE_PROMPT_INTERVAL_S`); no RAM-based readiness gating — the emulator just runs and each cycle looks at whatever is on screen
 - `press_interval_s: 0.1` — tiny gap between buttons in a burst
 - `max_actions_per_proposal: 12` — logical actions; `walk_*_2`…`_5` macros count as one
-- `input_ready.enabled: true` — only invoke LLM when the agent can act
-  - bit 5 dialog → auto mash B+A
-  - bit 6 naming → prompt immediately
-  - other locks → short wait (~3s), then prompt
-- Action **`skip_dialog`**: agent-requested mash through narrative text (stops on naming)
+- Action **`skip_dialog`**: agent-requested mash through narrative text (stops on naming) — the agent recognizes dialog/menus visually and proposes it itself, no orchestrator-side detection
 - Multi-tile walks: `walk_up_3` etc. expand client-side before `/action`
 
 ### Vision
@@ -69,7 +65,7 @@ dashboard control
 - Screenshots: native **160×144** PNG from `GET /screenshot`
 - Attached via Cursor `SDKImage.from_file` with `dimension=(160,144)` metadata only
 - **No Gemini `media_resolution`** (low/medium/high) on this SDK path — vision-only does not change image token billing by itself
-- `vision_only` default **true** (`--with-ram` / `NUZLOCKE_VISION_ONLY=0` to include RAM JSON). Orchestrator still uses RAM for battle/boot routing and stuck scoring
+- `vision_only` default **true** — this is the only supported path. RAM is not used for prompt cadence, action gating, or dialog detection anymore (see known pitfall #6): `joy_ignore`/`dialog_active` were confirmed wrong on Red Star. RAM is still read for the Nuzlocke referee (badges/party/battle — deterministic bookkeeping, not shown to the LLM) since there's no reliable vision-only substitute for permadeath/encounter tracking
 - Cursor provider keeps one durable agent; when context hits ``compact_at_tokens`` (default 250k) it asks for a short session summary, then recreates with that summary carried forward
 
 ### Memory (OptMem)
@@ -95,7 +91,7 @@ dashboard control
 | File | Purpose |
 |------|---------|
 | `config/agents.yaml` | Provider + model (default `gemini-3.6-flash`, `thinking: "false"`) |
-| `config/run.yaml` | ROM, ports, cadence, `vision_only`, `input_ready`, OptMem |
+| `config/run.yaml` | ROM, ports, cadence (`prompt_interval_s`), `vision_only`, OptMem |
 | `config/rules_red.yaml` | Nuzlocke clauses / level caps (hashed into manifest) |
 
 Swap model without code changes — edit `config/agents.yaml` (e.g. `claude-sonnet-4-6` for stability).
@@ -105,7 +101,7 @@ Swap model without code changes — edit `config/agents.yaml` (e.g. `claude-sonn
 ```text
 nuzlocke/
   agents/           # prompts + role helpers
-  environment/      # Nous Red HTTP adapter (observe / execute / input-ready / checkpoints)
+  environment/      # Nous Red HTTP adapter (observe / execute / checkpoints)
   knowledge/        # walkthrough excerpt loader
   llm/              # cursor + openai_compatible providers
   memory/           # OptMem (in-repo durable-notes store)
@@ -120,11 +116,11 @@ runs/               # per-run artifacts (gitignored)
 
 ## Known pitfalls (read before debugging)
 
-1. **RAM lies on Red Star** — map may say “Red’s House” while the screen shows Oak text or a naming keyboard.
+1. **RAM lies on Red Star** — map may say “Red’s House” while the screen shows Oak text or a naming keyboard. Confirmed directly: `dialog.active=false, joy_ignore=0` while the screenshot showed an active Oak dialogue box mid-print, and 5 consecutive walk actions in that state produced zero position/facing change. This is why RAM-based input-ready gating was removed entirely — see the Cadence section above.
 2. **Up/down house thrash** — model mislabels interior as Pallet outdoors; OptMem + walkthrough exist to break that loop.
-3. **Battles without input-ready gating** waste many LLM turns on “Enemy used X!” text — gating must stay enabled.
+3. **Battles waste turns on "Enemy used X!" text** if the agent doesn't `skip_dialog` — there's no orchestrator-side auto-advance anymore (RAM can't be trusted to detect it), so the Battle role playbook explicitly tells the agent to use `skip_dialog` when it sees narration.
 4. **Naming screen** — walks move the letter cursor; must finish **END**.
-5. pokemon-agent’s `a_until_dialog_end` checks a flat `dialog_active` key incorrectly; we prefer `hold_b_120` + `press_a` / our own ready loop.
+5. pokemon-agent’s `a_until_dialog_end` checks a flat `dialog_active` key incorrectly; we prefer `hold_b_120` + `press_a` instead.
 6. pokemon-agent’s `/save` writes into a **session-scoped** folder whenever a dashboard "game session" is active (e.g. New Game/Load clicked in the dashboard), but `/load` always reads the **flat** `data_dir/saves/` dir — `NousRedEnvironment.save_checkpoint` verifies the name shows up in `/saves` and raises loudly if not, rather than silently producing an unloadable checkpoint. Close any active dashboard session for `checkpoint:` auto-saves to work.
 
 ## Cost (order of magnitude)

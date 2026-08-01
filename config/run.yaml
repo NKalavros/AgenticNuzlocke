@@ -28,19 +28,13 @@ control:
 
 # Cadence: prompt agent → announce actions → execute at emulator speed →
 # wait so prompts are ~every N seconds (wall clock from cycle start).
-# Override: NUZLOCKE_PROMPT_INTERVAL_S=1.5
-prompt_interval_s: 1.5
+# No RAM-based readiness gating (joy_ignore/dialog_active can be wrong on
+# ROM hacks like Red Star) — the game just runs in real time between
+# prompts and each cycle looks at whatever is on screen.
+# Override: NUZLOCKE_PROMPT_INTERVAL_S=2.0
+prompt_interval_s: 2.0
 # Tiny gap between successive button presses within a burst.
 press_interval_s: 0.1
-
-# Only invoke the LLM when the joypad can accept a decision.
-# bit5 dialog → auto mash B+A; bit6 naming → prompt immediately; other → short wait.
-input_ready:
-  enabled: true
-  timeout_s: 3.0
-  auto_advance_dialog: true
-  poll_wait_action: wait_30
-  skip_dialog_max_rounds: 30
 
 # OptMem — durable run memory (capped append-only notes file, see
 # nuzlocke/memory/optmem.py). Orchestrator wakes/notes; role agents

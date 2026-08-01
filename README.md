@@ -16,11 +16,11 @@ Working:
 - Pokemon Red/Blue-style `.gb` via `pokemon-agent` + dashboard at `http://127.0.0.1:8765/dashboard`
 - Configurable LLM backends (`cursor` default, `openai_compatible` stub for local models later)
 - Vision turns: Overworld / Battle / Recovery attach the current **160×144** screenshot
-- **Input-ready gating:** LLM is prompted only when the joypad is free; dialog/animations are auto-advanced or waited out
+- **Fixed prompt cadence, no RAM-based readiness gating:** the emulator runs in real time and the orchestrator just observes + prompts every `prompt_interval_s` (default 2s) regardless of what's on screen — `joy_ignore`/`dialog_active` can be wrong on ROM hacks like Red Star, so nothing about *when to prompt* depends on them. The agent recognizes dialog/menus visually and proposes `skip_dialog` itself.
 - **Short-term `recent`** (last ~8 actions/outcomes) in each prompt; **OptMem** for long-term landmarks/rollups only
 - **Walkthrough skill** (`.cursor/skills/pokemon-red-walkthrough/`) — excerpt injected when stuck; copied into agent workspace
-- Optional **vision-only** mode (default **on**): prompts get screenshot + memory (+ walkthrough when stuck), no RAM JSON
-- Prompt cadence ~1.5s; announce actions → execute with 0.1s per-press gap
+- **Vision-only is how we actually run this** (default **on**; `--with-ram` still exists in code but isn't part of the supported path — RAM state on ROM hacks like Red Star can be wrong, so nothing here should depend on it): prompts get screenshot + memory (+ walkthrough when stuck), no RAM JSON
+- Prompt cadence ~2s; announce actions → execute with 0.1s per-press gap
 - Overworld: short bursts with optional multi-tile `walk_*_N` macros (max 12 logical); Battle: up to 4
 - Agent-owned objectives + landmark notes; OptMem text rollup every 25 steps
 - Action Arbiter is the only writer of button presses; early-stop on dialog / battle / map change
@@ -39,7 +39,7 @@ Partial / stub:
 
 Known pitfall:
 
-- **ROM hacks (including Red Star) can make RAM lie.** Map/dialog flags may say “Red’s House” while the screen shows Oak text or the `YOUR NAME?` keyboard. Agents must **trust the screenshot**.
+- **ROM hacks (including Red Star) can make RAM lie.** Map/dialog flags may say “Red’s House” while the screen shows Oak text or the `YOUR NAME?` keyboard. Confirmed live: `dialog.active`/`joy_ignore` read `false`/`0` (no dialog) while the screenshot clearly showed an active Oak dialogue box mid-print. This is why the orchestrator no longer uses RAM for prompt-cadence or action-gating decisions — it's screenshot-only, on a fixed timer. Agents must **trust the screenshot**.
 
 ---
 
@@ -88,7 +88,7 @@ Press **START** on the dashboard if the orchestrator is waiting (`respect_dashbo
 
 ### Prompt cadence
 
-Each ready cycle: **prompt → announce → execute (0.1s between presses) → wait** so the next prompt is ~every N seconds from the moment the game became input-ready.
+No RAM-based readiness polling: each cycle is **observe (screenshot) → prompt → announce → execute (0.1s between presses) → wait** so the next prompt is ~every N seconds from the start of the cycle, regardless of what's mid-animation on screen. `joy_ignore`/`dialog_active` were found to be wrong on Red Star (RAM said no dialog was active while the screen clearly showed one) — so nothing about *when to prompt* trusts them anymore. The agent recognizes dialog/menus/animations visually and proposes `skip_dialog` itself when it sees scrolling text.
 
 | Source | Default |
 |--------|---------|
@@ -96,26 +96,16 @@ Each ready cycle: **prompt → announce → execute (0.1s between presses) → w
 | `config/run.yaml` → `press_interval_s` | `0.1` |
 | Env `NUZLOCKE_PROMPT_INTERVAL_S` | overrides prompt cadence |
 
-### Input-ready gating
-
-Configured under `config/run.yaml` → `input_ready`:
-
-- `joy_ignore` bit 5 (`0x20`, dialog) → orchestrator auto-mashes B+A (no LLM)
-- bit 6 (`0x40`, naming keyboard) → **prompt immediately** (never wait-spin)
-- other nonzero bits → short `wait_30` (~3s timeout), then prompt
-- Agents may emit **`skip_dialog`** to mash B+A through unlocked Red Star text / leftover narration
-
-`skip_dialog` is a client-side macro (up to `skip_dialog_max_rounds`), stopping early on naming or when a dialog lock clears.
+`skip_dialog` is a client-side macro (agent-requested, up to 30 rounds internally) that mashes B+A through narrative text, stopping early on naming or when the dialog lock clears — it's still convenient to use `joy_ignore` as a *mechanical* stop condition inside that mash loop (worst case it mashes a few extra/too-few times), which is a much lower-stakes use than gating whether to act at all.
 
 ### Vision-only mode
 
-Role LLMs omit RAM map/coords/collision/dialog JSON — screenshot + OptMem (+ walkthrough when stuck). Orchestrator still uses RAM for battle/boot routing and stuck scoring.
+This is the only supported mode: role LLMs get the screenshot + OptMem (+ walkthrough when stuck), never RAM map/coords/collision/dialog JSON.
 
 | Source | Default |
 |--------|---------|
 | `config/run.yaml` → `vision_only` | `true` |
-| CLI `--vision-only` / `--with-ram` | overrides YAML |
-| Env `NUZLOCKE_VISION_ONLY=0` | include RAM JSON when CLI omitted |
+| Env `NUZLOCKE_VISION_ONLY=0` | include RAM JSON (code path still exists, not part of the supported flow) |
 
 ### OptMem
 
@@ -213,7 +203,7 @@ Note: the OpenAI-compatible path is text-only today (screenshot paths are noted 
 
 | File | Role |
 |------|------|
-| `config/run.yaml` | ROM, ports, cadence, `vision_only`, `input_ready`, OptMem, milestones, `checkpoint` |
+| `config/run.yaml` | ROM, ports, cadence (`prompt_interval_s`), `vision_only`, OptMem, milestones, `checkpoint` |
 | `config/rules_red.yaml` | Nuzlocke clauses + level caps (hashed into the run manifest) |
 | `config/agents.yaml` | Provider, model, retries |
 
@@ -225,14 +215,14 @@ Note: the OpenAI-compatible path is text-only today (screenshot paths are noted 
 Dashboard START/PAUSE/STOP
         │
         ▼
- wait_until_input_ready  (auto dialog / wait animations)
+ observe() — screenshot, every prompt_interval_s (no RAM-based wait)
         │
         ▼
  RunLoop ──► recent + OptMem wake ──► walkthrough_hint if stuck
         │     referee.advance(badges) ──► ledger.update (encounter/death)
         ▼
  Director → Overworld / Battle / Recovery
-        │     screenshot [+ RAM unless vision_only] + memory + nuzlocke facts
+        │     screenshot + memory + nuzlocke facts
         │     (Battle also gets a type-effectiveness hint)
         ▼
  announce → ActionArbiter → pokemon-agent /action
@@ -246,17 +236,17 @@ Dashboard START/PAUSE/STOP
 
 Important behaviors:
 
-- **Screenshot is ground truth** when RAM disagrees (ROM hacks).
+- **Screenshot is the only thing the agent trusts** — RAM (`joy_ignore`/`dialog_active`) has been observed reporting no-dialog while a real dialog box was on screen, so nothing about pacing or gating depends on it. The agent recognizes what's on screen visually and proposes `skip_dialog` itself.
 - **Noop detection**: unchanged map/position/facing/dialog/screenshot fingerprint raises stuck score; Recovery may take over.
 - **LLM failure**: provider retries → then safe fallback macro; run continues.
-- Arbiter stops a macro early on dialog start, battle start, or map transition.
+- Arbiter stops a macro early on dialog start, battle start, or map transition (best-effort — see known pitfall about RAM reliability above).
 
 Layout:
 
 ```text
 nuzlocke/
   agents/          # prompts + role helpers
-  environment/     # Nous Red HTTP adapter + input-ready wait + checkpoints
+  environment/     # Nous Red HTTP adapter + checkpoints
   knowledge/       # walkthrough excerpt loader
   llm/             # cursor + openai_compatible providers
   memory/          # OptMem (in-repo durable-notes store)

@@ -20,7 +20,6 @@ from nuzlocke.agents.roles import (
     rollup_memory,
 )
 from nuzlocke.config import load_agents_config, load_rules, load_run_config, project_root
-from nuzlocke.environment.joypad import is_naming_lock
 from nuzlocke.environment.nous_red import NousRedEnvironment
 from nuzlocke.knowledge.walkthrough import excerpt_for_context, skill_dir
 from nuzlocke.llm.factory import create_provider
@@ -261,38 +260,13 @@ class RunLoop:
                 time.sleep(0.5)
                 continue
 
-            # Advance dialog / wait out animations before spending an LLM turn.
-            ready_cfg = self.run_cfg.get("input_ready") or {}
-            if bool(ready_cfg.get("enabled", True)):
-                obs = self.env.wait_until_input_ready(
-                    timeout_s=float(ready_cfg.get("timeout_s", 3.0)),
-                    auto_advance_dialog=bool(
-                        ready_cfg.get("auto_advance_dialog", True)
-                    ),
-                    poll_wait_action=str(
-                        ready_cfg.get("poll_wait_action", "wait_30")
-                    ),
-                    skip_dialog_max_rounds=int(
-                        ready_cfg.get("skip_dialog_max_rounds", 30)
-                    ),
-                )
-            else:
-                obs = self.env.observe()
-
-            naming = is_naming_lock(obs.joy_ignore)
-            console.print(
-                f"[dim]joy[/dim] ignore={obs.joy_ignore} "
-                f"dialog={obs.dialog_active} naming={naming} "
-                f"ready={obs.input_ready} battle={obs.in_battle}"
-            )
-            self.env.push_event(
-                "reasoning",
-                f"joy_ignore={obs.joy_ignore} dialog={obs.dialog_active} "
-                f"naming={naming} input_ready={obs.input_ready}",
-            )
-
-            # Cadence timer starts once the game can accept a decision.
+            # Vision-only cadence: no RAM-based readiness polling (joy_ignore
+            # / dialog_active can be wrong on ROM hacks like Red Star — the
+            # agent must trust the screenshot). Let the emulation run in
+            # real time and just look at whatever is on screen each cycle.
             cycle_started = time.time()
+            obs = self.env.observe()
+            console.print(f"[dim]map={obs.map_name} battle={obs.in_battle}[/dim]")
 
             self.store.append("observation", obs.model_dump(mode="json"))
             self.stuck.update_position(obs)
@@ -313,7 +287,6 @@ class RunLoop:
                 "deaths": len(self.referee.death_ledger),
                 "encounters": self.referee.encounter_ledger,
                 "vision_only": self.vision_only,
-                "input_ready": obs.input_ready,
                 "hint": (
                     f"noop_streak={self.stuck.noop_streak}"
                     if self.stuck.noop_streak >= 1

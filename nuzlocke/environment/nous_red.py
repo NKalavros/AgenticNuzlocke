@@ -18,12 +18,6 @@ from nuzlocke.environment.joypad import (
 from nuzlocke.environment.macros import expand_actions
 from nuzlocke.state.models import ControlState, GameAction, PlayerObservation
 
-# Silently swallowed by the game while dialog locks the D-pad (joy_ignore
-# bit 5) — must never fire straight into a locked input.
-_DIALOG_LOCKED_ACTIONS = frozenset(
-    {GameAction.WALK_UP, GameAction.WALK_DOWN, GameAction.WALK_LEFT, GameAction.WALK_RIGHT}
-)
-
 
 class NousRedEnvironment:
     def __init__(
@@ -277,50 +271,6 @@ class NousRedEnvironment:
                 break
         return self.observe()
 
-    def wait_until_input_ready(
-        self,
-        *,
-        timeout_s: float = 3.0,
-        auto_advance_dialog: bool = True,
-        poll_wait_action: str = "wait_30",
-        skip_dialog_max_rounds: int = 30,
-    ) -> PlayerObservation:
-        """Wait until the agent can act; auto-skip pure text locks.
-
-        Joy mask:
-        - bit 5 (0x20): narrative text → orchestrator mash B+A (no LLM)
-        - bit 6 (0x40): naming keyboard → prompt immediately
-        - other nonzero: short wait, then prompt (do not spin 20s)
-        - zero: prompt
-        """
-        deadline = time.time() + max(0.1, float(timeout_s))
-        advanced = 0
-        max_skip = max(1, int(skip_dialog_max_rounds))
-        while time.time() < deadline:
-            joy = self._joy_ignore()
-            if is_naming_lock(joy):
-                obs = self.observe()
-                obs.input_ready = True
-                return obs
-            if joy == 0:
-                obs = self.observe()
-                obs.input_ready = True
-                return obs
-            if auto_advance_dialog and is_dialog_lock(joy):
-                self._mash_dialog_once()
-                advanced += 1
-                if advanced >= max_skip:
-                    break
-                continue
-            # Cutscene / fade / unknown lock — brief wait only.
-            try:
-                self._post_json("/action", {"actions": [poll_wait_action]})
-            except httpx.HTTPError:
-                time.sleep(0.05)
-        obs = self.observe()
-        obs.input_ready = agent_can_act(self._joy_ignore())
-        return obs
-
     def _lock_transition_stop(
         self, before: PlayerObservation, after: PlayerObservation
     ) -> str | None:
@@ -353,25 +303,6 @@ class NousRedEnvironment:
                 if self.press_interval_s > 0 and i + 1 < len(actions):
                     time.sleep(self.press_interval_s)
                 continue
-
-            if action in _DIALOG_LOCKED_ACTIONS and is_dialog_lock(before.joy_ignore):
-                # A walk is silently swallowed while dialog locks the D-pad
-                # (e.g. press_a only advanced to the next text page instead
-                # of closing it) — play the emulation through the text
-                # instead of firing a doomed input, then resume the burst.
-                after = self.execute_skip_dialog()
-                executed.append(GameAction.SKIP_DIALOG)
-                need_full_observe = False
-                stopped = self._lock_transition_stop(before, after)
-                before = after
-                if stopped:
-                    break
-                if is_dialog_lock(before.joy_ignore):
-                    # Still locked after mashing through — a real decision
-                    # point (e.g. YES/NO), not leftover text. Stop rather
-                    # than force the walk through.
-                    stopped = "dialog_active"
-                    break
 
             self._post_json("/action", {"actions": [action.value]})
             executed.append(action)

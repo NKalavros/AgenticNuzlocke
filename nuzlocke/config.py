@@ -41,7 +41,7 @@ def load_run_config(path: Path | None = None) -> dict[str, Any]:
     if raw_prompt is not None and str(raw_prompt).strip() != "":
         cfg["prompt_interval_s"] = float(raw_prompt)
     else:
-        cfg.setdefault("prompt_interval_s", 1.5)
+        cfg.setdefault("prompt_interval_s", 2.0)
 
     raw_vision = os.environ.get("NUZLOCKE_VISION_ONLY")
     if raw_vision is not None and str(raw_vision).strip() != "":
