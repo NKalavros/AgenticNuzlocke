@@ -50,13 +50,15 @@ dashboard control
 
 ### Cadence (`config/run.yaml`)
 
-- `prompt_interval_s: 2.0` — min wall time between **prompt cycles** (`NUZLOCKE_PROMPT_INTERVAL_S`)
+- `prompt_interval_s: 1.5` — min wall time between **prompt cycles** (`NUZLOCKE_PROMPT_INTERVAL_S`)
 - `press_interval_s: 0.1` — tiny gap between buttons in a burst
+- `max_actions_per_proposal: 12` — logical actions; `walk_*_2`…`_5` macros count as one
 - `input_ready.enabled: true` — only invoke LLM when the agent can act
   - bit 5 dialog → auto mash B+A
   - bit 6 naming → prompt immediately
   - other locks → short wait (~3s), then prompt
 - Action **`skip_dialog`**: agent-requested mash through narrative text (stops on naming)
+- Multi-tile walks: `walk_up_3` etc. expand client-side before `/action`
 
 ### Vision
 
@@ -71,7 +73,9 @@ dashboard control
 - Vendored CLI: `third_party/optmem/memo` ([VictorTaelin/OptMem](https://github.com/VictorTaelin/OptMem))
 - Per run: `runs/<run-id>/memory/` via `MEMORY_DIR`
 - Orchestrator: `wake` before prompt, `note` after step, deterministic auto-`nap`
-- Default `wake_lines: 24`; disable: `memory.enabled: false` or `NUZLOCKE_MEMORY=0`
+- Default `wake_lines: 24`; `rollup_every: 25` runs a text-only memory compression (no screenshot)
+- Agent may emit `objectives` + `landmarks` → dashboard / `LANDMARK` OptMem notes
+- Disable: `memory.enabled: false` or `NUZLOCKE_MEMORY=0`
 
 ### Walkthrough skill
 

@@ -15,6 +15,7 @@ from nuzlocke.environment.joypad import (
     is_dialog_lock,
     is_naming_lock,
 )
+from nuzlocke.environment.macros import expand_actions
 from nuzlocke.state.models import ControlState, GameAction, PlayerObservation
 
 
@@ -287,6 +288,8 @@ class NousRedEnvironment:
     def execute(self, actions: list[GameAction]) -> ActionResult:
         # Mid-burst uses peek_state (no screenshot). Full observe once at end
         # (or after skip_dialog, which already observes).
+        # Expand walk_*_N macros into single-tile walks for the emu API.
+        actions = expand_actions(actions)
         before = self.peek_state()
         executed: list[GameAction] = []
         stopped: str | None = None

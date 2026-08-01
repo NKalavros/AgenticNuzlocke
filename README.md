@@ -20,8 +20,9 @@ Working:
 - **OptMem** durable memory per run (`runs/<id>/memory`) — wake before prompt, note after step
 - **Walkthrough skill** (`.cursor/skills/pokemon-red-walkthrough/`) — excerpt injected when stuck; copied into agent workspace
 - Optional **vision-only** mode (default **on**): prompts get screenshot + memory (+ walkthrough when stuck), no RAM JSON
-- Prompt cadence ~2s; announce actions → execute with 0.1s per-press gap
-- Overworld: short bursts (~1–3 actions, max 8); Battle: up to 4 menu actions when input-ready
+- Prompt cadence ~1.5s; announce actions → execute with 0.1s per-press gap
+- Overworld: short bursts with optional multi-tile `walk_*_N` macros (max 12 logical); Battle: up to 4
+- Agent-owned objectives + landmark notes; OptMem text rollup every 25 steps
 - Action Arbiter is the only writer of button presses; early-stop on dialog / battle / map change
 - Append-only `runs/<run-id>/events.jsonl` + SQLite; dashboard events (`reasoning` / `decision` / `action` / …)
 - Cursor provider: **fresh agent each turn** (no multi-turn history bleed) + retries; orchestrator **fallback macro** if LLM still fails

@@ -22,13 +22,14 @@ control:
   # Poll pokemon-agent /control so dashboard START/PAUSE/STOP works.
   respect_dashboard_control: true
   poll_interval_s: 0.5
-  max_actions_per_proposal: 8
+  # Logical actions per proposal (walk_*_N macros count as one).
+  max_actions_per_proposal: 12
   # Overworld: short real-time bursts; battles up to 4 when input-ready.
 
 # Cadence: prompt agent → announce actions → execute at emulator speed →
 # wait so prompts are ~every N seconds (wall clock from cycle start).
-# Override: NUZLOCKE_PROMPT_INTERVAL_S=2
-prompt_interval_s: 2.0
+# Override: NUZLOCKE_PROMPT_INTERVAL_S=1.5
+prompt_interval_s: 1.5
 # Tiny gap between successive button presses within a burst.
 press_interval_s: 0.1
 
@@ -47,6 +48,8 @@ input_ready:
 memory:
   enabled: true
   wake_lines: 24
+  # Text-only OptMem compression every N prompt cycles (0 = off).
+  rollup_every: 25
   # null → third_party/optmem/memo, else ~/.optmem/memo
   memo_bin: null
 

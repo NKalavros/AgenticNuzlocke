@@ -15,6 +15,8 @@ from nuzlocke.state.models import (
     DirectorDecision,
     GameAction,
     GameMode,
+    LandmarkNote,
+    ObjectivesUpdate,
     PlayerObservation,
     RecoveryAdvice,
     TaskEnvelope,
@@ -50,6 +52,7 @@ def _with_extras(
     *,
     memory: str | None = None,
     walkthrough_hint: str | None = None,
+    objectives: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     if memory and memory.strip():
         payload["memory"] = memory.strip()
@@ -58,11 +61,75 @@ def _with_extras(
         payload["walkthrough_skill"] = (
             "hint above is the relevant excerpt — do not browse skill files"
         )
+    if objectives:
+        payload["objectives"] = objectives
     return payload
 
 
-def _with_memory(payload: dict[str, Any], memory: str | None) -> dict[str, Any]:
-    return _with_extras(payload, memory=memory)
+def parse_objectives(raw: Any) -> ObjectivesUpdate | None:
+    if not isinstance(raw, dict):
+        return None
+    primary = raw.get("primary")
+    secondary = raw.get("secondary")
+    tertiary = raw.get("tertiary")
+    if not any(
+        isinstance(v, str) and v.strip() for v in (primary, secondary, tertiary)
+    ):
+        return None
+    return ObjectivesUpdate(
+        primary=str(primary).strip() if isinstance(primary, str) and primary.strip() else None,
+        secondary=(
+            str(secondary).strip()
+            if isinstance(secondary, str) and secondary.strip()
+            else None
+        ),
+        tertiary=(
+            str(tertiary).strip()
+            if isinstance(tertiary, str) and tertiary.strip()
+            else None
+        ),
+    )
+
+
+def parse_landmarks(raw: Any) -> list[LandmarkNote]:
+    if not isinstance(raw, list):
+        return []
+    out: list[LandmarkNote] = []
+    for item in raw[:6]:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label") or "").strip()
+        note = str(item.get("note") or "").strip()
+        if not label or not note:
+            continue
+        out.append(LandmarkNote(label=label[:80], note=note[:200]))
+    return out
+
+
+def merge_objectives(
+    current: dict[str, str],
+    update: ObjectivesUpdate | None,
+) -> dict[str, str]:
+    if update is None:
+        return current
+    merged = dict(current)
+    if update.primary:
+        merged["primary"] = update.primary
+    if update.secondary:
+        merged["secondary"] = update.secondary
+    if update.tertiary:
+        merged["tertiary"] = update.tertiary
+    return merged
+
+
+def objectives_for_dashboard(objectives: dict[str, str]) -> list[dict[str, Any]]:
+    tiers = ("primary", "secondary", "tertiary")
+    out: list[dict[str, Any]] = []
+    for tier in tiers:
+        text = objectives.get(tier)
+        if text:
+            out.append({"tier": tier, "text": text, "done": False})
+    return out
 
 
 def decide_director(
@@ -92,7 +159,7 @@ def decide_director(
                 "Trust the screenshot over RAM",
                 "Prefer skip_dialog for Oak/intro text; naming keyboard → END",
                 "Handle YES-NO / naming before walking",
-                "Max 8 actions",
+                "Max 12 actions (macros count as one)",
             ],
             success=["controllable overworld visible on screen"],
             abort=["battle_started"],
@@ -147,7 +214,7 @@ def decide_director(
         owner=AgentRole.OVERWORLD,
         objective=objective,
         constraints=[
-            "About 1-3 real-time actions per prompt (~every 2s)",
+            "About 1-5 logical actions per prompt; prefer walk_*_3/4 on clear paths",
             "Screenshot is ground truth",
             "Do not walk while a text box or naming grid is visible",
             "Use memory: do not repeat failed walks / false outdoors guesses",
@@ -170,6 +237,7 @@ def propose_overworld(
     memory: str | None = None,
     vision_only: bool = False,
     walkthrough_hint: str | None = None,
+    objectives: dict[str, str] | None = None,
 ) -> ActionProposal:
     user = _dumps(
         _with_extras(
@@ -179,6 +247,7 @@ def propose_overworld(
             },
             memory=memory,
             walkthrough_hint=walkthrough_hint,
+            objectives=objectives,
         )
     )
     system = prompts.OVERWORLD_SYSTEM
@@ -205,9 +274,11 @@ def propose_overworld(
         task_id=task.task_id,
         agent=AgentRole.OVERWORLD,
         reason=str(data.get("reason") or resp.raw_text[:300] or "overworld step"),
-        actions=actions[:8],
+        actions=actions[:12],
         expected=list(data.get("expected") or []),
         risk=data.get("risk") if data.get("risk") in {"low", "medium", "high"} else "low",
+        objectives=parse_objectives(data.get("objectives")),
+        landmarks=parse_landmarks(data.get("landmarks")),
     )
 
 
@@ -219,6 +290,7 @@ def propose_battle(
     memory: str | None = None,
     vision_only: bool = False,
     walkthrough_hint: str | None = None,
+    objectives: dict[str, str] | None = None,
 ) -> ActionProposal:
     user = _dumps(
         _with_extras(
@@ -229,6 +301,7 @@ def propose_battle(
             },
             memory=memory,
             walkthrough_hint=walkthrough_hint,
+            objectives=objectives,
         )
     )
     resp = llm.complete(
@@ -248,7 +321,6 @@ def propose_battle(
             continue
     if not actions:
         actions = [GameAction.PRESS_A]
-    # Cap: Fight menu navigation + move (+ optional wait), not a full turn macro.
     trimmed: list[GameAction] = []
     for action in actions:
         if len(trimmed) >= 4:
@@ -273,6 +345,7 @@ def advise_recovery(
     memory: str | None = None,
     vision_only: bool = False,
     walkthrough_hint: str | None = None,
+    objectives: dict[str, str] | None = None,
 ) -> RecoveryAdvice:
     payload: dict[str, Any] = {
         "stuck_score": stuck_score,
@@ -285,6 +358,7 @@ def advise_recovery(
             payload,
             memory=memory,
             walkthrough_hint=walkthrough_hint,
+            objectives=objectives,
         )
     )
     resp = llm.complete(
@@ -306,7 +380,37 @@ def advise_recovery(
         proposed_actions=actions[:4],
         escalate_to_human=bool(data.get("escalate_to_human", stuck_score >= 5)),
         reason=str(data.get("reason") or resp.raw_text[:300]),
+        objectives=parse_objectives(data.get("objectives")),
+        landmarks=parse_landmarks(data.get("landmarks")),
     )
+
+
+def rollup_memory(
+    llm: LLMProvider,
+    *,
+    memory: str,
+) -> list[str]:
+    """Text-only compression of OptMem wake into durable facts (no screenshot)."""
+    if not memory.strip():
+        return []
+    user = _dumps({"memory": memory.strip()[:6000]})
+    resp = llm.complete(
+        role=AgentRole.DIRECTOR,
+        system=prompts.MEMORY_ROLLUP_SYSTEM,
+        user=user,
+        schema_hint=prompts.MEMORY_ROLLUP_SCHEMA,
+        image_paths=None,
+    )
+    data = resp.parsed or {}
+    notes_raw = data.get("notes")
+    if not isinstance(notes_raw, list):
+        return []
+    notes: list[str] = []
+    for item in notes_raw[:6]:
+        text = " ".join(str(item).split()).strip()
+        if text:
+            notes.append(text[:200])
+    return notes
 
 
 def make_task(decision: DirectorDecision) -> TaskEnvelope:

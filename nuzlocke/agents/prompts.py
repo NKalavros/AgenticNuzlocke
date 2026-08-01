@@ -12,19 +12,24 @@ OVERWORLD_SYSTEM = """You are the Overworld Agent for Pokemon Red / Red-Star Nuz
 
 Screenshot is ground truth (ROM hacks often make RAM lie). MEMORY holds durable
 facts from this run — do not repeat failed walks. If walkthrough_hint is present,
-follow that beat.
+follow that beat. Honor active objectives when set.
 
 Playbook:
 - Title / NEW GAME: press_a (or walk then press_a).
 - Scrolling text / intro / chatter: prefer skip_dialog (not one A per line).
 - YES/NO: press_up then press_a.
 - YOUR NAME? / RIVAL NAME? letter grid: never skip_dialog; finish END + A.
-- Controllable overworld (no text/keyboard): 1-3 steps / one door toward objective.
+- Controllable overworld (no text/keyboard): prefer multi-tile walks
+  (walk_up_3 / walk_down_4 / …) down clear hallways; single walk_* for tight spaces.
+- Optional: update objectives (primary/secondary/tertiary short strings) when the
+  goal changes. Optional: landmarks [{label, note}] for durable places you saw
+  (stairs, door, Oak) — written into memory.
 
-Propose 1-3 actions (hard max 8). Say what you SEE in reason.
+Propose 1-5 logical actions (hard max 12). Macros count as one. Say what you SEE.
 
 Allowed: press_a, press_b, press_start, press_select,
 walk_up, walk_down, walk_left, walk_right,
+walk_up_2..walk_up_5, walk_down_2..5, walk_left_2..5, walk_right_2..5,
 hold_a_30, hold_b_120, wait_60, a_until_dialog_end, skip_dialog.
 """
 
@@ -40,7 +45,14 @@ wait_60, hold_a_30, hold_b_120, skip_dialog.
 RECOVERY_SYSTEM = """You are the Recovery Critic.
 Screenshot first. Text → skip_dialog. Naming keyboard → END (not skip_dialog).
 If walks do not change the screen, stop walking. Prefer walkthrough_hint when present.
-Propose 1-3 recovery actions.
+You may set objectives and landmarks. Prefer multi-tile walks when escaping a loop.
+Propose 1-4 recovery actions.
+"""
+
+MEMORY_ROLLUP_SYSTEM = """You compress OptMem notes for a vision-only Pokemon Red run.
+Reply with ONLY JSON: {"notes":["fact1","fact2",...]}.
+Each note ≤200 chars. Keep: current goal, confirmed places, failed approaches,
+anti-patterns (e.g. up/down thrash). Drop step-by-step noise. 3-6 notes max.
 """
 
 DIRECTOR_SCHEMA = {
@@ -59,9 +71,15 @@ OVERWORLD_SCHEMA = {
     "task_id": "string",
     "agent": "overworld",
     "reason": "string",
-    "actions": ["walk_up", "walk_up", "press_a"],
+    "actions": ["walk_up_3", "press_a"],
     "expected": ["string"],
     "risk": "low|medium|high",
+    "objectives": {
+        "primary": "string|null",
+        "secondary": "string|null",
+        "tertiary": "string|null",
+    },
+    "landmarks": [{"label": "stairs", "note": "south of bed"}],
 }
 
 BATTLE_SCHEMA = {
@@ -75,7 +93,17 @@ BATTLE_SCHEMA = {
 
 RECOVERY_SCHEMA = {
     "diagnosis": "string",
-    "proposed_actions": ["press_b"],
+    "proposed_actions": ["walk_down_3", "press_a"],
     "escalate_to_human": False,
     "reason": "string",
+    "objectives": {
+        "primary": "string|null",
+        "secondary": "string|null",
+        "tertiary": "string|null",
+    },
+    "landmarks": [{"label": "door", "note": "bottom of room"}],
+}
+
+MEMORY_ROLLUP_SCHEMA = {
+    "notes": ["current goal…", "LANDMARK stairs…", "anti-pattern…"],
 }

@@ -13,8 +13,11 @@ from nuzlocke.agents.roles import (
     advise_recovery,
     decide_director,
     make_task,
+    merge_objectives,
+    objectives_for_dashboard,
     propose_battle,
     propose_overworld,
+    rollup_memory,
 )
 from nuzlocke.config import load_agents_config, load_rules, load_run_config, project_root
 from nuzlocke.environment.joypad import is_naming_lock
@@ -92,7 +95,7 @@ class RunLoop:
         self.arbiter = ActionArbiter(
             self.env,
             self.store,
-            max_actions=int(control.get("max_actions_per_proposal", 8)),
+            max_actions=int(control.get("max_actions_per_proposal", 12)),
         )
         self.llm = create_provider(
             self.agents_cfg,
@@ -105,15 +108,18 @@ class RunLoop:
         self._last_fingerprint: tuple | None = None
         self._noop_streak = 0
         self.prompt_interval_s = max(
-            0.0, float(self.run_cfg.get("prompt_interval_s", 2.0))
+            0.0, float(self.run_cfg.get("prompt_interval_s", 1.5))
         )
         mem_cfg = self.run_cfg.get("memory") or {}
         self.memory = OptMem(
             self.run_dir / "memory",
             memo_bin=mem_cfg.get("memo_bin"),
-            wake_lines=int(mem_cfg.get("wake_lines", 48)),
+            wake_lines=int(mem_cfg.get("wake_lines", 24)),
             enabled=bool(mem_cfg.get("enabled", True)),
         )
+        self.rollup_every = max(0, int(mem_cfg.get("rollup_every", 25)))
+        self._last_recovery_step = -1
+        self.objectives = self._seed_objectives()
         if self.memory.enabled:
             self.memory.note(
                 f"Run {self.run_id} started; game={self.run_cfg.get('game')}; "
@@ -122,6 +128,26 @@ class RunLoop:
                 "Red Star: trust screenshot; avoid up/down outdoor hallucination loops"
             )
         self._write_manifest(rom)
+
+    def _seed_objectives(self) -> dict[str, str]:
+        milestones = self.run_cfg.get("milestones") or []
+        texts: list[str] = []
+        for item in milestones:
+            if isinstance(item, dict) and item.get("description"):
+                texts.append(str(item["description"]).strip())
+            elif isinstance(item, str):
+                texts.append(item.strip())
+        while len(texts) < 3:
+            texts.append("")
+        seeded = {
+            "primary": texts[0]
+            or "Leave home · get starter from Oak",
+            "secondary": texts[1]
+            or "Reach Viridian · resolve Route 1 encounter",
+            "tertiary": texts[2]
+            or "Prepare legal team · attempt Brock",
+        }
+        return {k: v for k, v in seeded.items() if v}
 
     def _write_manifest(self, rom: Path | None) -> None:
         manifest = {
@@ -175,25 +201,9 @@ class RunLoop:
             + (" · OptMem on" if self.memory.enabled else ""),
             category="milestone",
         )
-        self.env.set_objectives(
-            [
-                {
-                    "tier": "primary",
-                    "text": "Leave home · get starter from Oak",
-                    "done": False,
-                },
-                {
-                    "tier": "secondary",
-                    "text": "Reach Viridian · resolve Route 1 encounter",
-                    "done": False,
-                },
-                {
-                    "tier": "tertiary",
-                    "text": "Prepare legal team · attempt Brock (cap 14)",
-                    "done": False,
-                },
-            ]
-        )
+        dash_objs = objectives_for_dashboard(self.objectives)
+        if dash_objs:
+            self.env.set_objectives(dash_objs)
         dash = (
             f"http://{(self.run_cfg.get('pokemon_agent') or {}).get('host', '127.0.0.1')}:"
             f"{(self.run_cfg.get('pokemon_agent') or {}).get('port', 8765)}/dashboard"
@@ -329,25 +339,13 @@ class RunLoop:
 
             task = make_task(decision)
             self.arbiter.set_owner(task.owner)
-            self.env.set_objectives(
-                [
-                    {
-                        "tier": "primary",
-                        "text": task.objective,
-                        "done": False,
-                    },
-                    {
-                        "tier": "secondary",
-                        "text": f"Owner: {task.owner.value} · stuck={self.stuck_score}",
-                        "done": False,
-                    },
-                    {
-                        "tier": "tertiary",
-                        "text": f"Map: {obs.map_name or '?'} ({obs.x},{obs.y}) facing {obs.facing}",
-                        "done": False,
-                    },
-                ]
-            )
+            # Keep agent-owned objectives on the dashboard; fold Director goal into
+            # primary only when the agent has not set one yet.
+            if "primary" not in self.objectives and decision.objective:
+                self.objectives["primary"] = decision.objective
+            dash_objs = objectives_for_dashboard(self.objectives)
+            if dash_objs:
+                self.env.set_objectives(dash_objs)
 
             try:
                 if self._noop_streak >= 2 or self.stuck_score >= 6 or decision.mode == GameMode.RECOVERY:
@@ -364,6 +362,7 @@ class RunLoop:
                             reason="stuck recovery",
                             memory=memory_text,
                         ),
+                        objectives=self.objectives,
                     )
                     self.store.append("recovery", advice.model_dump(mode="json"))
                     self.env.push_event("alert", advice.diagnosis)
@@ -384,9 +383,12 @@ class RunLoop:
                             GameAction.PRESS_A,
                             GameAction.PRESS_A,
                         ],
+                        objectives=advice.objectives,
+                        landmarks=advice.landmarks,
                     )
                     self.arbiter.set_owner(AgentRole.RECOVERY)
                     self.stuck_score = max(0, self.stuck_score - 2)
+                    self._last_recovery_step = steps
                 elif task.owner == AgentRole.OVERWORLD:
                     proposal = propose_overworld(
                         self.llm,
@@ -395,6 +397,7 @@ class RunLoop:
                         memory=memory_text,
                         vision_only=self.vision_only,
                         walkthrough_hint=walkthrough_hint,
+                        objectives=self.objectives,
                     )
                 elif task.owner == AgentRole.BATTLE:
                     proposal = propose_battle(
@@ -404,6 +407,7 @@ class RunLoop:
                         memory=memory_text,
                         vision_only=self.vision_only,
                         walkthrough_hint=walkthrough_hint,
+                        objectives=self.objectives,
                     )
                 else:
                     # MVP: unimplemented owners fall back to overworld macros.
@@ -420,6 +424,7 @@ class RunLoop:
                         memory=memory_text,
                         vision_only=self.vision_only,
                         walkthrough_hint=walkthrough_hint,
+                        objectives=self.objectives,
                     )
             except Exception as err:
                 self.store.append(
@@ -451,6 +456,7 @@ class RunLoop:
                     )
                     self.arbiter.set_owner(AgentRole.OVERWORLD)
 
+            self._apply_proposal_meta(proposal)
             action_labels = [a.value for a in proposal.actions]
             announce = (
                 f"[{proposal.agent.value}] {proposal.reason} → {action_labels}"
@@ -521,6 +527,10 @@ class RunLoop:
                     f"| {pos_bit} | {outcome}"
                 )
             steps += 1
+            self._maybe_rollup_memory(
+                steps=steps,
+                in_battle=after.in_battle,
+            )
 
             # Keep ~prompt_interval_s between prompt cycles; actions already ran live.
             if self.prompt_interval_s > 0:
@@ -529,6 +539,45 @@ class RunLoop:
                     time.sleep(remaining)
         self.store.append("run_end", {"run_id": self.run_id, "steps": steps})
         self.close()
+
+    def _apply_proposal_meta(self, proposal: ActionProposal) -> None:
+        if proposal.objectives is not None:
+            self.objectives = merge_objectives(self.objectives, proposal.objectives)
+            dash = objectives_for_dashboard(self.objectives)
+            if dash:
+                self.env.set_objectives(dash)
+            self.store.append("objectives", self.objectives)
+        if proposal.landmarks and self.memory.enabled:
+            for landmark in proposal.landmarks:
+                self.memory.note(f"LANDMARK {landmark.label}: {landmark.note}")
+            self.env.push_event(
+                "reasoning",
+                f"landmarks: {[lm.label for lm in proposal.landmarks]}",
+            )
+
+    def _maybe_rollup_memory(self, *, steps: int, in_battle: bool) -> None:
+        if not self.memory.enabled or self.rollup_every <= 0:
+            return
+        if steps == 0 or steps % self.rollup_every != 0:
+            return
+        if in_battle:
+            return
+        if self._last_recovery_step >= 0 and steps - self._last_recovery_step <= 1:
+            return
+        wake = self.memory.wake()
+        if not wake.strip():
+            return
+        try:
+            notes = rollup_memory(self.llm, memory=wake)
+        except Exception as err:
+            self.env.push_event("alert", f"memory rollup failed: {err}")
+            return
+        if not notes:
+            return
+        for note in notes:
+            self.memory.note(f"ROLLUP {note}")
+        self.env.push_event("reasoning", f"[memory] rollup wrote {len(notes)} notes")
+        self.store.append("memory_rollup", {"steps": steps, "notes": notes})
 
     def close(self) -> None:
         self.llm.close()

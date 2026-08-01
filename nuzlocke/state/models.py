@@ -44,12 +44,40 @@ class GameAction(str, Enum):
     WALK_DOWN = "walk_down"
     WALK_LEFT = "walk_left"
     WALK_RIGHT = "walk_right"
+    # Client-side multi-tile walks (expanded before /action).
+    WALK_UP_2 = "walk_up_2"
+    WALK_UP_3 = "walk_up_3"
+    WALK_UP_4 = "walk_up_4"
+    WALK_UP_5 = "walk_up_5"
+    WALK_DOWN_2 = "walk_down_2"
+    WALK_DOWN_3 = "walk_down_3"
+    WALK_DOWN_4 = "walk_down_4"
+    WALK_DOWN_5 = "walk_down_5"
+    WALK_LEFT_2 = "walk_left_2"
+    WALK_LEFT_3 = "walk_left_3"
+    WALK_LEFT_4 = "walk_left_4"
+    WALK_LEFT_5 = "walk_left_5"
+    WALK_RIGHT_2 = "walk_right_2"
+    WALK_RIGHT_3 = "walk_right_3"
+    WALK_RIGHT_4 = "walk_right_4"
+    WALK_RIGHT_5 = "walk_right_5"
     HOLD_A_30 = "hold_a_30"
     HOLD_B_120 = "hold_b_120"
     WAIT_60 = "wait_60"
     A_UNTIL_DIALOG_END = "a_until_dialog_end"
     # Client-side macro: mash B+A through narrative text (not a raw emu opcode).
     SKIP_DIALOG = "skip_dialog"
+
+
+class LandmarkNote(BaseModel):
+    label: str
+    note: str
+
+
+class ObjectivesUpdate(BaseModel):
+    primary: str | None = None
+    secondary: str | None = None
+    tertiary: str | None = None
 
 
 class TaskEnvelope(BaseModel):
@@ -70,6 +98,8 @@ class ActionProposal(BaseModel):
     actions: list[GameAction]
     expected: list[str] = Field(default_factory=list)
     risk: Literal["low", "medium", "high"] = "low"
+    objectives: ObjectivesUpdate | None = None
+    landmarks: list[LandmarkNote] = Field(default_factory=list)
 
 
 class ArbiterResult(BaseModel):
@@ -98,6 +128,8 @@ class RecoveryAdvice(BaseModel):
     proposed_actions: list[GameAction] = Field(default_factory=list)
     escalate_to_human: bool = False
     reason: str
+    objectives: ObjectivesUpdate | None = None
+    landmarks: list[LandmarkNote] = Field(default_factory=list)
 
 
 class PlayerObservation(BaseModel):
