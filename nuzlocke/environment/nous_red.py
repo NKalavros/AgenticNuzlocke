@@ -18,6 +18,12 @@ from nuzlocke.environment.joypad import (
 from nuzlocke.environment.macros import expand_actions
 from nuzlocke.state.models import ControlState, GameAction, PlayerObservation
 
+# Silently swallowed by the game while dialog locks the D-pad (joy_ignore
+# bit 5) — must never fire straight into a locked input.
+_DIALOG_LOCKED_ACTIONS = frozenset(
+    {GameAction.WALK_UP, GameAction.WALK_DOWN, GameAction.WALK_LEFT, GameAction.WALK_RIGHT}
+)
+
 
 class NousRedEnvironment:
     def __init__(
@@ -315,6 +321,17 @@ class NousRedEnvironment:
         obs.input_ready = agent_can_act(self._joy_ignore())
         return obs
 
+    def _lock_transition_stop(
+        self, before: PlayerObservation, after: PlayerObservation
+    ) -> str | None:
+        if is_naming_lock(after.joy_ignore):
+            return "naming_screen"
+        if after.in_battle and not before.in_battle:
+            return "battle_started"
+        if after.map_name and before.map_name and after.map_name != before.map_name:
+            return "map_transition"
+        return None
+
     def execute(self, actions: list[GameAction]) -> ActionResult:
         # Mid-burst uses peek_state (no screenshot). Full observe once at end
         # (or after skip_dialog, which already observes).
@@ -329,26 +346,32 @@ class NousRedEnvironment:
                 after = self.execute_skip_dialog()
                 executed.append(action)
                 need_full_observe = False
-                if is_naming_lock(after.joy_ignore):
-                    stopped = "naming_screen"
-                    before = after
-                    break
-                if after.in_battle and not before.in_battle:
-                    stopped = "battle_started"
-                    before = after
-                    break
-                if (
-                    after.map_name
-                    and before.map_name
-                    and after.map_name != before.map_name
-                ):
-                    stopped = "map_transition"
-                    before = after
-                    break
+                stopped = self._lock_transition_stop(before, after)
                 before = after
+                if stopped:
+                    break
                 if self.press_interval_s > 0 and i + 1 < len(actions):
                     time.sleep(self.press_interval_s)
                 continue
+
+            if action in _DIALOG_LOCKED_ACTIONS and is_dialog_lock(before.joy_ignore):
+                # A walk is silently swallowed while dialog locks the D-pad
+                # (e.g. press_a only advanced to the next text page instead
+                # of closing it) — play the emulation through the text
+                # instead of firing a doomed input, then resume the burst.
+                after = self.execute_skip_dialog()
+                executed.append(GameAction.SKIP_DIALOG)
+                need_full_observe = False
+                stopped = self._lock_transition_stop(before, after)
+                before = after
+                if stopped:
+                    break
+                if is_dialog_lock(before.joy_ignore):
+                    # Still locked after mashing through — a real decision
+                    # point (e.g. YES/NO), not leftover text. Stop rather
+                    # than force the walk through.
+                    stopped = "dialog_active"
+                    break
 
             self._post_json("/action", {"actions": [action.value]})
             executed.append(action)
