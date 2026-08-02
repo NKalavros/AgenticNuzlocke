@@ -18,6 +18,17 @@ from nuzlocke.environment.joypad import (
 from nuzlocke.environment.macros import expand_actions
 from nuzlocke.state.models import ControlState, GameAction, PlayerObservation
 
+# Gen 1: a single directional press only turns the sprite when the player
+# isn't already facing that way — moving a tile takes a second press in the
+# same direction. Mechanical only (never exposed to the LLM, never gates
+# whether/when to act) — it just makes `walk_X` reliably move a tile.
+_WALK_DIRECTIONS = {
+    GameAction.WALK_UP: "up",
+    GameAction.WALK_DOWN: "down",
+    GameAction.WALK_LEFT: "left",
+    GameAction.WALK_RIGHT: "right",
+}
+
 
 class NousRedEnvironment:
     def __init__(
@@ -303,6 +314,15 @@ class NousRedEnvironment:
                 if self.press_interval_s > 0 and i + 1 < len(actions):
                     time.sleep(self.press_interval_s)
                 continue
+
+            direction = _WALK_DIRECTIONS.get(action)
+            if direction and before.facing and before.facing.lower() != direction:
+                # Turn first so this walk actually moves a tile instead of
+                # silently only turning.
+                self._post_json("/action", {"actions": [action.value]})
+                before = self.peek_state()
+                if self.press_interval_s > 0:
+                    time.sleep(self.press_interval_s)
 
             self._post_json("/action", {"actions": [action.value]})
             executed.append(action)
