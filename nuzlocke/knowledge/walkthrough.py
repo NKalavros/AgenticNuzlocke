@@ -56,11 +56,11 @@ def excerpt_for_context(
     rules: list[tuple[tuple[str, ...], str]] = [
         (("name", "keyboard", "letter", "rival name", "your name", "title", "new game"), "title"),
         (("2f", "bedroom", "stairs"), "2f"),
-        (("1f", "mom", "living"), "1f"),
-        (("lab", "starter", "poké ball", "poke ball", "ball table"), "lab"),
-        (("pallet",), "pallet"),
-        (("parcel", "pokedex", "pokédex", "mart"), "after starter"),
-        (("route 1", "viridian forest", "forest"), "route 1"),
+        (("1f", "mom", "living", "door mat", "doormat"), "1f"),
+        (("lab", "starter", "poké ball", "poke ball", "ball table", "aide"), "lab"),
+        (("pallet", "fence", "post"), "pallet"),
+        (("parcel", "pokedex", "pokédex", "mart", "aide"), "after starter"),
+        (("route 1", "viridian forest", "forest", "ledge", "viridian"), "route 1"),
         (("pewter", "brock", "gym"), "pewter"),
         (("stuck", "noop", "oscillat", "bounce", "loop"), "stuck"),
     ]

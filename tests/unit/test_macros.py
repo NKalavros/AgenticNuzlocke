@@ -1,4 +1,8 @@
-from nuzlocke.environment.macros import expand_actions, is_walk_macro
+from nuzlocke.environment.macros import (
+    drop_naming_confirm_if_walking,
+    expand_actions,
+    is_walk_macro,
+)
 from nuzlocke.state.models import GameAction
 
 
@@ -25,3 +29,14 @@ def test_expand_mixed_burst():
 def test_is_walk_macro():
     assert is_walk_macro(GameAction.WALK_DOWN_5)
     assert not is_walk_macro(GameAction.WALK_DOWN)
+
+
+def test_drop_naming_confirm_strips_a_from_walk_burst():
+    got = drop_naming_confirm_if_walking(
+        [GameAction.WALK_RIGHT_5, GameAction.WALK_RIGHT_3, GameAction.PRESS_A]
+    )
+    assert got == [GameAction.WALK_RIGHT_5, GameAction.WALK_RIGHT_3]
+
+
+def test_drop_naming_confirm_keeps_a_only_burst():
+    assert drop_naming_confirm_if_walking([GameAction.PRESS_A]) == [GameAction.PRESS_A]

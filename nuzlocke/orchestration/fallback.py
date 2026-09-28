@@ -38,15 +38,16 @@ def llm_error_fallback_proposal(task: TaskEnvelope) -> ActionProposal:
             reason="fallback after LLM failure",
             actions=[GameAction.PRESS_A],
         )
+    # B-only: this macro runs blind, and an A while facing an NPC re-opens the
+    # dialogue it just cleared. B advances Gen 1 text and starts nothing.
     return ActionProposal(
         task_id=task.task_id,
         agent=AgentRole.OVERWORLD,
         reason="fallback after LLM failure",
         actions=[
             GameAction.HOLD_B_120,
-            GameAction.PRESS_A,
+            GameAction.PRESS_B,
             GameAction.HOLD_B_120,
-            GameAction.PRESS_A,
             GameAction.WAIT_60,
         ],
     )

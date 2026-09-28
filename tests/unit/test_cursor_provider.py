@@ -63,7 +63,10 @@ def test_compact_when_input_tokens_exceed_threshold(tmp_path: Path, monkeypatch)
         agents.append(agent)
         return agent
 
-    with patch("nuzlocke.llm.cursor_provider.Agent.create", side_effect=fake_create):
+    with (
+        patch("nuzlocke.llm.cursor_provider.Agent.create", side_effect=fake_create),
+        patch.object(CursorProvider, "_ensure_client", return_value=None),
+    ):
         provider = CursorProvider(
             workspace=tmp_path / "ws",
             model="gemini-3.6-flash",
@@ -107,7 +110,10 @@ def test_walkthrough_hint_forbids_skill_read(tmp_path: Path, monkeypatch):
         agent.send.side_effect = send
         return agent
 
-    with patch("nuzlocke.llm.cursor_provider.Agent.create", side_effect=fake_create):
+    with (
+        patch("nuzlocke.llm.cursor_provider.Agent.create", side_effect=fake_create),
+        patch.object(CursorProvider, "_ensure_client", return_value=None),
+    ):
         provider = CursorProvider(
             workspace=tmp_path / "ws", compact_at_tokens=0
         )

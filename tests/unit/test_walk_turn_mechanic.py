@@ -70,9 +70,8 @@ def test_walk_sends_turn_then_move_when_not_already_facing(env: NousRedEnvironme
     result = env.execute([GameAction.WALK_RIGHT])
 
     posted = _posted_actions(env._client.post)
-    assert posted.count(["walk_right"]) == 2
-    # The turn press isn't a separate requested action — only one WALK_RIGHT
-    # in the executed list for the one WALK_RIGHT that was asked for.
+    # One /action payload: turn then step (Field Log shows a single ACT).
+    assert posted == [["walk_right", "walk_right"]]
     assert result.executed == [GameAction.WALK_RIGHT]
 
 
@@ -115,6 +114,66 @@ def test_multi_tile_macro_turns_once_then_moves_each_tile(env: NousRedEnvironmen
     result = env.execute([GameAction.WALK_RIGHT_3])
 
     posted = _posted_actions(env._client.post)
-    # 1 turn + 3 moves = 4 total walk_right presses for 3 requested tiles.
-    assert posted.count(["walk_right"]) == 4
+    # 1 combined turn+step, then 2 already-facing steps.
+    assert posted == [
+        ["walk_right", "walk_right"],
+        ["walk_right"],
+        ["walk_right"],
+    ]
     assert result.executed == [GameAction.WALK_RIGHT] * 3
+
+
+def test_execute_drops_a_when_walking_on_naming_grid(env: NousRedEnvironment):
+    state = _state(facing="right", x=5)
+    state["dialog"]["joy_ignore"] = 64  # naming keyboard
+    env._client.get = MagicMock(
+        return_value=MagicMock(
+            status_code=200, json=lambda: state, raise_for_status=lambda: None
+        )
+    )
+    env._client.post = MagicMock(
+        return_value=MagicMock(
+            content=b"{}", json=lambda: {}, raise_for_status=lambda: None
+        )
+    )
+    result = env.execute([GameAction.WALK_RIGHT_2, GameAction.PRESS_A])
+    posted = _posted_actions(env._client.post)
+    assert ["press_a"] not in posted
+    assert result.executed == [GameAction.WALK_RIGHT, GameAction.WALK_RIGHT]
+
+
+def test_execute_stops_after_skip_dialog(env: NousRedEnvironment):
+    state = _state()
+    peek = env._observation_from_state(state)
+    env._client.get = MagicMock(
+        return_value=MagicMock(
+            status_code=200, json=lambda: state, raise_for_status=lambda: None
+        )
+    )
+    env.execute_skip_dialog = MagicMock(return_value=peek)  # type: ignore[method-assign]
+    result = env.execute(
+        [GameAction.SKIP_DIALOG, GameAction.WALK_RIGHT, GameAction.PRESS_A]
+    )
+    assert result.executed == [GameAction.SKIP_DIALOG]
+    assert result.stopped_early_because == "skip_dialog"
+    env.execute_skip_dialog.assert_called_once()
+
+
+def test_naming_grid_does_not_double_walk_for_stale_facing(env: NousRedEnvironment):
+    """DECIDE walk_right must be one cursor cell, not turn+step from RAM facing."""
+    state = _state(facing="up", x=3, y=6)
+    state["dialog"]["joy_ignore"] = 64
+    env._client.get = MagicMock(
+        return_value=MagicMock(
+            status_code=200, json=lambda: state, raise_for_status=lambda: None
+        )
+    )
+    env._client.post = MagicMock(
+        return_value=MagicMock(
+            content=b"{}", json=lambda: {}, raise_for_status=lambda: None
+        )
+    )
+    result = env.execute([GameAction.WALK_RIGHT])
+    posted = _posted_actions(env._client.post)
+    assert posted == [["walk_right"]]
+    assert result.executed == [GameAction.WALK_RIGHT]

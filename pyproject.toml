@@ -7,6 +7,9 @@ requires-python = ">=3.12"
 dependencies = [
     "cursor-sdk>=1.0.24",
     "httpx>=0.28.0",
+    # Frame-region digests (nuzlocke/environment/screen.py) — the world-vs-text
+    # split that stuck detection and skip_dialog termination rely on.
+    "pillow>=10.0.0",
     "pokemon-agent",
     "pydantic>=2.10.0",
     "pydantic-settings>=2.7.0",

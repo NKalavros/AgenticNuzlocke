@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from nuzlocke.agents.roles import decide_director
+from nuzlocke.orchestration.stuck import LOOP_RECOVERY, NOOP_RECOVERY, STUCK_RECOVERY
 from nuzlocke.llm.base import LLMProvider
 from nuzlocke.state.models import AgentRole, GameMode, LLMResponse, PlayerObservation
 
@@ -45,7 +46,7 @@ def test_director_stuck_routes_recovery_without_llm():
     )
     decision = decide_director(
         llm,
-        summary={"stuck_score": 6, "noop_streak": 0},
+        summary={"stuck_score": STUCK_RECOVERY, "noop_streak": 0},
         obs=obs,
     )
     assert decision.mode == GameMode.RECOVERY
@@ -64,7 +65,7 @@ def test_director_noop_routes_recovery_without_llm():
     )
     decision = decide_director(
         llm,
-        summary={"stuck_score": 1, "noop_streak": 2},
+        summary={"stuck_score": 1, "noop_streak": NOOP_RECOVERY},
         obs=obs,
     )
     assert decision.mode == GameMode.RECOVERY
@@ -81,6 +82,25 @@ def test_director_battle_without_llm():
     assert llm.calls == 0
 
 
+def test_director_loop_streak_routes_recovery_without_llm():
+    llm = CountingLLM()
+    obs = PlayerObservation(
+        map_name="Route 1",
+        x=10,
+        y=2,
+        party=[{"name": "Squirtle"}],
+        raw_player={"name": "RED"},
+    )
+    decision = decide_director(
+        llm,
+        summary={"stuck_score": 1, "noop_streak": 0, "loop_streak": LOOP_RECOVERY},
+        obs=obs,
+    )
+    assert decision.mode == GameMode.RECOVERY
+    assert decision.owner == AgentRole.RECOVERY
+    assert llm.calls == 0
+
+
 def test_director_overworld_without_llm():
     llm = CountingLLM()
     obs = PlayerObservation(
@@ -93,4 +113,23 @@ def test_director_overworld_without_llm():
     decision = decide_director(llm, summary={"stuck_score": 0, "noop_streak": 0}, obs=obs)
     assert decision.mode == GameMode.OVERWORLD
     assert decision.owner == AgentRole.OVERWORLD
+    assert llm.calls == 0
+
+
+def test_speech_on_screen_ignores_the_house_map():
+    llm = CountingLLM()
+    obs = PlayerObservation(
+        map_name="Red's House 2F",
+        x=3,
+        y=6,
+        raw_player={"name": "RED"},
+    )
+    decision = decide_director(
+        llm,
+        summary={"stuck_score": 0},
+        obs=obs,
+        speech=True,
+    )
+    assert "speaking" in decision.objective
+    assert "Pewter" not in decision.objective
     assert llm.calls == 0

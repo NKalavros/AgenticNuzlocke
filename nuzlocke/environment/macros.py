@@ -40,3 +40,25 @@ def expand_actions(actions: list[GameAction]) -> list[GameAction]:
 
 def is_walk_macro(action: GameAction) -> bool:
     return action in _WALK_MACRO_STEPS
+
+
+def is_walk_action(action: GameAction) -> bool:
+    return action in _WALK_MACRO_STEPS or action.value.startswith("walk_")
+
+
+_NAMING_CONFIRM = {
+    GameAction.PRESS_A,
+    GameAction.HOLD_A_30,
+    GameAction.A_UNTIL_DIALOG_END,
+}
+
+
+def drop_naming_confirm_if_walking(actions: list[GameAction]) -> list[GameAction]:
+    """On the letter grid, walks move the cursor and A types the glyph.
+
+    Mixing them in one burst types comma/junk before the cursor reaches END.
+    Keep walks this turn; confirm with A on the next cycle.
+    """
+    if not any(is_walk_action(action) for action in actions):
+        return actions
+    return [action for action in actions if action not in _NAMING_CONFIRM]

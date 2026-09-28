@@ -1,13 +1,15 @@
 # LLM backend for role agents.
-# Switch provider without changing orchestration code.
-provider: cursor  # cursor | openai_compatible
+# cursor: one vision model does planning and button choices.
+# dual: a Cursor vision planner (System 2) writes a short plan; Jev (System 1)
+# picks one legal button per cycle. openai_compatible: text-only local models.
+provider: dual  # cursor | openai_compatible | dual
 
 cursor:
   api_key_env: CURSOR_API_KEY
   # Fast vision loop; pair with OptMem so short context still retains lessons.
   model: gemini-3.6-flash
   params:
-    thinking: "false"
+    effort: minimal
   # Local Cursor agent cwd used for each role call (scratch workspace).
   # Leave null to use runs/<run-id>/agent_workspace
   workspace: null
@@ -16,6 +18,30 @@ cursor:
   # Keep one durable Cursor agent; when input context reaches this many tokens,
   # compact a short session summary and recreate with that summary carried forward.
   compact_at_tokens: 250000
+
+# System 2 — vision planner. Jev follows this text; it cannot see the screen.
+# Swap the model the same way as `cursor.model`. Other options:
+#   model: gpt-5.6-sol
+#   params: { reasoning: high }
+#   model: gemini-3.6-flash
+#   params: { effort: low }
+planner:
+  model: grok-4.7
+  params:
+    reasoning_effort: low
+  # Look at the screenshot again at least this often, and also on scene changes.
+  plan_every_s: 45
+  # Noul at or above this refreshes the plan before the button press.
+  stale_noul: 0.7
+  # Choice confidence below this does not execute. Two in a row call the planner.
+  confidence_floor: 0.55
+
+# System 1 — TypeSafe Jev. Key is JEV_API_KEY in the environment or .env.
+jev:
+  api_key_env: JEV_API_KEY
+  base_url: https://api.typesafe.ai
+  model: jev-latest
+  timeout_s: 8
 
 # For later: local Qwen / vLLM / Ollama OpenAI-compatible endpoint
 openai_compatible:

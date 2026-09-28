@@ -42,6 +42,16 @@ class OptMem:
         if not cleaned:
             return ""
         cleaned = cleaned[:_ENTRY_MAX]
+        if cleaned.startswith(("LANDMARK ", "ANTI ")) and self._is_duplicate(cleaned):
+            return ""
         with self.notes_path.open("a", encoding="utf-8") as f:
             f.write(cleaned + "\n")
         return cleaned
+
+    def _is_duplicate(self, cleaned: str) -> bool:
+        if not self.notes_path.exists():
+            return False
+        key = " ".join(cleaned.lower().split())
+        lines = self.notes_path.read_text(encoding="utf-8").splitlines()
+        recent = lines[-self.wake_lines :]
+        return any(" ".join(line.lower().split()) == key for line in recent)

@@ -112,6 +112,34 @@ class ArbiterResult(BaseModel):
     rejection_reason: str | None = None
 
 
+class PlanScene(str, Enum):
+    """What the planner believes is on screen. Jev never sees the pixels."""
+
+    TITLE = "title"
+    DIALOG = "dialog"
+    NAMING = "naming"
+    OVERWORLD = "overworld"
+    BATTLE = "battle"
+    MENU = "menu"
+
+
+class PlanCard(BaseModel):
+    """Short plan the fast actor follows until the planner looks again."""
+
+    scene: PlanScene
+    see: str
+    plan: str
+    do_not: list[str] = Field(default_factory=list)
+    objectives: ObjectivesUpdate | None = None
+    landmarks: list[LandmarkNote] = Field(default_factory=list)
+    world_digest: str = ""
+    # The screenshot this card was written from had a narrative text box.
+    text_box: bool = False
+    # A naming-grid plan is one press. The next cycle looks again.
+    spent: bool = False
+    created_at: float = 0.0
+
+
 class DirectorDecision(BaseModel):
     mode: GameMode
     owner: AgentRole

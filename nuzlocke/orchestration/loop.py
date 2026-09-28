@@ -9,6 +9,13 @@ from typing import Any
 
 from rich.console import Console
 
+from nuzlocke.agents.jev_policy import (
+    FrameSignals,
+    choose_fast_action,
+    classify_scene,
+    plan_from_recovery,
+    reconcile_plan,
+)
 from nuzlocke.agents.roles import (
     advise_recovery,
     decide_director,
@@ -17,12 +24,22 @@ from nuzlocke.agents.roles import (
     objectives_for_dashboard,
     propose_battle,
     propose_overworld,
+    propose_plan,
     rollup_memory,
 )
-from nuzlocke.config import load_agents_config, load_rules, load_run_config, project_root
+from nuzlocke.config import (
+    load_agents_config,
+    ensure_relay_routing,
+    load_project_env,
+    load_rules,
+    load_run_config,
+    project_root,
+)
+from nuzlocke.environment.joypad import is_naming_lock
 from nuzlocke.environment.nous_red import NousRedEnvironment
+from nuzlocke.environment.screen import digests_from_path, text_box_open
 from nuzlocke.knowledge.walkthrough import excerpt_for_context, skill_dir
-from nuzlocke.llm.factory import create_provider
+from nuzlocke.llm.factory import create_jev, create_provider
 from nuzlocke.memory import OptMem
 from nuzlocke.orchestration.arbiter import ActionArbiter
 from nuzlocke.orchestration.checkpoint import CHECKPOINT_NAME, should_checkpoint
@@ -40,6 +57,10 @@ from nuzlocke.state.models import (
     ControlState,
     GameAction,
     GameMode,
+    PlanCard,
+    PlanScene,
+    PlayerObservation,
+    RecoveryAdvice,
 )
 from nuzlocke.state.store import EventStore
 
@@ -72,6 +93,8 @@ class RunLoop:
     ) -> None:
         if resume and not run_id:
             raise ValueError("resume=True requires an existing run_id")
+        load_project_env()
+        ensure_relay_routing()
         self.root = project_root()
         self.run_cfg = load_run_config()
         self.agents_cfg = load_agents_config()
@@ -81,6 +104,10 @@ class RunLoop:
         self.run_id = run_id or time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
         self.run_dir = self.root / "runs" / self.run_id
         self.store = EventStore(self.run_dir)
+        if resume:
+            from nuzlocke.orchestration.checkpoint import stage_for_boot
+
+            stage_for_boot(self.run_dir)
         self.referee = NuzlockeReferee(self.rules)
         self.vision_only = (
             bool(vision_only)
@@ -102,6 +129,9 @@ class RunLoop:
             press_interval_s=float(self.run_cfg.get("press_interval_s", 0.1)),
             load_state=CHECKPOINT_NAME if resume else None,
         )
+        if resume:
+            self.env.publish_savestate(CHECKPOINT_NAME)
+            self.env.load_checkpoint(CHECKPOINT_NAME)
         control = self.run_cfg.get("control") or {}
         self.arbiter = ActionArbiter(
             self.env,
@@ -113,6 +143,15 @@ class RunLoop:
             workspace=self.run_dir / "agent_workspace",
             on_stream=lambda text: self.env.push_event("reasoning", text),
         )
+        self.jev = create_jev(self.agents_cfg)
+        planner_cfg = self.agents_cfg.get("planner") or {}
+        self.plan: PlanCard | None = None
+        self._low_confidence_streak = 0
+        self._prev_world: str | None = None
+        self._prev_dialog: str | None = None
+        self.plan_every_s = float(planner_cfg.get("plan_every_s", 45))
+        self.stale_noul = float(planner_cfg.get("stale_noul", 0.7))
+        self.confidence_floor = float(planner_cfg.get("confidence_floor", 0.55))
         _install_walkthrough_skill(self.run_dir / "agent_workspace")
         self.stuck = StuckTracker()
         self.ledger = LedgerTracker(self.referee)
@@ -185,14 +224,7 @@ class RunLoop:
             "memory_enabled": self.memory.enabled,
             "rom_path": str(rom) if rom else None,
             "provider": self.agents_cfg.get("provider"),
-            "model": (
-                {
-                    "id": (self.agents_cfg.get("cursor") or {}).get("model"),
-                    "params": (self.agents_cfg.get("cursor") or {}).get("params"),
-                }
-                if self.agents_cfg.get("provider") == "cursor"
-                else (self.agents_cfg.get("openai_compatible") or {}).get("model")
-            ),
+            "model": self._manifest_model(),
             "rules": self.rules,
         }
         (self.run_dir / "manifest.json").write_text(
@@ -200,6 +232,23 @@ class RunLoop:
             encoding="utf-8",
         )
         self.store.set_meta("manifest", manifest)
+
+    def _manifest_model(self) -> Any:
+        provider = self.agents_cfg.get("provider")
+        cur = self.agents_cfg.get("cursor") or {}
+        if provider == "dual":
+            planner = self.agents_cfg.get("planner") or {}
+            jev = self.agents_cfg.get("jev") or {}
+            return {
+                "planner": {
+                    "id": planner.get("model"),
+                    "params": planner.get("params"),
+                },
+                "jev": jev.get("model"),
+            }
+        if provider == "cursor":
+            return {"id": cur.get("model"), "params": cur.get("params")}
+        return (self.agents_cfg.get("openai_compatible") or {}).get("model")
 
     def _wait_until_running(self) -> ControlState:
         respect = bool((self.run_cfg.get("control") or {}).get("respect_dashboard_control", True))
@@ -211,11 +260,11 @@ class RunLoop:
             f"[cyan]Dashboard:[/cyan] http://127.0.0.1:{(self.run_cfg.get('pokemon_agent') or {}).get('port', 8765)}/dashboard"
         )
         console.print("[yellow]Press START on the dashboard (or we wait on /control).[/yellow]")
+        # A leftover STOP from the previous session is not a request to
+        # quit this one. Only RUNNING begins the run; Ctrl-C aborts the wait.
         while True:
             state = self.env.get_control()
             if state == ControlState.RUNNING:
-                return state
-            if state == ControlState.STOPPED:
                 return state
             time.sleep(poll)
 
@@ -266,9 +315,19 @@ class RunLoop:
             # real time and just look at whatever is on screen each cycle.
             cycle_started = time.time()
             obs = self.env.observe()
-            console.print(f"[dim]map={obs.map_name} battle={obs.in_battle}[/dim]")
+            speech = (
+                text_box_open(obs.screenshot_path)
+                and not obs.in_battle
+                and not is_naming_lock(obs.joy_ignore)
+            )
+            if speech:
+                console.print("[dim]speech on screen[/dim]")
+            else:
+                console.print(f"[dim]map={obs.map_name} battle={obs.in_battle}[/dim]")
 
             self.store.append("observation", obs.model_dump(mode="json"))
+            if self._cutscene_screen(obs):
+                self.stuck.pause_for_cutscene()
             self.stuck.update_position(obs)
             self.referee.advance(len(obs.badges))
             if self.ledger.update(obs, step=steps):
@@ -284,18 +343,30 @@ class RunLoop:
                 "cap": self.referee.current_cap,
                 "stuck_score": self.stuck.stuck_score,
                 "noop_streak": self.stuck.noop_streak,
+                "loop_streak": self.stuck.loop_streak,
+                "no_progress_streak": self.stuck.no_progress_streak,
                 "deaths": len(self.referee.death_ledger),
                 "encounters": self.referee.encounter_ledger,
                 "vision_only": self.vision_only,
                 "hint": (
                     f"noop_streak={self.stuck.noop_streak}"
                     if self.stuck.noop_streak >= 1
-                    else None
+                    else (
+                        f"loop_streak={self.stuck.loop_streak}"
+                        if self.stuck.loop_streak >= 1
+                        else (
+                            f"no_progress_streak={self.stuck.no_progress_streak}"
+                            if self.stuck.no_progress_streak >= 1
+                            else None
+                        )
+                    )
                 ),
             }
             memory_text = self.memory.wake()
             recent_ctx = list(self.recent_steps)
-            need_guide = self.stuck.noop_streak >= 2 or self.stuck.stuck_score >= 3
+            failed_approaches = [list(item) for item in self.stuck.failed_approaches]
+            no_progress_ctx = self._no_progress_context()
+            need_guide = self.stuck.needs_guide()
             walkthrough_hint = None
             if need_guide:
                 # Orchestrator may use RAM map name to pick the right section
@@ -317,6 +388,7 @@ class RunLoop:
                 memory=memory_text,
                 vision_only=self.vision_only,
                 walkthrough_hint=walkthrough_hint,
+                speech=speech,
             )
             self.store.append("director", decision.model_dump(mode="json"))
             if decision.narration:
@@ -339,74 +411,22 @@ class RunLoop:
             if dash_objs:
                 self.env.set_objectives(dash_objs)
 
+            used_recovery = False
+            pause = False
+            tier = self.stuck.escalation_tier()
             try:
-                if self.stuck.noop_streak >= 2 or self.stuck.stuck_score >= 6 or decision.mode == GameMode.RECOVERY:
-                    advice = advise_recovery(
-                        self.llm,
-                        obs=obs,
-                        stuck_score=self.stuck.stuck_score,
-                        recent_positions=self.stuck.recent_positions,
-                        memory=memory_text,
-                        recent=recent_ctx,
-                        vision_only=self.vision_only,
-                        walkthrough_hint=walkthrough_hint
-                        or excerpt_for_context(
-                            map_name=obs.map_name,
-                            reason="stuck recovery",
-                            memory=memory_text,
-                        ),
-                        objectives=self.objectives,
-                        nuzlocke=self._nuzlocke_state(),
-                    )
-                    self.store.append("recovery", advice.model_dump(mode="json"))
-                    self.env.push_event("alert", advice.diagnosis)
-                    # Only pause for a human after many failed recoveries.
-                    if advice.escalate_to_human and self.stuck.stuck_score >= 12:
-                        self.env.set_control(ControlState.PAUSED)
-                        console.print("[yellow]Escalated to human pause.[/yellow]")
-                        continue
-                    proposal = ActionProposal(
-                        task_id=task.task_id,
-                        agent=AgentRole.RECOVERY,
-                        reason=advice.reason,
-                        actions=advice.proposed_actions
-                        or [
-                            GameAction.HOLD_B_120,
-                            GameAction.PRESS_A,
-                            GameAction.HOLD_B_120,
-                            GameAction.PRESS_A,
-                            GameAction.PRESS_A,
-                        ],
-                        objectives=advice.objectives,
-                        landmarks=advice.landmarks,
-                    )
-                    self.arbiter.set_owner(AgentRole.RECOVERY)
-                    self.stuck.discount(2)
-                    self._last_recovery_step = steps
-                elif task.owner == AgentRole.OVERWORLD:
-                    proposal = propose_overworld(
-                        self.llm,
-                        task=task,
-                        obs=obs,
-                        memory=memory_text,
-                        recent=recent_ctx,
-                        vision_only=self.vision_only,
-                        walkthrough_hint=walkthrough_hint,
-                        objectives=self.objectives,
-                        nuzlocke=self._nuzlocke_state(),
-                    )
-                else:
-                    proposal = propose_battle(
-                        self.llm,
-                        task=task,
-                        obs=obs,
-                        memory=memory_text,
-                        recent=recent_ctx,
-                        vision_only=self.vision_only,
-                        walkthrough_hint=walkthrough_hint,
-                        objectives=self.objectives,
-                        nuzlocke=self._nuzlocke_state(),
-                    )
+                proposal, used_recovery, pause = self._select_proposal(
+                    tier=tier,
+                    decision=decision,
+                    task=task,
+                    obs=obs,
+                    steps=steps,
+                    memory_text=memory_text,
+                    recent_ctx=recent_ctx,
+                    walkthrough_hint=walkthrough_hint,
+                    failed_approaches=failed_approaches or None,
+                    no_progress_ctx=no_progress_ctx,
+                )
             except Exception as err:
                 self.store.append(
                     "llm_error",
@@ -432,6 +452,9 @@ class RunLoop:
                     proposal = llm_error_fallback_proposal(task)
                     self.arbiter.set_owner(proposal.agent)
 
+            if pause:
+                continue
+
             self._apply_proposal_meta(proposal)
             action_labels = [a.value for a in proposal.actions]
             announce = (
@@ -443,13 +466,41 @@ class RunLoop:
             result = self.arbiter.apply(proposal)
             after = self.env.observe()
             after_fp = self.stuck.fingerprint(after)
+            executed_labels = [a.value for a in result.executed_actions]
             is_noop = self.stuck.record_result(
-                before_fp, after_fp, executed=bool(result.executed_actions)
+                before_fp,
+                after_fp,
+                executed=bool(result.executed_actions),
+                actions=executed_labels or None,
             )
+            if used_recovery and not is_noop:
+                self.stuck.discount(2)
             if is_noop:
                 self.env.push_event(
                     "alert",
                     f"noop x{self.stuck.noop_streak}: actions did not change screen/state",
+                )
+                if (
+                    self.memory.enabled
+                    and self.stuck.noop_streak >= 3
+                    and executed_labels
+                    and any(a.startswith("walk_") for a in executed_labels)
+                ):
+                    noted = self.memory.note(
+                        "ANTI do not repeat: " + " ".join(executed_labels)
+                    )
+                    if noted:
+                        self.env.push_event("reasoning", noted)
+            elif self.stuck.loop_streak >= 3:
+                self.env.push_event(
+                    "alert",
+                    f"loop x{self.stuck.loop_streak}: oscillating walks or tiles",
+                )
+            elif self.stuck.no_progress_streak >= 3:
+                self.env.push_event(
+                    "alert",
+                    f"no_progress x{self.stuck.no_progress_streak}: "
+                    "only text changed, the world did not",
                 )
             self.env.push_event(
                 "action",
@@ -463,13 +514,25 @@ class RunLoop:
             console.print(
                 f"[green]step {steps}[/green] {task.owner.value} -> "
                 f"{result.status} {[a.value for a in result.executed_actions]}"
-                + (f" [noop={self.stuck.noop_streak}]" if self.stuck.noop_streak else "")
+                + (
+                    f" [noop={self.stuck.noop_streak}]"
+                    if self.stuck.noop_streak
+                    else (
+                        f" [loop={self.stuck.loop_streak}]"
+                        if self.stuck.loop_streak
+                        else ""
+                    )
+                )
             )
-            outcome = (
-                f"noop x{self.stuck.noop_streak}"
-                if self.stuck.noop_streak
-                else (result.stopped_early_because or "ok")
-            )
+            # Label honestly. The old version reported "ok" / "skip_dialog" for
+            # every one of the 200 looping steps in run 20260821-164159-3c5a68,
+            # so the agent's own history read as unbroken success.
+            if self.stuck.noop_streak:
+                outcome = f"noop x{self.stuck.noop_streak}"
+            elif self.stuck.no_progress_streak:
+                outcome = f"no_progress x{self.stuck.no_progress_streak}"
+            else:
+                outcome = result.stopped_early_because or "ok"
             # Short-term prompt context only — OptMem stays for landmarks/rollups.
             self.recent_steps.append(
                 {
@@ -493,8 +556,332 @@ class RunLoop:
                 remaining = self.prompt_interval_s - (time.time() - cycle_started)
                 if remaining > 0:
                     time.sleep(remaining)
+        self._save_continue_point()
         self.store.append("run_end", {"run_id": self.run_id, "steps": steps})
         self.close()
+
+    def _select_proposal(
+        self,
+        *,
+        tier: int,
+        decision: Any,
+        task: Any,
+        obs: PlayerObservation,
+        steps: int,
+        memory_text: str | None,
+        recent_ctx: list[dict[str, Any]],
+        walkthrough_hint: str | None,
+        failed_approaches: list[list[str]] | None,
+        no_progress_ctx: dict[str, Any] | None,
+    ) -> tuple[ActionProposal | None, bool, bool]:
+        """Pick this cycle's buttons. Returns proposal, used_recovery, pause."""
+        if tier in (2, 4):
+            # Tier 2 breaks the loop mechanically — no LLM call. The
+            # screen looks identical every cycle, so a vision call just
+            # re-proposes what already failed (222 times in run
+            # 20260821-164159-3c5a68). Tier 4 does the same and then
+            # tears down the stale goal that got us here.
+            proposal = self._disengage_proposal(task, tier=tier)
+            if tier == 4:
+                self._hard_reset_intent()
+            self.plan = None
+            self.arbiter.set_owner(AgentRole.RECOVERY)
+            self._last_recovery_step = steps
+            return proposal, True, False
+        # A few wrong joystick presses stay with Jev. The recovery model
+        # only runs once mechanical disengage has already failed (tier 3),
+        # or when there is no fast actor at all.
+        jev_keeps_stick = self.jev is not None and tier < 3
+        if not jev_keeps_stick and (tier >= 1 or decision.mode == GameMode.RECOVERY):
+            advice = advise_recovery(
+                self.llm,
+                obs=obs,
+                stuck_score=self.stuck.stuck_score,
+                recent_positions=self.stuck.recent_positions,
+                memory=memory_text,
+                recent=recent_ctx,
+                vision_only=self.vision_only,
+                walkthrough_hint=walkthrough_hint
+                or excerpt_for_context(
+                    map_name=obs.map_name,
+                    reason="stuck recovery",
+                    memory=memory_text,
+                ),
+                objectives=self.objectives,
+                nuzlocke=self._nuzlocke_state(),
+                failed_approaches=failed_approaches,
+                loop_streak=self.stuck.loop_streak,
+                no_progress=no_progress_ctx,
+                # Tier 3: mechanical disengage did not help either, so
+                # tell it the goal itself is probably already satisfied.
+                reframe=tier >= 3,
+            )
+            self.store.append("recovery", advice.model_dump(mode="json"))
+            self.env.push_event("alert", advice.diagnosis)
+            # Only pause for a human after many failed recoveries.
+            if advice.escalate_to_human and self.stuck.stuck_score >= 12:
+                self.env.set_control(ControlState.PAUSED)
+                console.print("[yellow]Escalated to human pause.[/yellow]")
+                return None, False, True
+            if self.jev is not None:
+                self._adopt_recovery_plan(advice, obs)
+            proposal = ActionProposal(
+                task_id=task.task_id,
+                agent=AgentRole.RECOVERY,
+                reason=advice.reason,
+                # Fallback is B-only and B-terminated: an A at the end
+                # re-opens whatever NPC we were already stuck on.
+                actions=advice.proposed_actions
+                or [
+                    GameAction.HOLD_B_120,
+                    GameAction.PRESS_B,
+                    GameAction.HOLD_B_120,
+                ],
+                objectives=advice.objectives,
+                landmarks=advice.landmarks,
+            )
+            self.arbiter.set_owner(AgentRole.RECOVERY)
+            self._last_recovery_step = steps
+            return proposal, True, False
+        if self.jev is not None:
+            return (
+                self._fast_proposal(
+                    task=task,
+                    obs=obs,
+                    memory_text=memory_text,
+                    recent_ctx=recent_ctx,
+                    walkthrough_hint=walkthrough_hint,
+                    failed_approaches=failed_approaches,
+                    no_progress_ctx=no_progress_ctx,
+                ),
+                False,
+                False,
+            )
+        if task.owner == AgentRole.OVERWORLD:
+            return (
+                propose_overworld(
+                    self.llm,
+                    task=task,
+                    obs=obs,
+                    memory=memory_text,
+                    recent=recent_ctx,
+                    vision_only=self.vision_only,
+                    walkthrough_hint=walkthrough_hint,
+                    objectives=self.objectives,
+                    nuzlocke=self._nuzlocke_state(),
+                    failed_approaches=failed_approaches,
+                    loop_streak=self.stuck.loop_streak,
+                    no_progress=no_progress_ctx,
+                ),
+                False,
+                False,
+            )
+        return (
+            propose_battle(
+                self.llm,
+                task=task,
+                obs=obs,
+                memory=memory_text,
+                recent=recent_ctx,
+                vision_only=self.vision_only,
+                walkthrough_hint=walkthrough_hint,
+                objectives=self.objectives,
+                nuzlocke=self._nuzlocke_state(),
+            ),
+            False,
+            False,
+        )
+
+    def _fast_proposal(
+        self,
+        *,
+        task: Any,
+        obs: PlayerObservation,
+        memory_text: str | None,
+        recent_ctx: list[dict[str, Any]],
+        walkthrough_hint: str | None,
+        failed_approaches: list[list[str]] | None,
+        no_progress_ctx: dict[str, Any] | None,
+    ) -> ActionProposal:
+        """System 1 cycle. The planner runs only when the card is stale."""
+        signals = self._frame_signals(obs)
+
+        def refresh() -> PlanCard:
+            card = propose_plan(
+                self.llm,
+                obs=obs,
+                memory=memory_text,
+                recent=recent_ctx,
+                vision_only=self.vision_only,
+                walkthrough_hint=walkthrough_hint,
+                objectives=self.objectives,
+                nuzlocke=self._nuzlocke_state(),
+                failed_approaches=failed_approaches,
+                no_progress=no_progress_ctx,
+                objective=task.objective,
+            )
+            card.world_digest = signals.world_digest
+            card.text_box = signals.text_box
+            card.created_at = time.time()
+            self.store.append("plan", card.model_dump(mode="json"))
+            self.env.push_event("reasoning", f"[planner] {card.see} → {card.plan}")
+            return card
+
+        def jev_decide(state: dict[str, Any], questions: dict[str, Any]) -> Any:
+            allowed = set((questions.get("action") or {}).get("criteria") or {})
+            assert self.jev is not None
+            return self.jev.decide(state=state, questions=questions, allowed=allowed)
+
+        turn = choose_fast_action(
+            plan=self.plan,
+            obs=obs,
+            signals=signals,
+            now=time.time(),
+            plan_every_s=self.plan_every_s,
+            stale_noul=self.stale_noul,
+            confidence_floor=self.confidence_floor,
+            low_confidence_streak=self._low_confidence_streak,
+            same_tile_streak=self.stuck.same_tile_streak,
+            failed_approaches=failed_approaches,
+            memory=memory_text,
+            recent=recent_ctx,
+            objectives=self.objectives,
+            nuzlocke=self._nuzlocke_state(),
+            no_progress=no_progress_ctx,
+            jev_decide=jev_decide,
+            refresh_plan=refresh,
+        )
+        self.plan = turn.plan
+        self._low_confidence_streak = turn.low_confidence_streak
+        self.store.append(
+            "jev",
+            {
+                "actions": [action.value for action in turn.actions],
+                "reason": turn.reason,
+                "replanned": turn.replanned,
+                "scene": turn.plan.scene.value,
+            },
+        )
+        return ActionProposal(
+            task_id=task.task_id,
+            agent=turn.agent,
+            reason=turn.reason,
+            actions=turn.actions,
+            objectives=turn.objectives,
+            landmarks=turn.landmarks,
+        )
+
+    def _adopt_recovery_plan(
+        self,
+        advice: RecoveryAdvice,
+        obs: PlayerObservation,
+    ) -> None:
+        signals = self._frame_signals(obs)
+        card = reconcile_plan(
+            plan_from_recovery(
+                advice,
+                scene=classify_scene(obs, None, signals),
+                world_digest=signals.world_digest,
+                now=time.time(),
+            ),
+            obs,
+        )
+        card.text_box = signals.text_box
+        self.plan = card
+        self._low_confidence_streak = 0
+        self.store.append("plan", card.model_dump(mode="json"))
+
+    def _cutscene_screen(self, obs: PlayerObservation) -> bool:
+        """Title splash or an open narrative box. Not a battle, not a menu."""
+        if obs.in_battle:
+            return False
+        if self.plan is not None and self.plan.scene == PlanScene.MENU:
+            return False
+        if text_box_open(obs.screenshot_path):
+            return True
+        return self.plan is not None and self.plan.scene == PlanScene.TITLE
+
+    def _frame_signals(self, obs: PlayerObservation) -> FrameSignals:
+        world, dialog = digests_from_path(obs.screenshot_path)
+        signals = FrameSignals(
+            world_digest=world,
+            dialog_digest=dialog,
+            world_changed=self._prev_world is not None and world != self._prev_world,
+            dialog_changed=self._prev_dialog is not None and dialog != self._prev_dialog,
+            text_box=text_box_open(obs.screenshot_path),
+        )
+        self._prev_world = world
+        self._prev_dialog = dialog
+        return signals
+
+    def _no_progress_context(self) -> dict[str, Any] | None:
+        """Evidence that the world has stopped moving, for the role prompts."""
+        streak = self.stuck.no_progress_streak
+        if streak < 2:
+            return None
+        ctx: dict[str, Any] = {
+            "streak": streak,
+            "measured_from": "pixels above the text box (world region)",
+        }
+        repeats = self.stuck.repeated_actions()
+        if repeats:
+            ctx["repeated_actions"] = repeats
+        if self.stuck.same_tile_streak >= 2:
+            ctx["cycles_on_this_tile"] = self.stuck.same_tile_streak
+        return ctx
+
+    def _disengage_proposal(self, task: Any, *, tier: int) -> ActionProposal:
+        """Blind mechanical escape — press B, then leave the tile."""
+        actions = self.stuck.disengage_actions()
+        labels = [a.value for a in actions]
+        reason = (
+            f"forced disengage (tier {tier}, "
+            f"no_progress x{self.stuck.no_progress_streak}, "
+            f"same tile x{self.stuck.same_tile_streak}): "
+            "the world has not changed in a long time — closing any text box "
+            "and walking off this tile without asking the model"
+        )
+        self.env.push_event("alert", reason)
+        console.print(f"[yellow]disengage tier {tier}[/yellow] {labels}")
+        self.store.append(
+            "disengage",
+            {
+                "tier": tier,
+                "actions": labels,
+                "no_progress_streak": self.stuck.no_progress_streak,
+                "same_tile_streak": self.stuck.same_tile_streak,
+                "repeated_actions": self.stuck.repeated_actions(),
+            },
+        )
+        return ActionProposal(
+            task_id=task.task_id,
+            agent=AgentRole.RECOVERY,
+            reason=reason,
+            actions=actions,
+        )
+
+    def _hard_reset_intent(self) -> None:
+        """Tier 4: the goal itself is the problem — tear it down.
+
+        A stale objective survives indefinitely otherwise: the rollup writes it
+        into OptMem from the looping `recent`, wake() feeds it back next cycle,
+        and the agent re-derives the same dead plan. Run
+        20260821-164159-3c5a68 has the same "deliver Oak's Parcel" rollup six
+        times over, long after the parcel was delivered.
+        """
+        dropped = self.objectives.get("primary")
+        self.stuck.hard_reset()
+        self.objectives.pop("primary", None)
+        note = (
+            "STALE GOAL dropped after a long no-progress streak: "
+            f"{dropped or 'unknown'} — it was most likely already complete. "
+            "Do not restate it; pick the next walkthrough step instead."
+        )
+        if self.memory.enabled:
+            self.memory.note("ANTI " + note)
+        self.env.push_event("alert", note)
+        console.print(f"[red]hard reset of intent:[/red] {dropped}")
+        self.store.append("intent_reset", {"dropped_primary": dropped})
 
     def _apply_proposal_meta(self, proposal: ActionProposal) -> None:
         if proposal.objectives is not None:
@@ -504,12 +891,16 @@ class RunLoop:
                 self.env.set_objectives(dash)
             self.store.append("objectives", self.objectives)
         if proposal.landmarks and self.memory.enabled:
+            wrote = []
             for landmark in proposal.landmarks:
-                self.memory.note(f"LANDMARK {landmark.label}: {landmark.note}")
-            self.env.push_event(
-                "reasoning",
-                f"landmarks: {[lm.label for lm in proposal.landmarks]}",
-            )
+                noted = self.memory.note(f"LANDMARK {landmark.label}: {landmark.note}")
+                if noted:
+                    wrote.append(landmark.label)
+            if wrote:
+                self.env.push_event(
+                    "reasoning",
+                    f"landmarks: {wrote}",
+                )
 
     def _maybe_rollup_memory(self, *, steps: int, in_battle: bool) -> None:
         if not self.memory.enabled or self.rollup_every <= 0:
@@ -519,6 +910,13 @@ class RunLoop:
         if in_battle:
             return
         if self._last_recovery_step >= 0 and steps - self._last_recovery_step <= 1:
+            return
+        # Never roll up while stuck. The rollup is generated from `recent`, so
+        # rolling up mid-loop distills the loop itself into durable "facts" that
+        # wake() then feeds back every cycle — a closed belief loop that
+        # outlived the goal it described for 33 minutes in run
+        # 20260821-164159-3c5a68.
+        if self.stuck.stuck_score >= 3 or self.stuck.no_progress_streak >= 3:
             return
         # Roll up from short-term recent + any durable wake (no per-step OptMem spam).
         wake = self.memory.wake()
@@ -559,8 +957,35 @@ class RunLoop:
         self.store.append("checkpoint", {"steps": steps, "name": CHECKPOINT_NAME})
         self.env.push_event("reasoning", f"[checkpoint] saved at step {steps}")
 
+    def _save_continue_point(self) -> None:
+        """Write the savestate a later ``--resume`` will load."""
+        if self.checkpoint_every_steps <= 0:
+            return
+        try:
+            obs = self.env.observe()
+        except Exception as err:
+            console.print(f"[yellow]No continue savestate: {err}[/yellow]")
+            return
+        if obs.in_battle:
+            console.print(
+                "[yellow]In battle, so the last out-of-battle savestate was left as-is.[/yellow]"
+            )
+            return
+        try:
+            self.env.save_checkpoint(CHECKPOINT_NAME)
+        except Exception as err:
+            console.print(f"[yellow]Could not write the continue savestate: {err}[/yellow]")
+            return
+        self.store.append("checkpoint", {"name": CHECKPOINT_NAME, "reason": "stop"})
+        console.print(
+            "[green]Savestate saved.[/green] Continue from here with:\n"
+            f"  uv run nuzlocke run --resume {self.run_id}"
+        )
+
     def close(self) -> None:
         self.llm.close()
+        if self.jev is not None:
+            self.jev.close()
         # Keep emulator up for watching unless we started it and user wants exit.
         # Do not kill pokemon-agent by default so dashboard remains.
         self.env._client.close()

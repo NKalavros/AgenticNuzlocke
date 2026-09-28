@@ -11,7 +11,7 @@ rom_path: /Users/nikolas/Desktop/Projects/260727_AgenticNuzlocke/red-star-2020-0
 
 pokemon_agent:
   host: 127.0.0.1
-  port: 8765
+  port: 8766
   # Start pokemon-agent from the orchestrator if not already up.
   auto_start: true
   # Emulator speed while waiting is paused; between actions use this.
@@ -32,23 +32,23 @@ control:
 # ROM hacks like Red Star) — the game just runs in real time between
 # prompts and each cycle looks at whatever is on screen.
 # Override: NUZLOCKE_PROMPT_INTERVAL_S=2.0
-prompt_interval_s: 2.0
+prompt_interval_s: 0.5
 # Tiny gap between successive button presses within a burst.
 press_interval_s: 0.1
 
 # OptMem — durable run memory (capped append-only notes file, see
-# nuzlocke/memory/optmem.py). Orchestrator wakes/notes; role agents
-# receive wake text each prompt.
-# Override enable: NUZLOCKE_MEMORY=0
+# nuzlocke/memory/optmem.py). Off by default. Turn on with
+# NUZLOCKE_MEMORY=1 or enabled: true. Short-term `recent` still goes
+# into each prompt either way.
 memory:
-  enabled: true
+  enabled: false
   wake_lines: 24
   # Text-only OptMem compression every N prompt cycles (0 = off).
   rollup_every: 25
 
-# Crash-recovery checkpoints only (no_outcome_rollback in rules_red.yaml —
-# never used to undo a committed death/encounter). One rolling save-state
-# ("auto") via pokemon-agent's /save; resume with `nuzlocke run --resume <run-id>`.
+# Continue savestate. Written every N steps and again when the dashboard
+# STOPs, outside battle. Resume with `nuzlocke run --resume <run-id>` —
+# that loads runs/<run-id>/savestates/auto.state instead of the title screen.
 checkpoint:
   enabled: true
   # Save every N steps, skipped mid-battle and right after a ledger commit.

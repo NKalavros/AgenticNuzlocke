@@ -17,6 +17,15 @@ def test_excerpt_picks_house_and_stuck() -> None:
     assert "Stuck" in text or "stuck" in text.lower()
 
 
+def test_excerpt_picks_fence_and_parcel_geometry() -> None:
+    fence = excerpt_for_context(map_name="Pallet Town", reason="fence post noop")
+    assert "post" in fence.lower()
+    parcel = excerpt_for_context(map_name="Oak's Lab", reason="aide parcel")
+    assert "aide" in parcel.lower() or "oak" in parcel.lower()
+    ledge = excerpt_for_context(map_name="Route 1", reason="viridian south ledge")
+    assert "gap" in ledge.lower() or "ledge" in ledge.lower()
+
+
 def test_excerpt_lab() -> None:
     text = excerpt_for_context(reason="need starter in oak lab")
     assert "Lab" in text or "starter" in text.lower()

@@ -8,7 +8,15 @@ from pathlib import Path
 from typing import Any
 
 from nuzlocke.agents import prompts
+from nuzlocke.environment.joypad import is_naming_lock
 from nuzlocke.llm.base import LLMProvider
+from nuzlocke.orchestration.stuck import (
+    LOOP_RECOVERY,
+    NO_PROGRESS_RECOVERY,
+    NOOP_RECOVERY,
+    STUCK_RECOVERY,
+    filter_repeated_noops,
+)
 from nuzlocke.referee.type_chart import battle_matchup
 from nuzlocke.state.models import (
     ActionProposal,
@@ -18,6 +26,8 @@ from nuzlocke.state.models import (
     GameMode,
     LandmarkNote,
     ObjectivesUpdate,
+    PlanCard,
+    PlanScene,
     PlayerObservation,
     RecoveryAdvice,
     TaskEnvelope,
@@ -38,13 +48,25 @@ def _dumps(payload: dict[str, Any]) -> str:
 
 def _obs_payload(obs: PlayerObservation, *, vision_only: bool) -> dict[str, Any]:
     if vision_only:
-        return {
+        payload: dict[str, Any] = {
             "vision_only": True,
             "note": (
                 "No RAM / map / coords / collision. "
                 "The attached screenshot is the only game state."
             ),
         }
+        # joy_ignore bit 6 (naming keyboard) is the one RAM signal that held up
+        # across a full run — it was set for 58 straight observations while the
+        # agent walked the letter cursor around thinking it was in a bedroom,
+        # which is how the player ended up named "A". Bit 5 (dialog) stays out:
+        # it reads 0 through real dialog on Red Star.
+        if is_naming_lock(obs.joy_ignore):
+            payload["hard_signal"] = (
+                "A NAMING KEYBOARD (letter grid) is on screen. walk_* moves the "
+                "letter cursor and press_a types the highlighted glyph — never "
+                "skip_dialog here. Move onto END, then press_a alone next turn."
+            )
+        return payload
     return {"observation": obs.model_dump(mode="json")}
 
 
@@ -56,6 +78,8 @@ def _with_extras(
     walkthrough_hint: str | None = None,
     objectives: dict[str, str] | None = None,
     nuzlocke: dict[str, Any] | None = None,
+    failed_approaches: list[list[str]] | None = None,
+    no_progress: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     # Short-term working context (orchestrator ring buffer) — not OptMem.
     if recent:
@@ -74,6 +98,24 @@ def _with_extras(
     # and frozen (first-eligible) encounters per area.
     if nuzlocke:
         payload["nuzlocke"] = nuzlocke
+    # Action sequences that already nooped — not RAM coords.
+    if failed_approaches:
+        payload["failed_approaches"] = failed_approaches
+        payload["failed_approaches_note"] = (
+            "Walk bursts that already nooped — sidestep; do not ban A/Start/skip_dialog"
+        )
+    # Hard evidence that the world is not moving, measured from the top 12 tile
+    # rows of the frame so scrolling text cannot fake progress.
+    if no_progress and no_progress.get("streak"):
+        payload["no_progress"] = no_progress
+        payload["no_progress_note"] = (
+            "The game world has not changed for "
+            f"{no_progress['streak']} straight cycles — only text has. Whatever "
+            "you have been repeating is not working. Either your current "
+            "objective is already complete, or you are talking to the wrong "
+            "thing. Do something structurally different: walk away from this "
+            "tile, or pick a different objective."
+        )
     return payload
 
 
@@ -170,9 +212,26 @@ def decide_director(
     memory: str | None = None,
     vision_only: bool = False,
     walkthrough_hint: str | None = None,
+    speech: bool = False,
 ) -> DirectorDecision:
     # Title / intro boot: mash A until RAM reader sees a real map.
     # Still uses RAM for routing even in vision_only (screenshot goes to owner).
+    # A speech on screen wins over the map: NEW GAME places the player in
+    # Red's House while Oak is still talking.
+    if speech and not obs.in_battle:
+        return DirectorDecision(
+            mode=GameMode.OVERWORLD,
+            owner=AgentRole.OVERWORLD,
+            objective="Someone is still speaking. Advance that dialogue. The map grid is not the scene.",
+            constraints=[
+                "Trust the screenshot over the map name and coordinates",
+                "One button press to page the current line",
+                "Do not walk",
+            ],
+            success=["the speaker is done and the overworld is visible"],
+            abort=["battle_started"],
+            narration="Speech on screen — ignore the map grid.",
+        )
     player_name = (obs.raw_player or {}).get("name") or ""
     on_boot = (
         not obs.map_name
@@ -207,8 +266,15 @@ def decide_director(
 
     stuck = int(summary.get("stuck_score") or 0)
     noop = int(summary.get("noop_streak") or 0)
+    loop = int(summary.get("loop_streak") or 0)
+    no_progress = int(summary.get("no_progress_streak") or 0)
     # Recovery owns the next vision call — never spend a Director LLM turn too.
-    if stuck >= 6 or noop >= 2:
+    if (
+        stuck >= STUCK_RECOVERY
+        or noop >= NOOP_RECOVERY
+        or loop >= LOOP_RECOVERY
+        or no_progress >= NO_PROGRESS_RECOVERY
+    ):
         return DirectorDecision(
             mode=GameMode.RECOVERY,
             owner=AgentRole.RECOVERY,
@@ -216,12 +282,13 @@ def decide_director(
             constraints=[
                 "Max 4 actions",
                 "Screenshot is ground truth",
+                "Do not repeat failed_approaches",
             ],
             success=[],
             abort=["battle_started"],
             narration=(
-                f"Stuck path → recovery (stuck={stuck}, noop={noop}); "
-                "no Director LLM."
+                f"Stuck path → recovery (stuck={stuck}, noop={noop}, loop={loop}, "
+                f"no_progress={no_progress}); no Director LLM."
             ),
         )
 
@@ -269,6 +336,9 @@ def propose_overworld(
     walkthrough_hint: str | None = None,
     objectives: dict[str, str] | None = None,
     nuzlocke: dict[str, Any] | None = None,
+    failed_approaches: list[list[str]] | None = None,
+    loop_streak: int = 0,
+    no_progress: dict[str, Any] | None = None,
 ) -> ActionProposal:
     user = _dumps(
         _with_extras(
@@ -281,6 +351,8 @@ def propose_overworld(
             walkthrough_hint=walkthrough_hint,
             objectives=objectives,
             nuzlocke=nuzlocke,
+            failed_approaches=failed_approaches,
+            no_progress=no_progress,
         )
     )
     system = prompts.OVERWORLD_SYSTEM
@@ -303,6 +375,10 @@ def propose_overworld(
             continue
     if not actions:
         actions = [GameAction.WAIT_60]
+    if failed_approaches:
+        actions = filter_repeated_noops(
+            actions, failed_approaches, alternate=loop_streak
+        )
     return ActionProposal(
         task_id=task.task_id,
         agent=AgentRole.OVERWORLD,
@@ -390,6 +466,10 @@ def advise_recovery(
     walkthrough_hint: str | None = None,
     objectives: dict[str, str] | None = None,
     nuzlocke: dict[str, Any] | None = None,
+    failed_approaches: list[list[str]] | None = None,
+    loop_streak: int = 0,
+    no_progress: dict[str, Any] | None = None,
+    reframe: bool = False,
 ) -> RecoveryAdvice:
     payload: dict[str, Any] = {
         "stuck_score": stuck_score,
@@ -397,6 +477,18 @@ def advise_recovery(
     }
     if not vision_only:
         payload["recent_positions"] = recent_positions
+    if reframe:
+        # Tier 3: the loop has outlived any plausible cutscene. The likeliest
+        # explanation is a goal that was already satisfied — Oak keeps talking
+        # after he has handed over the Pokedex, and the agent read that as
+        # "the parcel delivery has not gone through yet" for 33 minutes.
+        payload["reframe"] = (
+            "Your current objective has produced nothing for a long time. "
+            "Assume it is ALREADY COMPLETE or unreachable from here. Do not "
+            "propose talking to the same NPC again. Set new objectives and "
+            "propose actions that leave this spot — a door, stairs, or the "
+            "next walkthrough step."
+        )
     user = _dumps(
         _with_extras(
             payload,
@@ -405,6 +497,8 @@ def advise_recovery(
             walkthrough_hint=walkthrough_hint,
             objectives=objectives,
             nuzlocke=nuzlocke,
+            failed_approaches=failed_approaches,
+            no_progress=no_progress,
         )
     )
     resp = llm.complete(
@@ -421,6 +515,12 @@ def advise_recovery(
             actions.append(GameAction(item))
         except ValueError:
             continue
+    if failed_approaches:
+        actions = filter_repeated_noops(
+            actions[:4], failed_approaches, alternate=loop_streak
+        )
+    else:
+        actions = actions[:4]
     return RecoveryAdvice(
         diagnosis=str(data.get("diagnosis") or "unknown"),
         proposed_actions=actions[:4],
@@ -457,6 +557,72 @@ def rollup_memory(
         if text:
             notes.append(text[:200])
     return notes
+
+
+def propose_plan(
+    llm: LLMProvider,
+    *,
+    obs: PlayerObservation,
+    memory: str | None = None,
+    recent: list[dict[str, Any]] | None = None,
+    vision_only: bool = False,
+    walkthrough_hint: str | None = None,
+    objectives: dict[str, str] | None = None,
+    nuzlocke: dict[str, Any] | None = None,
+    failed_approaches: list[list[str]] | None = None,
+    no_progress: dict[str, Any] | None = None,
+    objective: str | None = None,
+) -> PlanCard:
+    """System 2: read the screenshot and write the card Jev will follow."""
+    payload: dict[str, Any] = {
+        "objective": objective or "",
+        **_obs_payload(obs, vision_only=vision_only),
+    }
+    user = _dumps(
+        _with_extras(
+            payload,
+            memory=memory,
+            recent=recent,
+            walkthrough_hint=walkthrough_hint,
+            objectives=objectives,
+            nuzlocke=nuzlocke,
+            failed_approaches=failed_approaches,
+            no_progress=no_progress,
+        )
+    )
+    system = prompts.PLANNER_SYSTEM
+    if vision_only:
+        system += "\nVISION-ONLY: screenshot is the sole state input.\n"
+    resp = llm.complete(
+        role=AgentRole.DIRECTOR,
+        system=system,
+        user=user,
+        schema_hint=prompts.PLANNER_SCHEMA,
+        image_paths=_images(obs),
+    )
+    data = resp.parsed or {}
+    raw_scene = str(data.get("scene") or "").strip().lower()
+    try:
+        scene = PlanScene(raw_scene)
+    except ValueError:
+        scene = PlanScene.OVERWORLD
+    see = str(data.get("see") or "").strip()[:300] or "screen unread"
+    plan_text = str(data.get("plan") or "").strip()[:500] or (
+        objective or "Continue the current objective."
+    )
+    do_not: list[str] = []
+    for item in (data.get("do_not") or [])[:6]:
+        text = " ".join(str(item).split()).strip()
+        if text:
+            do_not.append(text[:120])
+    return PlanCard(
+        scene=scene,
+        see=see,
+        plan=plan_text,
+        do_not=do_not,
+        objectives=parse_objectives(data.get("objectives")),
+        landmarks=parse_landmarks(data.get("landmarks")),
+    )
 
 
 def make_task(decision: DirectorDecision) -> TaskEnvelope:

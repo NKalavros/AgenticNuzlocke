@@ -34,3 +34,4 @@ Do **not** load the whole guide every step. Open `reference.md` and read **only*
 - Furniture / TV / plants are not outdoors and usually not stairs.
 - Naming keyboard → finish **END**; do not walk as overworld.
 - Dialog → `hold_b_120` then `press_a`.
+- If a walk already nooped, do not repeat it — one tile perpendicular, then retry.

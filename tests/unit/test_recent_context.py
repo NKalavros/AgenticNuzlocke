@@ -12,3 +12,12 @@ def test_recent_injected_without_coaching_notes():
     assert payload["memory"].startswith("LANDMARK")
     assert "recent_note" not in payload
     assert "memory_note" not in payload
+
+
+def test_failed_approaches_injected_without_ram_coords():
+    payload = _with_extras(
+        {},
+        failed_approaches=[["walk_up_2"], ["walk_up"]],
+    )
+    assert payload["failed_approaches"] == [["walk_up_2"], ["walk_up"]]
+    assert "recent_positions" not in payload

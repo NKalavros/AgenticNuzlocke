@@ -9,10 +9,13 @@ from typing import Optional
 import typer
 from rich.console import Console
 
+from nuzlocke.config import ensure_relay_routing, load_project_env
 from nuzlocke.orchestration.loop import RunLoop, scripted_smoke
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 console = Console()
+load_project_env()
+ensure_relay_routing()
 
 
 @app.command("smoke")
@@ -41,7 +44,7 @@ def run(
         None, "--rom", help="Path to Pokemon Red/Blue .gb ROM"
     ),
     provider: Optional[str] = typer.Option(
-        None, "--provider", help="cursor | openai_compatible"
+        None, "--provider", help="cursor | openai_compatible | dual"
     ),
     max_steps: Optional[int] = typer.Option(
         -1,
@@ -57,8 +60,8 @@ def run(
     resume: Optional[str] = typer.Option(
         None,
         "--resume",
-        help="Resume an existing run-id (runs/<run-id>/) from its latest "
-        "crash-recovery checkpoint instead of starting a new game.",
+        help="Continue run-id from its savestate (runs/<run-id>/savestates/) "
+        "instead of starting a new game.",
     ),
 ) -> None:
     """Start an autonomous Nuzlocke segment. Runs until STOP unless --max-steps is set."""
@@ -78,10 +81,18 @@ def run(
         console.print(f"[red]{err}[/red]")
         raise typer.Exit(code=1) from err
     console.print(f"[cyan]Run directory:[/cyan] {loop.run_dir}")
-    console.print(
-        f"[cyan]Provider:[/cyan] {loop.agents_cfg.get('provider')} "
-        f"model={ (loop.agents_cfg.get('cursor') or {}).get('model') }"
-    )
+    provider_name = loop.agents_cfg.get("provider")
+    if provider_name == "dual":
+        planner_model = (loop.agents_cfg.get("planner") or {}).get("model")
+        jev_model = (loop.agents_cfg.get("jev") or {}).get("model")
+        console.print(
+            f"[cyan]Provider:[/cyan] dual planner={planner_model} jev={jev_model}"
+        )
+    else:
+        console.print(
+            f"[cyan]Provider:[/cyan] {provider_name} "
+            f"model={(loop.agents_cfg.get('cursor') or {}).get('model')}"
+        )
     if steps is None:
         console.print(
             "[cyan]Limit:[/cyan] none — press STOP on the dashboard when done reviewing"
@@ -93,14 +104,13 @@ def run(
         f"[cyan]Pace:[/cyan] prompt ~every {prompt_iv:g}s → announce → real-time actions "
         f"(NUZLOCKE_PROMPT_INTERVAL_S)"
     )
-    console.print(
-        f"[cyan]Vision:[/cyan] "
-        + (
-            "screenshot + OptMem only (no RAM in prompts)"
-            if loop.vision_only
-            else "screenshot + RAM JSON"
-        )
-    )
+    if loop.vision_only:
+        vision = "screenshot only (no RAM in prompts)"
+        if loop.memory.enabled:
+            vision = "screenshot + OptMem only (no RAM in prompts)"
+    else:
+        vision = "screenshot + RAM JSON"
+    console.print(f"[cyan]Vision:[/cyan] {vision}")
     console.print(
         f"[cyan]Memory:[/cyan] "
         + (

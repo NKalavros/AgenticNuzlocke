@@ -274,6 +274,7 @@ source = { editable = "." }
 dependencies = [
     { name = "cursor-sdk" },
     { name = "httpx" },
+    { name = "pillow" },
     { name = "pokemon-agent" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -303,6 +304,7 @@ dev = [
 requires-dist = [
     { name = "cursor-sdk", specifier = ">=1.0.24" },
     { name = "httpx", specifier = ">=0.28.0" },
+    { name = "pillow", specifier = ">=10.0.0" },
     { name = "pokemon-agent", git = "https://github.com/NousResearch/pokemon-agent" },
     { name = "pokemon-agent", extras = ["dashboard"], marker = "extra == 'emu'", git = "https://github.com/NousResearch/pokemon-agent" },
     { name = "pyboy", marker = "extra == 'emu'" },

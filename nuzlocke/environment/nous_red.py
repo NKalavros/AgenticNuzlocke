@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -9,13 +10,16 @@ from typing import Any
 
 import httpx
 
+from nuzlocke.environment import screen
 from nuzlocke.environment.base import ActionResult
 from nuzlocke.environment.joypad import (
     agent_can_act,
-    is_dialog_lock,
     is_naming_lock,
 )
-from nuzlocke.environment.macros import expand_actions
+from nuzlocke.environment.macros import (
+    drop_naming_confirm_if_walking,
+    expand_actions,
+)
 from nuzlocke.state.models import ControlState, GameAction, PlayerObservation
 
 # Gen 1: a single directional press only turns the sprite when the player
@@ -28,6 +32,15 @@ _WALK_DIRECTIONS = {
     GameAction.WALK_LEFT: "left",
     GameAction.WALK_RIGHT: "right",
 }
+
+
+# Red Star reports joy_ignore=0 during real dialog, so the old RAM-based exit
+# could never fire: every mash ran all its rounds and ended on A, which
+# re-opens the NPC it just finished. Rounds are now B-only and stop when the
+# text box stops changing (see execute_skip_dialog).
+SKIP_DIALOG_MAX_ROUNDS = 6
+# Consecutive rounds with an unchanged text-box region before we call it done.
+SKIP_DIALOG_STABLE_ROUNDS = 2
 
 
 class NousRedEnvironment:
@@ -49,7 +62,9 @@ class NousRedEnvironment:
         self.speed = speed
         self.press_interval_s = max(0.0, float(press_interval_s))
         self.load_state = load_state
-        self._client = httpx.Client(timeout=60.0)
+        # Local emulator. Ignore HTTP(S)_PROXY / ALL_PROXY so a dev proxy
+        # cannot turn /health into a 503 and look like the server is down.
+        self._client = httpx.Client(timeout=60.0, trust_env=False)
         self._proc: subprocess.Popen[str] | None = None
         if auto_start:
             self._ensure_server()
@@ -238,6 +253,11 @@ class NousRedEnvironment:
         checkpoint.
         """
         result = self._post_json("/save", {"name": name})
+        saved = result.get("path")
+        if saved:
+            from nuzlocke.orchestration.checkpoint import mirror_save
+
+            mirror_save(Path(saved), run_dir=self.run_dir, name=name)
         if name not in {s.get("name") for s in self.list_checkpoints()}:
             raise RuntimeError(
                 f"checkpoint '{name}' saved to a session-scoped path that "
@@ -250,6 +270,31 @@ class NousRedEnvironment:
     def load_checkpoint(self, name: str) -> dict[str, Any]:
         return self._post_json("/load", {"name": name})
 
+    def publish_savestate(self, name: str) -> None:
+        """Copy this run's savestate into the live server's flat saves dir.
+
+        ``/load`` only reads that directory. A server started for another run
+        would otherwise keep looking in its own folder.
+        """
+        from nuzlocke.orchestration.checkpoint import data_dir_from_ps
+
+        src = self.run_dir / "savestates" / f"{name}.state"
+        if not src.is_file():
+            src = self.run_dir / "pokemon-agent-data" / "saves" / f"{name}.state"
+        if not src.is_file():
+            return
+        try:
+            text = subprocess.check_output(["ps", "-ax", "-o", "command="], text=True)
+        except (OSError, subprocess.CalledProcessError):
+            return
+        data_dir = data_dir_from_ps(text, self.base_url.rsplit(":", 1)[-1])
+        if data_dir is None:
+            return
+        dest = data_dir / "saves" / f"{name}.state"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if src.resolve() != dest.resolve():
+            shutil.copy2(src, dest)
+
     def list_checkpoints(self) -> list[dict[str, Any]]:
         data = self._get_json("/saves")
         return list(data.get("saves") or [])
@@ -261,25 +306,49 @@ class NousRedEnvironment:
         except (httpx.HTTPError, TypeError, ValueError):
             return 0
 
+    def _dialog_digest(self) -> str | None:
+        """Hash of the bottom-6-tile-row text-box region of the live frame."""
+        try:
+            return screen.digests_from_bytes(self.screenshot())[1]
+        except (httpx.HTTPError, ValueError):
+            return None
+
     def _mash_dialog_once(self) -> None:
-        self._post_json("/action", {"actions": ["hold_b_120", "press_a"]})
+        # B only. B advances Gen 1 text exactly like A does, but pressing B in
+        # the overworld starts nothing — so a mash can never end by re-opening
+        # the NPC, sign, or TV it just finished reading.
+        self._post_json("/action", {"actions": ["hold_b_120"]})
         if self.press_interval_s > 0:
             time.sleep(min(self.press_interval_s, 0.05))
 
-    def execute_skip_dialog(self, *, max_rounds: int = 30) -> PlayerObservation:
-        """Mash B+A through narrative text until naming or dialog lock clears."""
+    def execute_skip_dialog(self, *, max_rounds: int = SKIP_DIALOG_MAX_ROUNDS) -> PlayerObservation:
+        """Clear narrative text with B, stopping when the text box goes quiet.
+
+        The old version mashed ``hold_b_120 + press_a`` and exited on a
+        joy_ignore bit-5 transition. On Red Star that bit reads 0 through real
+        dialog (AGENTS.md pitfall #1), so the exit never fired: all rounds ran
+        and the final A re-opened the box. `skip_dialog` became a fixed point —
+        33 minutes of it in run 20260821-164159-3c5a68.
+
+        Termination is now visual and needs no RAM: hash the text-box region
+        between rounds and stop once it stops changing. Naming lock (bit 6)
+        stays as a guard — unlike bit 5, it was correct all run.
+        """
         max_rounds = max(1, int(max_rounds))
+        stable = 0
+        previous = self._dialog_digest()
         for _ in range(max_rounds):
-            joy = self._joy_ignore()
-            if is_naming_lock(joy):
+            if is_naming_lock(self._joy_ignore()):
                 break
             self._mash_dialog_once()
-            new_joy = self._joy_ignore()
-            if is_naming_lock(new_joy):
-                break
-            # Text lock cleared → decision frame (menu / overworld / battle).
-            if is_dialog_lock(joy) and not is_dialog_lock(new_joy):
-                break
+            current = self._dialog_digest()
+            if current is not None and current == previous:
+                stable += 1
+                if stable >= SKIP_DIALOG_STABLE_ROUNDS:
+                    break
+            else:
+                stable = 0
+            previous = current
         return self.observe()
 
     def _lock_transition_stop(
@@ -293,38 +362,59 @@ class NousRedEnvironment:
             return "map_transition"
         return None
 
+    @staticmethod
+    def _d_pad_moves_sprite(obs: PlayerObservation) -> bool:
+        """True when walk_* should turn-then-step the overworld sprite.
+
+        On the naming grid / menus the same RAM facing is stale: a second
+        walk_right would move the letter cursor two cells and overshoot END.
+        """
+        if obs.in_battle:
+            return False
+        if is_naming_lock(obs.joy_ignore):
+            return False
+        if int(obs.joy_ignore or 0) != 0:
+            return False
+        return True
+
     def execute(self, actions: list[GameAction]) -> ActionResult:
         # Mid-burst uses peek_state (no screenshot). Full observe once at end
         # (or after skip_dialog, which already observes).
-        # Expand walk_*_N macros into single-tile walks for the emu API.
-        actions = expand_actions(actions)
         before = self.peek_state()
+        # Mechanical naming split (same joy bit skip_dialog already trusts):
+        # walks move the letter cursor; A in the same burst types junk.
+        if is_naming_lock(before.joy_ignore):
+            actions = drop_naming_confirm_if_walking(actions)
+        actions = expand_actions(actions)
         executed: list[GameAction] = []
         stopped: str | None = None
         need_full_observe = True
         for i, action in enumerate(actions):
-            if action == GameAction.SKIP_DIALOG:
+            # a_until_dialog_end is pokemon-agent's own opcode and it checks a
+            # flat `dialog_active` key incorrectly (AGENTS.md pitfall #5), so it
+            # either returns instantly or A-mashes an NPC forever. Serve it from
+            # our own visually-terminated macro instead.
+            if action in (GameAction.SKIP_DIALOG, GameAction.A_UNTIL_DIALOG_END):
                 after = self.execute_skip_dialog()
                 executed.append(action)
                 need_full_observe = False
-                stopped = self._lock_transition_stop(before, after)
+                stopped = self._lock_transition_stop(before, after) or "skip_dialog"
                 before = after
-                if stopped:
-                    break
-                if self.press_interval_s > 0 and i + 1 < len(actions):
-                    time.sleep(self.press_interval_s)
-                continue
+                # Never walk/A after a mash in the same burst (re-opens TV).
+                break
 
             direction = _WALK_DIRECTIONS.get(action)
-            if direction and before.facing and before.facing.lower() != direction:
-                # Turn first so this walk actually moves a tile instead of
-                # silently only turning.
-                self._post_json("/action", {"actions": [action.value]})
-                before = self.peek_state()
-                if self.press_interval_s > 0:
-                    time.sleep(self.press_interval_s)
-
-            self._post_json("/action", {"actions": [action.value]})
+            buttons = [action.value]
+            if (
+                direction
+                and self._d_pad_moves_sprite(before)
+                and before.facing
+                and before.facing.lower() != direction
+            ):
+                # One /action with turn+step so Field Log shows a single ACT
+                # (not two walk_rights) and the sprite actually leaves the tile.
+                buttons = [action.value, action.value]
+            self._post_json("/action", {"actions": buttons})
             executed.append(action)
             after = self.peek_state()
             if after.dialog_active and not before.dialog_active:

@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import httpx
 from cursor_sdk import (
     Agent,
     AgentOptions,
+    Bridge,
+    Client,
     CursorAgentError,
     LocalAgentOptions,
     ModelParameterValue,
@@ -22,6 +27,7 @@ from cursor_sdk import (
     UserMessage,
 )
 
+from nuzlocke.config import ensure_relay_routing
 from nuzlocke.llm.base import LLMProvider
 from nuzlocke.llm.json_util import extract_json_object
 from nuzlocke.state.models import AgentRole, LLMResponse
@@ -80,6 +86,11 @@ class CursorProvider(LLMProvider):
         self._last_input_tokens = 0
         self._est_context_tokens = 0
         self._last_stream_push = 0.0
+        self._bridge: Bridge | None = None
+        self._client: Client | None = None
+        self._http: httpx.Client | None = None
+        self._bridge_lines: list[str] = []
+        self._agent: Any = None
         self._agent = self._create_agent()
 
     def _selection(self) -> ModelSelection:
@@ -92,20 +103,80 @@ class CursorProvider(LLMProvider):
             or None,
         )
 
+    def _bridge_alive(self) -> bool:
+        bridge = self._bridge
+        proc = getattr(bridge, "process", None) if bridge is not None else None
+        return proc is not None and proc.poll() is None
+
+    def _ensure_client(self) -> Client:
+        """Talk to the local bridge directly. Its own fetch uses gost."""
+        if self._client is not None and self._bridge_alive():
+            return self._client
+        self._shutdown_bridge()
+        ensure_relay_routing()
+        bridge = Bridge.launch(workspace=str(self.workspace))
+        self._bridge = bridge
+        # The SDK stops reading stderr after discovery. A full pipe blocks the
+        # bridge, and the next RPC then fails with connection refused.
+        threading.Thread(target=self._drain_bridge_stderr, daemon=True).start()
+        self._http = httpx.Client(trust_env=False, timeout=60.0)
+        self._client = Client(bridge.endpoint, http_client=self._http)
+        return self._client
+
+    def _drain_bridge_stderr(self) -> None:
+        bridge = self._bridge
+        proc = getattr(bridge, "process", None) if bridge is not None else None
+        stderr = getattr(proc, "stderr", None)
+        if stderr is None:
+            return
+        for line in stderr:
+            text = line.strip()
+            if not text:
+                continue
+            self._bridge_lines.append(text)
+            del self._bridge_lines[:-30]
+
+    def _bridge_hint(self) -> str:
+        if self._bridge_alive():
+            state = "up"
+        else:
+            state = "down"
+        tail = " | ".join(self._bridge_lines[-3:])
+        if len(tail) > 300:
+            tail = tail[-300:]
+        if tail:
+            return f" (bridge {state}: {tail})"
+        return f" (bridge {state})"
+
+    def _shutdown_bridge(self) -> None:
+        bridge = self._bridge
+        http = self._http
+        self._bridge = None
+        self._client = None
+        self._http = None
+        if bridge is not None:
+            with contextlib.suppress(Exception):
+                bridge.close()
+        if http is not None:
+            with contextlib.suppress(Exception):
+                http.close()
+
     def _create_agent(self) -> Any:
         return Agent.create(
             AgentOptions(
                 model=self._selection(),
                 api_key=self.api_key,
                 local=LocalAgentOptions(cwd=str(self.workspace)),
-            )
+            ),
+            client=self._ensure_client(),
         )
 
     def _recreate_agent(self) -> None:
-        try:
-            self._agent.close()
-        except Exception:
-            pass
+        if self._agent is not None:
+            with contextlib.suppress(Exception):
+                self._agent.close()
+        if not self._bridge_alive():
+            self._shutdown_bridge()
         self._agent = self._create_agent()
         self._est_context_tokens = max(0, len(self._session_summary) // 4)
         self._last_input_tokens = 0
@@ -296,6 +367,7 @@ User / observation:
                 raise RuntimeError(
                     f"Cursor agent startup failed: {err} "
                     f"(retryable={getattr(err, 'is_retryable', None)})"
+                    f"{self._bridge_hint()}"
                 ) from err
             except Exception as err:
                 last_err = err
@@ -316,7 +388,9 @@ User / observation:
                         pass
                     time.sleep(delay)
                     continue
-                raise RuntimeError(f"Cursor agent failed: {err}") from err
+                raise RuntimeError(
+                    f"Cursor agent failed: {err}{self._bridge_hint()}"
+                ) from err
 
             if result is not None and result.status != "error":
                 break
@@ -391,10 +465,10 @@ User / observation:
         return resp
 
     def close(self) -> None:
-        try:
-            self._agent.close()
-        except Exception:
-            pass
+        if self._agent is not None:
+            with contextlib.suppress(Exception):
+                self._agent.close()
+        self._shutdown_bridge()
 
 
 def _stream_text(event: Any) -> str:
