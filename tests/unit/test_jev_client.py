@@ -11,7 +11,9 @@ from nuzlocke.llm.factory import create_jev
 from nuzlocke.llm.jev import JevClient, JevDecisionError
 
 
-def _body(choice: str = "press_b", *, confidence: float = 0.9, stale: float = 0.1, done: float = 0.2) -> dict:
+def _body(
+    choice: str = "press_b", *, confidence: float = 0.9, stale: float = 0.1, done: float = 0.2
+) -> dict:
     return {
         "model": "jev-1.13.0",
         "answers": {
@@ -28,11 +30,7 @@ def _body(choice: str = "press_b", *, confidence: float = 0.9, stale: float = 0.
 
 
 def _client(handler, **kwargs) -> JevClient:
-    return JevClient(
-        api_key="test-key",
-        transport=httpx.MockTransport(handler),
-        **kwargs,
-    )
+    return JevClient(api_key="test-key", transport=httpx.MockTransport(handler), **kwargs)
 
 
 def test_decide_parses_choice_and_nouls():
@@ -47,9 +45,7 @@ def test_decide_parses_choice_and_nouls():
 
     client = _client(handler)
     answers = client.decide(
-        state={"scene": "overworld"},
-        questions={"action": {"type": "choice"}},
-        allowed={"press_b"},
+        state={"scene": "overworld"}, questions={"action": {"type": "choice"}}, allowed={"press_b"}
     )
     assert answers.action == "press_b"
     assert answers.confidence == 0.9
@@ -97,4 +93,17 @@ def test_create_jev_only_for_dual(monkeypatch):
     client = create_jev({"provider": "dual", "jev": {"model": "jev-latest"}})
     assert client is not None
     assert client.model == "jev-latest"
+    client.close()
+
+
+def test_decide_keeps_probabilities_and_latency():
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = _body("walk_up")
+        body["answers"]["action"]["probabilities"] = {"walk_up": 0.7, "press_b": 0.3}
+        return httpx.Response(200, json=body)
+
+    client = _client(handler)
+    answers = client.decide(state="x", questions={"action": {}}, allowed={"walk_up", "press_b"})
+    assert answers.probabilities == {"walk_up": 0.7, "press_b": 0.3}
+    assert answers.latency_s >= 0.0
     client.close()

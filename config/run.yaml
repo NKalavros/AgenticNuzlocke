@@ -26,13 +26,15 @@ control:
   max_actions_per_proposal: 12
   # Overworld: short real-time bursts; battles up to 4 when input-ready.
 
-# Cadence: prompt agent → announce actions → execute at emulator speed →
-# wait so prompts are ~every N seconds (wall clock from cycle start).
+# Cadence: minimum wall time per cycle (observe → decide → execute).
+# pokemon-agent's emulator only advances inside /action — it is frozen
+# between cycles — so this wait never lets the game catch up; it only paces
+# the run for a human watching. Text is given time to print by the wait
+# frames sent with each page press, not by this.
 # No RAM-based readiness gating (joy_ignore/dialog_active can be wrong on
-# ROM hacks like Red Star) — the game just runs in real time between
-# prompts and each cycle looks at whatever is on screen.
+# ROM hacks like Red Star).
 # Override: NUZLOCKE_PROMPT_INTERVAL_S=2.0
-prompt_interval_s: 0.5
+prompt_interval_s: 0.1
 # Tiny gap between successive button presses within a burst.
 press_interval_s: 0.1
 

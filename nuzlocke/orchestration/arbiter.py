@@ -5,12 +5,7 @@ from __future__ import annotations
 import uuid
 
 from nuzlocke.environment.base import GameEnvironment
-from nuzlocke.state.models import (
-    ActionProposal,
-    AgentRole,
-    ArbiterResult,
-    GameAction,
-)
+from nuzlocke.state.models import ActionProposal, AgentRole, ArbiterResult, GameAction
 from nuzlocke.state.store import EventStore
 
 
@@ -36,10 +31,7 @@ class ActionArbiter:
         if self.active_owner is None:
             return "no_active_owner"
         if proposal.agent != self.active_owner:
-            return (
-                f"agent {proposal.agent.value} is not owner "
-                f"{self.active_owner.value}"
-            )
+            return f"agent {proposal.agent.value} is not owner {self.active_owner.value}"
         if not proposal.actions:
             return "empty_actions"
         if len(proposal.actions) > self.max_actions:
@@ -53,30 +45,24 @@ class ActionArbiter:
         proposal_id = f"proposal-{uuid.uuid4().hex[:8]}"
         rejection = self.validate(proposal)
         self.store.append(
-            "proposal",
-            {"proposal_id": proposal_id, **proposal.model_dump(mode="json")},
+            "proposal", {"proposal_id": proposal_id, **proposal.model_dump(mode="json")}
         )
         if rejection:
             result = ArbiterResult(
-                proposal_id=proposal_id,
-                status="rejected",
-                rejection_reason=rejection,
+                proposal_id=proposal_id, status="rejected", rejection_reason=rejection
             )
-            self.store.append("arbiter", result.model_dump(mode="json"))
-            return result
-
-        action_result = self.env.execute(proposal.actions)
-        status = "partial" if action_result.stopped_early_because else "approved"
-        state_ref = self.store.append(
-            "observation",
-            action_result.observation.model_dump(mode="json"),
-        )
-        result = ArbiterResult(
-            proposal_id=proposal_id,
-            status=status,
-            executed_actions=action_result.executed,
-            stopped_early_because=action_result.stopped_early_because,
-            result_state_ref=state_ref,
-        )
+        else:
+            action_result = self.env.execute(proposal.actions)
+            state_ref = self.store.append(
+                "observation", action_result.observation.model_dump(mode="json")
+            )
+            result = ArbiterResult(
+                proposal_id=proposal_id,
+                status="partial" if action_result.stopped_early_because else "approved",
+                executed_actions=action_result.executed,
+                stopped_early_because=action_result.stopped_early_because,
+                result_state_ref=state_ref,
+                walks=list(action_result.walks),
+            )
         self.store.append("arbiter", result.model_dump(mode="json"))
         return result

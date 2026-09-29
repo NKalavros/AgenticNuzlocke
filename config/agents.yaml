@@ -28,7 +28,7 @@ cursor:
 planner:
   model: grok-4.7
   params:
-    reasoning_effort: low
+    reasoning_effort: high
   # Look at the screenshot again at least this often, and also on scene changes.
   plan_every_s: 45
   # Noul at or above this refreshes the plan before the button press.

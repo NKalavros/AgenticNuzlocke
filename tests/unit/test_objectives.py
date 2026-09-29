@@ -8,9 +8,7 @@ from nuzlocke.state.models import LandmarkNote, ObjectivesUpdate
 
 
 def test_parse_objectives():
-    got = parse_objectives(
-        {"primary": " Get starter ", "secondary": "", "tertiary": "Brock"}
-    )
+    got = parse_objectives({"primary": " Get starter ", "secondary": "", "tertiary": "Brock"})
     assert got is not None
     assert got.primary == "Get starter"
     assert got.secondary is None
@@ -24,14 +22,8 @@ def test_parse_objectives_empty():
 
 def test_merge_and_dashboard():
     current = {"primary": "old", "secondary": "keep"}
-    merged = merge_objectives(
-        current, ObjectivesUpdate(primary="new primary", tertiary="third")
-    )
-    assert merged == {
-        "primary": "new primary",
-        "secondary": "keep",
-        "tertiary": "third",
-    }
+    merged = merge_objectives(current, ObjectivesUpdate(primary="new primary", tertiary="third"))
+    assert merged == {"primary": "new primary", "secondary": "keep", "tertiary": "third"}
     dash = objectives_for_dashboard(merged)
     assert [d["tier"] for d in dash] == ["primary", "secondary", "tertiary"]
     assert dash[0]["text"] == "new primary"

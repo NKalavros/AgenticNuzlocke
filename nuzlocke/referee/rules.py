@@ -18,6 +18,7 @@ MILESTONE_ORDER: tuple[str, ...] = (
     "giovanni",
     "elite_four",
 )
+FAINT_STATUSES = {"faint", "fainted", "dead"}
 
 
 class NuzlockeReferee:
@@ -30,12 +31,7 @@ class NuzlockeReferee:
         self.current_cap = int(self._caps.get(self.current_milestone, 100))
 
     def advance(self, badge_count: int) -> None:
-        """Advance the current milestone/cap to match badges earned so far.
-
-        Badge count 0 targets the first boss (Brock); each badge earned
-        moves the cap to the next entry in MILESTONE_ORDER. Clamped at the
-        last entry (Elite Four) once all 8 badges are held.
-        """
+        """Badge count N targets MILESTONE_ORDER[N], clamped at the Elite Four."""
         idx = min(max(int(badge_count), 0), len(MILESTONE_ORDER) - 1)
         self.current_milestone = MILESTONE_ORDER[idx]
         self.current_cap = int(self._caps.get(self.current_milestone, self.current_cap))
@@ -43,40 +39,25 @@ class NuzlockeReferee:
     def assert_party_legal(self, obs: PlayerObservation) -> list[str]:
         violations: list[str] = []
         for mon in obs.party:
+            name = mon.get("nickname") or mon.get("species")
             level = mon.get("level")
             if level is not None and int(level) > self.current_cap:
-                violations.append(
-                    f"{mon.get('nickname') or mon.get('species')} "
-                    f"level {level} > cap {self.current_cap}"
-                )
-            status = (mon.get("status") or "").lower()
-            if status in {"faint", "fainted", "dead"}:
-                violations.append(
-                    f"{mon.get('nickname') or mon.get('species')} is fainted/dead"
-                )
+                violations.append(f"{name} level {level} > cap {self.current_cap}")
+            if (mon.get("status") or "").lower() in FAINT_STATUSES:
+                violations.append(f"{name} is fainted/dead")
         return violations
 
     def note_faint(self, mon: dict[str, Any], context: dict[str, Any]) -> None:
         nickname = mon.get("nickname") or mon.get("species")
-        if any(entry.get("nickname") == nickname for entry in self.death_ledger):
-            return
-        entry = {
-            "species": mon.get("species"),
-            "nickname": nickname,
-            **context,
-        }
-        self.death_ledger.append(entry)
+        if all(entry.get("nickname") != nickname for entry in self.death_ledger):
+            self.death_ledger.append(
+                {"species": mon.get("species"), "nickname": nickname, **context}
+            )
 
     def freeze_encounter(self, area: str, species: str, outcome: str) -> None:
-        if area in self.encounter_ledger:
-            return
-        self.encounter_ledger[area] = {
-            "species": species,
-            "outcome": outcome,
-        }
+        self.encounter_ledger.setdefault(area, {"species": species, "outcome": outcome})
 
     def resolve_encounter(self, area: str, outcome: str) -> None:
         """Update a previously-frozen encounter's outcome (caught/fainted/fled)."""
-        entry = self.encounter_ledger.get(area)
-        if entry is not None:
-            entry["outcome"] = outcome
+        if area in self.encounter_ledger:
+            self.encounter_ledger[area]["outcome"] = outcome

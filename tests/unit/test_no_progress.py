@@ -14,6 +14,7 @@ import pytest
 
 from nuzlocke.environment import screen
 from nuzlocke.orchestration.stuck import (
+    IMMOBILE_DISENGAGE,
     NO_PROGRESS_DISENGAGE,
     NO_PROGRESS_RECOVERY,
     NO_PROGRESS_REFRAME,
@@ -82,10 +83,33 @@ def test_text_box_border_is_detected(tmp_path):
     img.save(path, format="PNG")
     assert screen.text_box_open(str(path))
 
+    # Oak's lab roof sits in the text-box rows and is dark, but the black
+    # pixels are a short band in the middle of the screen, not a full-width
+    # frame. Run 20260927-235608-cc25eb pressed B there with nobody talking.
+    building = Image.new("L", (screen.FRAME_W, screen.FRAME_H), 200)
+    for y in (109, 111):
+        for x in range(80, 144):
+            building.putpixel((x, y), 0)
+    for y in range(96, 128):
+        building.putpixel((8, y), 0)
+    building_path = tmp_path / "lab.png"
+    building.save(building_path, format="PNG")
+    assert not screen.text_box_open(str(building_path))
+
     plain = Image.new("L", (screen.FRAME_W, screen.FRAME_H), 120)
     plain_path = tmp_path / "grass.png"
     plain.save(plain_path, format="PNG")
     assert not screen.text_box_open(str(plain_path))
+
+    # A fade to black is a full-width dark band with no white panel.
+    # Run 20260928-205856-f65040 mashed skip_dialog on one.
+    fade = Image.new("L", (screen.FRAME_W, screen.FRAME_H), 0)
+    for y in range(0, 70, 4):
+        for x in range(screen.FRAME_W):
+            fade.putpixel((x, y), 255)
+    fade_path = tmp_path / "fade.png"
+    fade.save(fade_path, format="PNG")
+    assert not screen.text_box_open(str(fade_path))
     world, dialog = screen.digests_from_bytes(b"not-a-png")
     assert world == dialog != "0"
 
@@ -96,9 +120,7 @@ def test_dialogue_loop_is_no_progress_even_though_it_is_not_a_noop():
     for i in range(NO_PROGRESS_RECOVERY):
         before = _fp(dialog=f"page{i}")
         after = _fp(dialog=f"page{i + 1}")
-        is_noop = tracker.record_result(
-            before, after, executed=True, actions=["skip_dialog"]
-        )
+        is_noop = tracker.record_result(before, after, executed=True, actions=["skip_dialog"])
         assert is_noop is False  # whole-frame hashing sees "progress"
     assert tracker.noop_streak == 0
     assert tracker.no_progress_streak == NO_PROGRESS_RECOVERY
@@ -131,15 +153,10 @@ def test_repeated_actions_records_button_macros_for_the_prompt():
     tracker = StuckTracker()
     for i in range(4):
         tracker.record_result(
-            _fp(dialog=f"p{i}"),
-            _fp(dialog=f"p{i + 1}"),
-            executed=True,
-            actions=["skip_dialog"],
+            _fp(dialog=f"p{i}"), _fp(dialog=f"p{i + 1}"), executed=True, actions=["skip_dialog"]
         )
     assert tracker.failed_approaches == []  # filter must not learn to ban B/A
-    assert tracker.repeated_actions() == [
-        {"actions": ["skip_dialog"], "times_without_progress": 4}
-    ]
+    assert tracker.repeated_actions() == [{"actions": ["skip_dialog"], "times_without_progress": 4}]
 
 
 def test_escalation_tiers_climb_with_the_streak():
@@ -179,6 +196,69 @@ def test_same_tile_streak_resets_on_a_new_tile():
     assert tracker.same_tile_streak == 3
     tracker.update_position(PlayerObservation(map_name="Route 1", x=6, y=3))
     assert tracker.same_tile_streak == 0
+
+
+def test_animated_shore_walk_is_immobile_without_a_frozen_picture():
+    """Water changes the world digest, so the old ladder never left (8, 16)."""
+    tracker = StuckTracker()
+    for i in range(IMMOBILE_DISENGAGE):
+        before = _fp(world=f"water{i}", x=8)
+        after = _fp(world=f"water{i + 1}", x=8)
+        is_noop = tracker.record_result(before, after, executed=True, actions=["walk_down"])
+        assert is_noop is False
+    assert tracker.noop_streak == 0
+    assert tracker.no_progress_streak == 0
+    assert tracker.failed_approaches == []
+    assert tracker.immobile_streak == IMMOBILE_DISENGAGE
+    assert tracker.blocked_on_tile == {"walk_down"}
+    assert tracker.escalation_tier() >= 2
+    actions = tracker.disengage_actions()
+    assert GameAction.WALK_DOWN not in actions
+    assert any(action.value.startswith("walk_") for action in actions)
+
+
+def test_immobile_block_clears_when_the_tile_changes():
+    tracker = StuckTracker()
+    tracker.record_result(
+        _fp(world="a", x=8), _fp(world="b", x=8), executed=True, actions=["walk_down"]
+    )
+    assert "walk_down" in tracker.blocked_on_tile
+    tracker.record_result(
+        _fp(world="b", x=8), _fp(world="c", x=7), executed=True, actions=["walk_left"]
+    )
+    assert tracker.immobile_streak == 0
+    assert tracker.blocked_on_tile == set()
+
+
+def test_four_blocked_sides_are_a_held_input_not_walls():
+    """The rival's cutscene refused every walk; the tile is not a closed box."""
+    tracker = StuckTracker()
+    for step in ("walk_down", "walk_left", "walk_right"):
+        tracker.record_result(_fp(x=6), _fp(x=6), executed=True, actions=[step])
+    assert tracker.blocked_on_tile == {"walk_down", "walk_left", "walk_right"}
+    tracker.record_result(_fp(x=6), _fp(x=6), executed=True, actions=["walk_up"])
+    assert tracker.blocked_on_tile == set()
+
+
+def test_a_text_box_retries_the_blocked_directions():
+    tracker = StuckTracker()
+    tracker.record_result(_fp(x=6), _fp(x=6), executed=True, actions=["walk_down"])
+    assert tracker.blocked_on_tile == {"walk_down"}
+    tracker.pause_for_cutscene()
+    assert tracker.blocked_on_tile == set()
+
+
+def test_dialog_walk_does_not_block_the_tile():
+    tracker = StuckTracker()
+    tracker.record_result(
+        _fp(world="a", x=8),
+        _fp(world="b", x=8),
+        executed=True,
+        actions=["walk_up"],
+        allow_immobile=False,
+    )
+    assert tracker.immobile_streak == 0
+    assert tracker.blocked_on_tile == set()
 
 
 def test_disengage_rotates_so_a_blocked_direction_is_not_retried():
@@ -236,9 +316,7 @@ def test_no_progress_evidence_reaches_the_recovery_prompt():
         vision_only=True,
         no_progress={
             "streak": 21,
-            "repeated_actions": [
-                {"actions": ["skip_dialog"], "times_without_progress": 11}
-            ],
+            "repeated_actions": [{"actions": ["skip_dialog"], "times_without_progress": 11}],
         },
         reframe=True,
     )
@@ -253,14 +331,12 @@ def test_naming_keyboard_is_stated_outright_in_vision_only():
     from nuzlocke.agents.roles import _obs_payload
 
     grid = _obs_payload(
-        PlayerObservation(map_name="Red's House 2F", joy_ignore=0x40),
-        vision_only=True,
+        PlayerObservation(map_name="Red's House 2F", joy_ignore=0x40), vision_only=True
     )
     assert "NAMING KEYBOARD" in grid["hard_signal"]
 
     # Bit 5 stays out — it reads 0 through real dialog on Red Star.
     dialog = _obs_payload(
-        PlayerObservation(map_name="Oak's Lab", joy_ignore=0x20),
-        vision_only=True,
+        PlayerObservation(map_name="Oak's Lab", joy_ignore=0x20), vision_only=True
     )
     assert "hard_signal" not in dialog

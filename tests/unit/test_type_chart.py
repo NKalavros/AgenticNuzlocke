@@ -1,8 +1,4 @@
-from nuzlocke.referee.type_chart import (
-    battle_matchup,
-    matchup_hint,
-    types_for_species,
-)
+from nuzlocke.referee.type_chart import battle_matchup, matchup_hint, types_for_species
 
 
 def test_types_for_species_known():

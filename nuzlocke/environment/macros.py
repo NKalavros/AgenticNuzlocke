@@ -4,61 +4,28 @@ from __future__ import annotations
 
 from nuzlocke.state.models import GameAction
 
-# Multi-tile walks: one proposal slot → N tile steps.
-_WALK_MACRO_STEPS: dict[GameAction, tuple[GameAction, int]] = {
-    GameAction.WALK_UP_2: (GameAction.WALK_UP, 2),
-    GameAction.WALK_UP_3: (GameAction.WALK_UP, 3),
-    GameAction.WALK_UP_4: (GameAction.WALK_UP, 4),
-    GameAction.WALK_UP_5: (GameAction.WALK_UP, 5),
-    GameAction.WALK_DOWN_2: (GameAction.WALK_DOWN, 2),
-    GameAction.WALK_DOWN_3: (GameAction.WALK_DOWN, 3),
-    GameAction.WALK_DOWN_4: (GameAction.WALK_DOWN, 4),
-    GameAction.WALK_DOWN_5: (GameAction.WALK_DOWN, 5),
-    GameAction.WALK_LEFT_2: (GameAction.WALK_LEFT, 2),
-    GameAction.WALK_LEFT_3: (GameAction.WALK_LEFT, 3),
-    GameAction.WALK_LEFT_4: (GameAction.WALK_LEFT, 4),
-    GameAction.WALK_LEFT_5: (GameAction.WALK_LEFT, 5),
-    GameAction.WALK_RIGHT_2: (GameAction.WALK_RIGHT, 2),
-    GameAction.WALK_RIGHT_3: (GameAction.WALK_RIGHT, 3),
-    GameAction.WALK_RIGHT_4: (GameAction.WALK_RIGHT, 4),
-    GameAction.WALK_RIGHT_5: (GameAction.WALK_RIGHT, 5),
+_WALK_MACRO_STEPS = {
+    GameAction(f"walk_{direction}_{n}"): (GameAction(f"walk_{direction}"), n)
+    for direction in ("up", "down", "left", "right")
+    for n in range(2, 6)
 }
+_NAMING_CONFIRM = {GameAction.PRESS_A, GameAction.HOLD_A_30, GameAction.A_UNTIL_DIALOG_END}
 
 
 def expand_actions(actions: list[GameAction]) -> list[GameAction]:
     """Expand walk_*_N macros into repeated single-tile walks."""
     out: list[GameAction] = []
     for action in actions:
-        spec = _WALK_MACRO_STEPS.get(action)
-        if spec is None:
-            out.append(action)
-            continue
-        base, n = spec
-        out.extend([base] * n)
+        step, count = _WALK_MACRO_STEPS.get(action, (action, 1))
+        out.extend([step] * count)
     return out
 
 
-def is_walk_macro(action: GameAction) -> bool:
-    return action in _WALK_MACRO_STEPS
-
-
-def is_walk_action(action: GameAction) -> bool:
-    return action in _WALK_MACRO_STEPS or action.value.startswith("walk_")
-
-
-_NAMING_CONFIRM = {
-    GameAction.PRESS_A,
-    GameAction.HOLD_A_30,
-    GameAction.A_UNTIL_DIALOG_END,
-}
-
-
 def drop_naming_confirm_if_walking(actions: list[GameAction]) -> list[GameAction]:
-    """On the letter grid, walks move the cursor and A types the glyph.
+    """On the letter grid, walks move the cursor and A types the glyph under it.
 
-    Mixing them in one burst types comma/junk before the cursor reaches END.
-    Keep walks this turn; confirm with A on the next cycle.
+    A in a walking burst types junk before the cursor reaches END, so it waits for the next cycle.
     """
-    if not any(is_walk_action(action) for action in actions):
+    if not any(action.value.startswith("walk_") for action in actions):
         return actions
     return [action for action in actions if action not in _NAMING_CONFIRM]

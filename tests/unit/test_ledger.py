@@ -45,7 +45,9 @@ def test_trainer_battle_does_not_freeze_encounter():
 def test_battle_end_resolves_caught_when_party_grows():
     referee = NuzlockeReferee(RULES)
     tracker = LedgerTracker(referee)
-    tracker.update(_obs(map_name="Route 1", in_battle=False, party=[{"nickname": "SHELLY"}]), step=0)
+    tracker.update(
+        _obs(map_name="Route 1", in_battle=False, party=[{"nickname": "SHELLY"}]), step=0
+    )
     tracker.update(
         _obs(
             map_name="Route 1",

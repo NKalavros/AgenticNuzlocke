@@ -1,4 +1,4 @@
-"""Stuck / noop detection state, extracted from RunLoop."""
+"""Stuck / noop detection state."""
 
 from __future__ import annotations
 
@@ -9,13 +9,8 @@ from nuzlocke.state.models import GameAction, PlayerObservation
 
 
 class Fingerprint(NamedTuple):
-    """Per-step state hash, split so text animation can't fake progress.
-
-    ``frame`` is the whole-PNG hash (unchanged noop semantics). ``world`` only
-    covers the top 12 tile rows — the part of the screen a Gen 1 text box never
-    touches. A step that changes ``frame`` but not ``world`` moved text, not the
-    game.
-    """
+    """Per-step state hash. ``world`` covers only the rows a Gen 1 text box never touches, so a
+    step that changes ``frame`` but not ``world`` moved text, not the game."""
 
     map_name: str | None
     x: int | None
@@ -29,12 +24,11 @@ class Fingerprint(NamedTuple):
 
 def world_static(before: Fingerprint, after: Fingerprint) -> bool:
     """True when the game world is byte-identical — text box changes ignored."""
-    return tuple(before[:5]) == tuple(after[:5]) and before.world == after.world
+    return before[:5] == after[:5] and before.world == after.world
 
 
-# Escalation thresholds, in prompt cycles. Cycles are about a second, so a
-# few missed joystick taps must not call the recovery model. These sit well
-# above a fumbled stair tile and well below a multi-minute freeze.
+# Escalation thresholds, in prompt cycles. A few missed joystick taps must not call the recovery
+# model: these sit well above a fumbled stair tile and well below a multi-minute freeze.
 NO_PROGRESS_RECOVERY = 24
 NO_PROGRESS_DISENGAGE = 48
 NO_PROGRESS_REFRAME = 72
@@ -42,101 +36,64 @@ NO_PROGRESS_RESET = 120
 NOOP_RECOVERY = 12
 LOOP_RECOVERY = 12
 STUCK_RECOVERY = 24
-# Hard per-location budget: cycles on one tile before we force a disengage,
-# and only when the picture is frozen too.
+# Cycles on one tile before a forced disengage, counted only while the picture is frozen too.
 SAME_TILE_BUDGET = 40
-
-_WALK_AXIS: dict[str, str] = {}
-for _name, _axis in (
-    ("up", "vertical"),
-    ("down", "vertical"),
-    ("left", "horizontal"),
-    ("right", "horizontal"),
-):
-    _WALK_AXIS[f"walk_{_name}"] = _axis
-    for _n in range(2, 6):
-        _WALK_AXIS[f"walk_{_name}_{_n}"] = _axis
+# Walks that left (map, x, y) unchanged. Water and NPC animation change the picture, so this is
+# the signal that still fires on the Pallet shore.
+IMMOBILE_DISENGAGE = 12
 
 _SIDESTEPS: dict[str, tuple[GameAction, GameAction]] = {
-    "vertical": (GameAction.WALK_LEFT, GameAction.WALK_RIGHT),
-    "horizontal": (GameAction.WALK_UP, GameAction.WALK_DOWN),
+    "walk_up": (GameAction.WALK_LEFT, GameAction.WALK_RIGHT),
+    "walk_down": (GameAction.WALK_LEFT, GameAction.WALK_RIGHT),
+    "walk_left": (GameAction.WALK_UP, GameAction.WALK_DOWN),
+    "walk_right": (GameAction.WALK_UP, GameAction.WALK_DOWN),
 }
+# ``walk_up_3`` and ``walk_up`` both block the up direction.
+_WALK_BASE = {f"{base}{n}": base for base in _SIDESTEPS for n in ("", "_2", "_3", "_4", "_5")}
 
 
-def is_walk_burst(actions: list[str]) -> bool:
-    return any(label in _WALK_AXIS for label in actions)
+def _phrase_affirmed(text: str, phrase: str) -> bool:
+    """True when ``phrase`` appears outside a ``do not`` / ``don't``."""
+    at = text.find(phrase)
+    while at >= 0:
+        prefix = text[max(0, at - 16) : at]
+        if not any(negation in prefix for negation in ("do not ", "don't ", "dont ")):
+            return True
+        at = text.find(phrase, at + len(phrase))
+    return False
 
 
-def last_walk_axis(actions: list[str]) -> str | None:
-    for label in reversed(actions):
-        axis = _WALK_AXIS.get(label)
-        if axis:
-            return axis
-    return None
+def single_named_walk(text: str) -> GameAction | None:
+    """The walk button a plan or recovery reason names, if it names exactly one."""
+    lowered = text.lower().replace("_", " ")
+    named = [base for base in _SIDESTEPS if _phrase_affirmed(lowered, base.replace("_", " "))]
+    return GameAction(named[0]) if len(named) == 1 else None
 
 
-def perpendicular_sidestep(
-    failed_actions: list[str], *, alternate: int = 0
-) -> GameAction:
-    """One-tile step off the failed walk axis (fence post / door-mat miss)."""
-    axis = last_walk_axis(failed_actions)
-    if axis is None:
-        return GameAction.WALK_LEFT
-    pair = _SIDESTEPS[axis]
-    return pair[alternate % 2]
+def perpendicular_sidestep(failed_actions: list[str], *, alternate: int = 0) -> GameAction:
+    """One-tile step off the last failed walk's axis (fence post / door-mat miss)."""
+    for label in reversed(failed_actions):
+        if label in _WALK_BASE:
+            return _SIDESTEPS[_WALK_BASE[label]][alternate % 2]
+    return GameAction.WALK_LEFT
 
 
-def filter_repeated_noops(
-    actions: list[GameAction],
-    failed_approaches: list[list[str]],
-    *,
-    alternate: int = 0,
+def avoid_blocked_walk(
+    actions: list[GameAction], blocked_on_tile: set[str] | list[str], *, alternate: int = 0
 ) -> list[GameAction]:
-    """Drop a walk burst that already nooped; never rewrite button/menu macros.
+    """Swap a first walk that already failed on this tile for a sidestep.
 
-    Boot/title/dialog often false-noop (same PNG size, animation). Banning
-    press_a / skip_dialog and substituting B is how a copyright splash
-    permanently blocked NEW GAME.
+    Only this tile: a walk that failed elsewhere is pressed as named. Buttons and menu macros are
+    never touched.
     """
-    if not actions or not failed_approaches:
+    first = _WALK_BASE.get(actions[0].value) if actions else None
+    if first is None or first not in blocked_on_tile:
         return actions
-    labels = [a.value for a in actions]
-    if not is_walk_burst(labels):
-        return actions
-    failed_tuples = [
-        tuple(item) for item in failed_approaches if item and is_walk_burst(item)
-    ]
-    if not failed_tuples:
-        return actions
-
-    kept: list[str]
-    if tuple(labels) in failed_tuples:
-        kept = []
-    else:
-        kept = labels
-        for failed in failed_tuples:
-            n = len(failed)
-            if n and tuple(labels[:n]) == failed:
-                kept = labels[n:]
-                break
-
-    if kept:
-        out: list[GameAction] = []
-        for item in kept:
-            try:
-                out.append(GameAction(item))
-            except ValueError:
-                continue
-        if out:
-            return out
-
-    last_walk = next(
-        (item for item in reversed(failed_approaches) if is_walk_burst(item)),
-        None,
-    )
-    if not last_walk:
-        return actions
-    return [perpendicular_sidestep(last_walk, alternate=alternate)]
+    for turn in (alternate, alternate + 1):
+        side = perpendicular_sidestep([first], alternate=turn)
+        if side.value not in blocked_on_tile:
+            return [side, *actions[1:]]
+    return actions[1:] or actions
 
 
 class StuckTracker:
@@ -154,19 +111,24 @@ class StuckTracker:
         self.stuck_score = 0
         self.noop_streak = 0
         self.loop_streak = 0
-        # Consecutive executed steps that left the *world* region untouched.
-        # Unlike noop_streak this survives animating dialogue text.
+        # Steps that left the world region untouched. Animating dialogue text cannot reset it.
         self.no_progress_streak = 0
-        # Consecutive observations on one (map, x, y) — the per-location budget.
         self.same_tile_streak = 0
-        # signature -> times it ran without moving the world. Every action type,
-        # not just walks: this is prompt evidence, never an action filter.
+        # Walks that did not change (map, x, y), whether or not water or an NPC moved the picture.
+        self.immobile_streak = 0
+        self.last_immobile = False
+        # Directions that failed to move the player, on the current tile only.
+        self.blocked_on_tile: set[str] = set()
+        # Button counts since the last tile change. The planner sees only the last few steps, so
+        # one long book page can look like eight successful B presses.
+        self.press_counts: dict[str, int] = {}
+        # Signature -> times it ran without moving the world. Prompt evidence only, never an
+        # action filter, so every action type counts.
         self.no_progress_counts: dict[tuple[str, ...], int] = {}
         self.disengage_index = 0
         self.recent_positions: list[tuple[str | None, int | None, int | None]] = []
         self.recent_actions: list[tuple[str, ...]] = []
         self.failed_approaches: list[list[str]] = []
-        self.last_fingerprint: Fingerprint | None = None
         self._position_window = position_window
         self._same_tile_window = same_tile_window
         self._action_window = action_window
@@ -176,13 +138,14 @@ class StuckTracker:
     def pause_for_cutscene(self) -> None:
         """A title splash or an open text box is not a stuck overworld.
 
-        Same-tile dwell is kept: a name list sits on one tile and should
-        still force an early replan. The frozen picture must not.
+        Same-tile dwell is kept: a name list sits on one tile and should still force an early
+        replan. Blocked directions are retried: a scripted scene holds the player still, so walks
+        it refused say nothing about walls.
         """
-        self.no_progress_streak = 0
-        self.noop_streak = 0
-        self.loop_streak = 0
-        self.stuck_score = 0
+        self.no_progress_streak = self.noop_streak = self.loop_streak = self.stuck_score = 0
+        self.immobile_streak = 0
+        self.last_immobile = False
+        self.blocked_on_tile.clear()
 
     def needs_recovery(self) -> bool:
         return (
@@ -192,43 +155,33 @@ class StuckTracker:
             or self.no_progress_streak >= NO_PROGRESS_RECOVERY
         )
 
-    def needs_guide(self) -> bool:
-        return self.needs_recovery()
+    needs_guide = needs_recovery
 
     def escalation_tier(self) -> int:
         """0 fine · 1 LLM recovery · 2 forced disengage · 3 reframe · 4 hard reset.
 
-        Tiers exist because one undifferentiated recovery call is not an escape
-        hatch — it is the same vision agent looking at the same frozen screen.
-        In run 20260821-164159-3c5a68 it fired 222 times and proposed the same
-        two actions every time.
+        Repeating one recovery call is the same vision agent looking at the same frozen screen,
+        so each tier answers differently.
         """
         if self.no_progress_streak >= NO_PROGRESS_RESET or self.stuck_score >= 48:
             return 4
         if self.no_progress_streak >= NO_PROGRESS_REFRAME or self.stuck_score >= 36:
             return 3
-        # RAM coordinates stay put through menus and cutscenes. A same-tile
-        # count only means "stuck" when the world picture is frozen too;
-        # otherwise this fires on a name menu and never asks Jev.
-        tile_frozen = (
-            self.same_tile_streak >= SAME_TILE_BUDGET
-            and self.no_progress_streak >= 2
-        )
+        # RAM x,y hold still through menus and cutscenes, so same-tile dwell only counts while
+        # the world picture is frozen too.
+        tile_frozen = self.same_tile_streak >= SAME_TILE_BUDGET and self.no_progress_streak >= 2
         if (
             self.no_progress_streak >= NO_PROGRESS_DISENGAGE
             or tile_frozen
             or self.stuck_score >= STUCK_RECOVERY
+            or self.immobile_streak >= IMMOBILE_DISENGAGE
         ):
             return 2
-        if self.needs_recovery():
-            return 1
-        return 0
+        return 1 if self.needs_recovery() else 0
 
     def repeated_actions(self, limit: int = 5) -> list[dict[str, object]]:
         """Action signatures that keep failing, as prompt evidence."""
-        ranked = sorted(
-            self.no_progress_counts.items(), key=lambda kv: kv[1], reverse=True
-        )
+        ranked = sorted(self.no_progress_counts.items(), key=lambda kv: kv[1], reverse=True)
         return [
             {"actions": list(sig), "times_without_progress": count}
             for sig, count in ranked[:limit]
@@ -238,9 +191,8 @@ class StuckTracker:
     def disengage_actions(self) -> list[GameAction]:
         """Mechanical un-stick: close any box, leave the tile, face elsewhere.
 
-        Deliberately not an LLM call. When the screen looks identical every
-        cycle the vision agents have nothing new to reason about, so the way
-        out has to be blind and has to rotate.
+        Not an LLM call: when the screen looks identical every cycle the vision agents have
+        nothing new to reason about, so the way out has to be blind and has to rotate.
         """
         ring = (
             (GameAction.PRESS_B, GameAction.WALK_DOWN, GameAction.WALK_LEFT),
@@ -248,6 +200,16 @@ class StuckTracker:
             (GameAction.PRESS_B, GameAction.WALK_LEFT, GameAction.WALK_UP),
             (GameAction.PRESS_B, GameAction.WALK_RIGHT, GameAction.WALK_DOWN),
         )
+        blocked = self.blocked_on_tile
+        for _ in ring:
+            chosen = ring[self.disengage_index % len(ring)]
+            self.disengage_index += 1
+            if not any(step.value in blocked for step in chosen):
+                return list(chosen)
+        # Every pattern walks into a blocked direction. Keep the last one's open walks, if any.
+        kept = [step for step in chosen if step.value not in blocked]
+        if any(step.value.startswith("walk_") for step in kept):
+            return kept
         chosen = ring[self.disengage_index % len(ring)]
         self.disengage_index += 1
         return list(chosen)
@@ -255,69 +217,57 @@ class StuckTracker:
     def update_position(self, obs: PlayerObservation) -> None:
         """Same-tile dwell detection.
 
-        Intro/menus often hold position by design, so only accumulate stuck
-        score when sitting on the same tile with no dialog and no battle.
-        Two-tile / few-tile ping-pong does not decay the score (loop_streak is
-        refreshed in record_result).
+        Intro and menus hold position by design, so stuck score only grows on a frozen same-tile
+        dwell outside dialog and battle. A few-tile ping-pong does not decay it either: that is
+        loop_streak's job in record_result.
         """
         pos = (obs.map_name, obs.x, obs.y)
         if self.recent_positions and self.recent_positions[-1] == pos:
             self.same_tile_streak += 1
         else:
+            if self.recent_positions:
+                self.immobile_streak = 0
+                self.blocked_on_tile.clear()
+                self.press_counts.clear()
             self.same_tile_streak = 0
         self.recent_positions.append(pos)
         self.recent_positions = self.recent_positions[-self._position_window :]
-        if obs.dialog_active or obs.in_battle:
-            self.stuck_score = max(0, self.stuck_score - 1)
-            return
         window = self.recent_positions[-self._same_tile_window :]
-        unique = len(set(window))
-        same_tile = len(window) >= self._same_tile_window and unique == 1
-        confined = (
+        # A cutscene or a moving menu cursor changes the picture while RAM x,y hold still.
+        frozen_dwell = (
             len(window) >= self._same_tile_window
-            and 1 < unique <= self._loop_unique_max
+            and len(set(window)) == 1
+            and self.no_progress_streak >= 2
         )
-        # An animating cutscene or a moving menu cursor changes the picture
-        # while RAM x,y do not. Don't treat that dwell as stuck.
-        if same_tile and self.no_progress_streak >= 2:
+        in_scene = obs.dialog_active or obs.in_battle
+        if frozen_dwell and not in_scene:
             self.stuck_score += 1
-        elif confined:
-            # Fence-row / door-mat wiggle: do not decay (loop_streak in record_result).
-            return
-        else:
+        elif in_scene or not self.is_position_oscillation():
             self.stuck_score = max(0, self.stuck_score - 1)
 
     def is_position_oscillation(self) -> bool:
         window = self.recent_positions[-self._same_tile_window :]
-        if len(window) < self._same_tile_window:
-            return False
-        unique = len(set(window))
-        return 1 < unique <= self._loop_unique_max
+        return (
+            len(window) >= self._same_tile_window and 1 < len(set(window)) <= self._loop_unique_max
+        )
 
     def is_action_oscillation(self) -> bool:
         recent = self.recent_actions[-6:]
-        if len(recent) < 4:
-            return False
-        if len(set(recent)) != 2:
-            return False
-        if recent[-1] == recent[-2]:
-            return False
-        return recent[-4] == recent[-2] and recent[-3] == recent[-1]
+        return (
+            len(recent) >= 4
+            and len(set(recent)) == 2
+            and recent[-1] != recent[-2]
+            and recent[-4] == recent[-2]
+            and recent[-3] == recent[-1]
+        )
 
     @staticmethod
     def fingerprint(obs: PlayerObservation) -> Fingerprint:
         path = obs.screenshot_path
-        frame = screen.frame_digest_from_path(path)
         world, dialog = screen.digests_from_path(path)
+        frame = screen.frame_digest_from_path(path)
         return Fingerprint(
-            map_name=obs.map_name,
-            x=obs.x,
-            y=obs.y,
-            facing=obs.facing,
-            dialog_active=obs.dialog_active,
-            frame=frame,
-            world=world,
-            dialog=dialog,
+            obs.map_name, obs.x, obs.y, obs.facing, obs.dialog_active, frame, world, dialog
         )
 
     def record_result(
@@ -327,32 +277,47 @@ class StuckTracker:
         *,
         executed: bool,
         actions: list[str] | None = None,
+        allow_immobile: bool = True,
     ) -> bool:
-        """Update noop/stuck/loop state from a before/after fingerprint pair.
+        """Update the streaks from a before/after pair. True when actions ran and the whole frame
+        is unchanged (a noop).
 
-        Returns True if this step was a noop (actions ran but nothing changed).
-
-        Two distinct signals, because they catch different failures:
-
-        - ``is_noop`` — the whole frame is identical. Blind to dialogue loops:
-          animating text changes the PNG every cycle, so ``noop_streak`` sat at
-          0 through 200 wasted steps in run 20260821-164159-3c5a68.
-        - ``no_progress`` — the world region is identical. Opening and closing a
-          text box does not move it, so an NPC re-talk loop reads as exactly
-          what it is.
+        ``no_progress`` compares only the world region, so a dialogue loop still counts though
+        its text changes the frame. ``immobile`` is a walk that left the tile unchanged, even
+        while water or an NPC animates; that direction is blocked on this tile only.
         """
+        actions = actions or []
         is_noop = after_fp == before_fp and executed
         no_progress = executed and world_static(before_fp, after_fp)
+        walked = any(label in _WALK_BASE for label in actions)
+        coords_known = None not in (before_fp.x, before_fp.y, after_fp.x, after_fp.y)
+        # A walk into a wall from another facing only turns the player, as planned in "walk_up to
+        # face the ball, then press_a". The second press the same way is the failure.
+        turned = (
+            None not in (before_fp.facing, after_fp.facing) and before_fp.facing != after_fp.facing
+        )
+        self.last_immobile = False
+        if executed and coords_known and before_fp[:3] != after_fp[:3]:  # (map, x, y) changed
+            self.immobile_streak = 0
+            self.blocked_on_tile.clear()
+        elif executed and coords_known and allow_immobile and walked and not turned:
+            self.last_immobile = True
+            self.immobile_streak += 1
+            self.blocked_on_tile.update(
+                _WALK_BASE[label] for label in actions if label in _WALK_BASE
+            )
+            # The player walked onto this tile, so one side is open. Four refused directions
+            # mean something held the input, not walls.
+            if len(self.blocked_on_tile) >= 4:
+                self.blocked_on_tile.clear()
         if actions:
             sig = tuple(actions)
             self.recent_actions.append(sig)
             self.recent_actions = self.recent_actions[-self._action_window :]
-            if is_noop and is_walk_burst(actions):
-                self._record_failed(list(actions))
+            if is_noop and walked and self.failed_approaches[-1:] != [actions]:
+                self.failed_approaches.append(list(actions))
+                self.failed_approaches = self.failed_approaches[-self._failed_window :]
             if no_progress:
-                # Every action type, walks included — this list only ever
-                # reaches a prompt, so it cannot ban A on a boot splash the way
-                # filter_repeated_noops would.
                 self.no_progress_counts[sig] = self.no_progress_counts.get(sig, 0) + 1
         if is_noop:
             self.noop_streak += 1
@@ -364,24 +329,12 @@ class StuckTracker:
         else:
             self.no_progress_streak = 0
             self.no_progress_counts.clear()
-        self._refresh_loop_streak()
-        self.last_fingerprint = after_fp
-        return is_noop
-
-    def _record_failed(self, actions: list[str]) -> None:
-        if not actions:
-            return
-        if self.failed_approaches and self.failed_approaches[-1] == actions:
-            return
-        self.failed_approaches.append(actions)
-        self.failed_approaches = self.failed_approaches[-self._failed_window :]
-
-    def _refresh_loop_streak(self) -> None:
         if self.is_action_oscillation() or self.is_position_oscillation():
             self.loop_streak += 1
             self.stuck_score += 1
         else:
             self.loop_streak = 0
+        return is_noop
 
     def discount(self, amount: int) -> None:
         """Lower stuck_score after a successful recovery action."""
@@ -389,16 +342,11 @@ class StuckTracker:
         self.loop_streak = max(0, self.loop_streak - 1)
 
     def hard_reset(self) -> None:
-        """Tier 4: drop every accumulated belief and restart the escape.
-
-        Without this the tracker stays pinned above every threshold forever and
-        each cycle repeats the same top-tier response.
-        """
-        self.stuck_score = 0
-        self.noop_streak = 0
-        self.loop_streak = 0
-        self.no_progress_streak = 0
+        """Tier 4. Without it the tracker stays pinned above every threshold and each cycle
+        repeats the same top-tier response."""
+        self.pause_for_cutscene()
         self.same_tile_streak = 0
+        self.press_counts.clear()
         self.no_progress_counts.clear()
         self.failed_approaches.clear()
         self.recent_actions.clear()

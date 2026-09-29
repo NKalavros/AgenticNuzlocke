@@ -1,16 +1,10 @@
-"""Gen-1 type effectiveness — a lean strategic hint for the Battle role.
-
-Not a damage calculator: no power/accuracy/stat-stage math, just the
-attack-type-vs-defend-type multiplier Gen 1 actually used (including its two
-well-known quirks: Bug is super effective against Poison, and the
-Ghost-vs-Psychic "CATCH_23" bug makes Ghost moves do nothing to Psychic
-types instead of the intended super-effective hit).
-"""
+"""Gen-1 type effectiveness — a strategic hint for the Battle role, not a damage calculator."""
 
 from __future__ import annotations
 
 from typing import Any
 
+# fmt: off
 # attacker type -> {defender type: multiplier}. Omitted pairs default to 1.0.
 TYPE_CHART: dict[str, dict[str, float]] = {
     "Normal": {"Rock": 0.5, "Ghost": 0.0},
@@ -38,9 +32,8 @@ TYPE_CHART: dict[str, dict[str, float]] = {
     "Dragon": {"Dragon": 2.0},
 }
 
-# battle.enemy from pokemon-agent's /state has species/level/hp/moves/status
-# but no `types` field (unlike the player's own party[i].types), so the
-# enemy's types must be resolved from species name via this static table.
+# battle.enemy from pokemon-agent's /state has no `types` field (unlike party[i].types), so the
+# enemy's types are resolved from its species name.
 SPECIES_TYPES: dict[str, tuple[str, ...]] = {
     "Bulbasaur": ("Grass", "Poison"), "Ivysaur": ("Grass", "Poison"), "Venusaur": ("Grass", "Poison"),
     "Charmander": ("Fire",), "Charmeleon": ("Fire",), "Charizard": ("Fire", "Flying"),
@@ -50,20 +43,17 @@ SPECIES_TYPES: dict[str, tuple[str, ...]] = {
     "Pidgey": ("Normal", "Flying"), "Pidgeotto": ("Normal", "Flying"), "Pidgeot": ("Normal", "Flying"),
     "Rattata": ("Normal",), "Raticate": ("Normal",),
     "Spearow": ("Normal", "Flying"), "Fearow": ("Normal", "Flying"),
-    "Ekans": ("Poison",), "Arbok": ("Poison",),
-    "Pikachu": ("Electric",), "Raichu": ("Electric",),
+    "Ekans": ("Poison",), "Arbok": ("Poison",), "Pikachu": ("Electric",), "Raichu": ("Electric",),
     "Sandshrew": ("Ground",), "Sandslash": ("Ground",),
     "Nidoran♀": ("Poison",), "Nidorina": ("Poison",), "Nidoqueen": ("Poison", "Ground"),
     "Nidoran♂": ("Poison",), "Nidorino": ("Poison",), "Nidoking": ("Poison", "Ground"),
-    "Clefairy": ("Normal",), "Clefable": ("Normal",),
-    "Vulpix": ("Fire",), "Ninetales": ("Fire",),
+    "Clefairy": ("Normal",), "Clefable": ("Normal",), "Vulpix": ("Fire",), "Ninetales": ("Fire",),
     "Jigglypuff": ("Normal",), "Wigglytuff": ("Normal",),
     "Zubat": ("Poison", "Flying"), "Golbat": ("Poison", "Flying"),
     "Oddish": ("Grass", "Poison"), "Gloom": ("Grass", "Poison"), "Vileplume": ("Grass", "Poison"),
     "Paras": ("Bug", "Grass"), "Parasect": ("Bug", "Grass"),
     "Venonat": ("Bug", "Poison"), "Venomoth": ("Bug", "Poison"),
-    "Diglett": ("Ground",), "Dugtrio": ("Ground",),
-    "Meowth": ("Normal",), "Persian": ("Normal",),
+    "Diglett": ("Ground",), "Dugtrio": ("Ground",), "Meowth": ("Normal",), "Persian": ("Normal",),
     "Psyduck": ("Water",), "Golduck": ("Water",),
     "Mankey": ("Fighting",), "Primeape": ("Fighting",),
     "Growlithe": ("Fire",), "Arcanine": ("Fire",),
@@ -75,50 +65,35 @@ SPECIES_TYPES: dict[str, tuple[str, ...]] = {
     "Geodude": ("Rock", "Ground"), "Graveler": ("Rock", "Ground"), "Golem": ("Rock", "Ground"),
     "Ponyta": ("Fire",), "Rapidash": ("Fire",),
     "Slowpoke": ("Water", "Psychic"), "Slowbro": ("Water", "Psychic"),
-    "Magnemite": ("Electric",), "Magneton": ("Electric",),
-    "Farfetch'd": ("Normal", "Flying"),
+    "Magnemite": ("Electric",), "Magneton": ("Electric",), "Farfetch'd": ("Normal", "Flying"),
     "Doduo": ("Normal", "Flying"), "Dodrio": ("Normal", "Flying"),
-    "Seel": ("Water",), "Dewgong": ("Water", "Ice"),
-    "Grimer": ("Poison",), "Muk": ("Poison",),
+    "Seel": ("Water",), "Dewgong": ("Water", "Ice"), "Grimer": ("Poison",), "Muk": ("Poison",),
     "Shellder": ("Water",), "Cloyster": ("Water", "Ice"),
     "Gastly": ("Ghost", "Poison"), "Haunter": ("Ghost", "Poison"), "Gengar": ("Ghost", "Poison"),
-    "Onix": ("Rock", "Ground"),
-    "Drowzee": ("Psychic",), "Hypno": ("Psychic",),
+    "Onix": ("Rock", "Ground"), "Drowzee": ("Psychic",), "Hypno": ("Psychic",),
     "Krabby": ("Water",), "Kingler": ("Water",),
     "Voltorb": ("Electric",), "Electrode": ("Electric",),
     "Exeggcute": ("Grass", "Psychic"), "Exeggutor": ("Grass", "Psychic"),
     "Cubone": ("Ground",), "Marowak": ("Ground",),
-    "Hitmonlee": ("Fighting",), "Hitmonchan": ("Fighting",),
-    "Lickitung": ("Normal",),
+    "Hitmonlee": ("Fighting",), "Hitmonchan": ("Fighting",), "Lickitung": ("Normal",),
     "Koffing": ("Poison",), "Weezing": ("Poison",),
-    "Rhyhorn": ("Ground", "Rock"), "Rhydon": ("Ground", "Rock"),
-    "Chansey": ("Normal",),
-    "Tangela": ("Grass",),
-    "Kangaskhan": ("Normal",),
-    "Horsea": ("Water",), "Seadra": ("Water",),
+    "Rhyhorn": ("Ground", "Rock"), "Rhydon": ("Ground", "Rock"), "Chansey": ("Normal",),
+    "Tangela": ("Grass",), "Kangaskhan": ("Normal",), "Horsea": ("Water",), "Seadra": ("Water",),
     "Goldeen": ("Water",), "Seaking": ("Water",),
-    "Staryu": ("Water",), "Starmie": ("Water", "Psychic"),
-    "Mr. Mime": ("Psychic",),
-    "Scyther": ("Bug", "Flying"),
-    "Jynx": ("Ice", "Psychic"),
-    "Electabuzz": ("Electric",),
-    "Magmar": ("Fire",),
-    "Pinsir": ("Bug",),
-    "Tauros": ("Normal",),
-    "Magikarp": ("Water",), "Gyarados": ("Water", "Flying"),
-    "Lapras": ("Water", "Ice"),
-    "Ditto": ("Normal",),
-    "Eevee": ("Normal",),
-    "Vaporeon": ("Water",), "Jolteon": ("Electric",), "Flareon": ("Fire",),
-    "Porygon": ("Normal",),
+    "Staryu": ("Water",), "Starmie": ("Water", "Psychic"), "Mr. Mime": ("Psychic",),
+    "Scyther": ("Bug", "Flying"), "Jynx": ("Ice", "Psychic"), "Electabuzz": ("Electric",),
+    "Magmar": ("Fire",), "Pinsir": ("Bug",), "Tauros": ("Normal",),
+    "Magikarp": ("Water",), "Gyarados": ("Water", "Flying"), "Lapras": ("Water", "Ice"),
+    "Ditto": ("Normal",), "Eevee": ("Normal",),
+    "Vaporeon": ("Water",), "Jolteon": ("Electric",), "Flareon": ("Fire",), "Porygon": ("Normal",),
     "Omanyte": ("Rock", "Water"), "Omastar": ("Rock", "Water"),
-    "Kabuto": ("Rock", "Water"), "Kabutops": ("Rock", "Water"),
-    "Aerodactyl": ("Rock", "Flying"),
+    "Kabuto": ("Rock", "Water"), "Kabutops": ("Rock", "Water"), "Aerodactyl": ("Rock", "Flying"),
     "Snorlax": ("Normal",),
     "Articuno": ("Ice", "Flying"), "Zapdos": ("Electric", "Flying"), "Moltres": ("Fire", "Flying"),
     "Dratini": ("Dragon",), "Dragonair": ("Dragon",), "Dragonite": ("Dragon", "Flying"),
     "Mewtwo": ("Psychic",), "Mew": ("Psychic",),
 }
+# fmt: on
 
 
 def types_for_species(species: str) -> tuple[str, ...]:
@@ -154,10 +129,7 @@ def battle_matchup(party: list[dict[str, Any]], enemy_species: str) -> dict[str,
     party_hints: dict[str, str] = {}
     for mon in party:
         nickname = str(mon.get("nickname") or mon.get("species") or "")
-        attacker_types = mon.get("types") or list(types_for_species(str(mon.get("species") or "")))
-        if not nickname or not attacker_types:
-            continue
-        party_hints[nickname] = matchup_hint(list(attacker_types), defender_types)
-    if not party_hints:
-        return None
-    return {"enemy_types": defender_types, "party": party_hints}
+        attacker_types = mon.get("types") or types_for_species(str(mon.get("species") or ""))
+        if nickname and attacker_types:
+            party_hints[nickname] = matchup_hint(list(attacker_types), defender_types)
+    return {"enemy_types": defender_types, "party": party_hints} if party_hints else None

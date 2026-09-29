@@ -39,3 +39,6 @@ def test_llm_error_fallback_overworld_mashes_dialog():
     proposal = llm_error_fallback_proposal(_task(AgentRole.OVERWORLD))
     assert proposal.agent == AgentRole.OVERWORLD
     assert GameAction.WAIT_60 in proposal.actions
+    # B taps, each a new press. No A: it would re-open whoever the player faces.
+    assert GameAction.PRESS_A not in proposal.actions
+    assert GameAction.HOLD_B_120 not in proposal.actions

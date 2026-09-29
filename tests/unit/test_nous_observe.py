@@ -14,10 +14,7 @@ from nuzlocke.state.models import GameAction
 @pytest.fixture
 def env(tmp_path: Path) -> NousRedEnvironment:
     e = NousRedEnvironment(
-        base_url="http://127.0.0.1:8765",
-        run_dir=tmp_path,
-        auto_start=False,
-        press_interval_s=0.0,
+        base_url="http://127.0.0.1:8765", run_dir=tmp_path, auto_start=False, press_interval_s=0.0
     )
     e._client = MagicMock()
     return e
@@ -48,25 +45,28 @@ def _state(
 
 
 def test_execute_peeks_mid_burst_and_observes_once(env: NousRedEnvironment, tmp_path: Path):
-    get = MagicMock()
-    post = MagicMock()
+    pos = {"y": 5}
 
-    state = _state()
-    get.side_effect = lambda url: MagicMock(
-        status_code=200,
-        content=b"\x89PNG",
-        headers={"content-type": "application/json"},
-        json=lambda: state if url.endswith("/state") else {"map": "."},
-        text=".",
-        raise_for_status=lambda: None,
-    )
-    post.return_value = MagicMock(
-        content=b"{}",
-        json=lambda: {},
-        raise_for_status=lambda: None,
-    )
-    env._client.get = get
-    env._client.post = post
+    def state_now() -> dict:
+        return _state(y=pos["y"])
+
+    def get(url: str, **kwargs: object) -> MagicMock:
+        return MagicMock(
+            status_code=200,
+            content=b"\x89PNG",
+            headers={"content-type": "application/json"},
+            json=lambda: state_now() if str(url).endswith("/state") else {"map": "."},
+            text=".",
+            raise_for_status=lambda: None,
+        )
+
+    def post(url: str, json: dict | None = None, **kwargs: object) -> MagicMock:
+        if (json or {}).get("actions") == ["walk_up"]:
+            pos["y"] -= 1
+        return MagicMock(content=b"{}", json=dict, raise_for_status=lambda: None)
+
+    env._client.get = MagicMock(side_effect=get)
+    env._client.post = MagicMock(side_effect=post)
 
     # Avoid PIL blank-frame path needing a real PNG structure beyond open.
     shots: list[str] = []
@@ -83,22 +83,17 @@ def test_execute_peeks_mid_burst_and_observes_once(env: NousRedEnvironment, tmp_
     env.screenshot = fake_screenshot  # type: ignore[method-assign]
 
     result = env.execute([GameAction.WALK_UP, GameAction.WALK_UP, GameAction.PRESS_A])
-    assert len(result.executed) == 3
-    # One full observe at end → one screenshot (not per button).
-    assert len(shots) == 1
-    # Mid-burst peeks + final observe all hit /state.
-    state_gets = [c for c in get.call_args_list if str(c.args[0]).endswith("/state")]
-    assert len(state_gets) >= 4  # peek before + 3 peeks after buttons (+ observe state)
+    assert result.executed == [GameAction.WALK_UP, GameAction.WALK_UP, GameAction.PRESS_A]
+    # A frame between overworld walks, plus the observe at the end.
+    assert len(shots) >= 2
+    state_gets = [c for c in env._client.get.call_args_list if str(c.args[0]).endswith("/state")]
+    assert len(state_gets) >= 4  # peek before + peeks after buttons (+ observe state)
 
 
 def test_peek_state_skips_screenshot(env: NousRedEnvironment):
     state = _state()
     env._client.get = MagicMock(
-        return_value=MagicMock(
-            status_code=200,
-            json=lambda: state,
-            raise_for_status=lambda: None,
-        )
+        return_value=MagicMock(status_code=200, json=lambda: state, raise_for_status=lambda: None)
     )
     called = {"n": 0}
 

@@ -1,8 +1,13 @@
-from nuzlocke.state.models import ActionProposal, AgentRole, GameAction
-from nuzlocke.orchestration.arbiter import ActionArbiter
-from nuzlocke.state.store import EventStore
-from nuzlocke.state.models import ControlState, PlayerObservation
 from nuzlocke.environment.base import ActionResult
+from nuzlocke.orchestration.arbiter import ActionArbiter
+from nuzlocke.state.models import (
+    ActionProposal,
+    AgentRole,
+    ControlState,
+    GameAction,
+    PlayerObservation,
+)
+from nuzlocke.state.store import EventStore
 
 
 class FakeEnv:
@@ -11,9 +16,7 @@ class FakeEnv:
 
     def execute(self, actions):
         return ActionResult(
-            executed=actions,
-            stopped_early_because=None,
-            observation=self.observe(),
+            executed=actions, stopped_early_because=None, observation=self.observe()
         )
 
     def get_control(self):
@@ -39,10 +42,7 @@ def test_arbiter_rejects_non_owner(tmp_path):
     store = EventStore(tmp_path)
     arb = ActionArbiter(FakeEnv(), store, active_owner=AgentRole.OVERWORLD)
     proposal = ActionProposal(
-        task_id="t1",
-        agent=AgentRole.BATTLE,
-        reason="nope",
-        actions=[GameAction.PRESS_A],
+        task_id="t1", agent=AgentRole.BATTLE, reason="nope", actions=[GameAction.PRESS_A]
     )
     result = arb.apply(proposal)
     assert result.status == "rejected"

@@ -25,11 +25,7 @@ class FakeLLM(LLMProvider):
         self.calls += 1
         self.last_images = image_paths
         return LLMResponse(
-            role=role,
-            raw_text="{}",
-            parsed={"notes": self.notes},
-            model="fake",
-            provider=self.name,
+            role=role, raw_text="{}", parsed={"notes": self.notes}, model="fake", provider=self.name
         )
 
 

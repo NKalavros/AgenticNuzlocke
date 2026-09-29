@@ -1,9 +1,14 @@
-"""NousResearch pokemon-agent HTTP adapter (Pokemon Red)."""
+"""NousResearch pokemon-agent HTTP adapter (Pokemon Red).
+
+The emulator only advances inside /action, so every wait is frames sent there.
+"""
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -12,35 +17,50 @@ import httpx
 
 from nuzlocke.environment import screen
 from nuzlocke.environment.base import ActionResult
-from nuzlocke.environment.joypad import (
-    agent_can_act,
-    is_naming_lock,
-)
-from nuzlocke.environment.macros import (
-    drop_naming_confirm_if_walking,
-    expand_actions,
-)
+from nuzlocke.environment.joypad import agent_can_act, is_naming_lock
+from nuzlocke.environment.macros import drop_naming_confirm_if_walking, expand_actions
 from nuzlocke.state.models import ControlState, GameAction, PlayerObservation
 
-# Gen 1: a single directional press only turns the sprite when the player
-# isn't already facing that way — moving a tile takes a second press in the
-# same direction. Mechanical only (never exposed to the LLM, never gates
-# whether/when to act) — it just makes `walk_X` reliably move a tile.
-_WALK_DIRECTIONS = {
-    GameAction.WALK_UP: "up",
-    GameAction.WALK_DOWN: "down",
-    GameAction.WALK_LEFT: "left",
-    GameAction.WALK_RIGHT: "right",
-}
-
-
-# Red Star reports joy_ignore=0 during real dialog, so the old RAM-based exit
-# could never fire: every mash ran all its rounds and ended on A, which
-# re-opens the NPC it just finished. Rounds are now B-only and stop when the
-# text box stops changing (see execute_skip_dialog).
+# /screenshot/grid scale for vision calls: labelled A1..J9 walk cells, player at E5.
+VISION_GRID_SCALE = 4
 SKIP_DIALOG_MAX_ROUNDS = 6
-# Consecutive rounds with an unchanged text-box region before we call it done.
 SKIP_DIALOG_STABLE_ROUNDS = 2
+# pokemon-agent runs no frames after a hold lets go, so two holds in a row reach the game as
+# one unbroken hold and only the first is a press. Every hold is followed by released frames.
+MASH_ROUND = ("hold_b_30", "wait_30")
+HOLD_RELEASE = "wait_12"
+# What A opens is drawn up to 10 frames after press_a returns, so a burst's last A waits.
+A_SETTLE = "wait_30"
+SCENE_ROUND = "wait_30"
+SCENE_MAX_ROUNDS = 10
+SCENE_STILL_ROUNDS = 2
+
+
+def _same_tile(before: PlayerObservation, after: PlayerObservation) -> bool:
+    if None in (before.x, before.y, after.x, after.y):
+        return False
+    return (before.map_name, before.x, before.y) == (after.map_name, after.x, after.y)
+
+
+# One walk_* press is one tile from any facing: Gen 1 has no turn-in-place, and a press into
+# a wall only turns the player.
+def _turned(before: PlayerObservation, after: PlayerObservation) -> bool:
+    return bool(before.facing and after.facing) and (
+        str(before.facing).lower() != str(after.facing).lower()
+    )
+
+
+def _turned_to(action: GameAction, before: PlayerObservation, after: PlayerObservation) -> bool:
+    direction = action.value.removeprefix("walk_")
+    return _turned(before, after) and str(after.facing).lower() == direction
+
+
+def _transition(before: PlayerObservation, after: PlayerObservation) -> str | None:
+    if after.in_battle and not before.in_battle:
+        return "battle_started"
+    if after.map_name and before.map_name and after.map_name != before.map_name:
+        return "map_transition"
+    return None
 
 
 class NousRedEnvironment:
@@ -58,14 +78,13 @@ class NousRedEnvironment:
         self.base_url = base_url.rstrip("/")
         self.run_dir = run_dir
         self.rom_path = rom_path
-        self.auto_start = auto_start
         self.speed = speed
         self.press_interval_s = max(0.0, float(press_interval_s))
         self.load_state = load_state
-        # Local emulator. Ignore HTTP(S)_PROXY / ALL_PROXY so a dev proxy
-        # cannot turn /health into a 503 and look like the server is down.
+        # trust_env=False: a dev HTTP(S)_PROXY would turn /health into a 503.
         self._client = httpx.Client(timeout=60.0, trust_env=False)
         self._proc: subprocess.Popen[str] | None = None
+        self._log: Any = None
         if auto_start:
             self._ensure_server()
 
@@ -80,63 +99,64 @@ class NousRedEnvironment:
         port = self.base_url.rsplit(":", 1)[-1]
         data_dir = self.run_dir / "pokemon-agent-data"
         data_dir.mkdir(parents=True, exist_ok=True)
-        cmd = [
-            "pokemon-agent",
-            "serve",
-            "--rom",
-            str(self.rom_path),
-            "--port",
-            port,
-            "--data-dir",
-            str(data_dir),
-        ]
+        # pokemon-agent's server plus /map/objects (warps, signs, NPCs from WRAM).
+        cmd = [sys.executable, "-m", "nuzlocke.environment.pa_serve", "serve"]
+        cmd += ["--rom", str(self.rom_path), "--port", port]
+        cmd += ["--data-dir", str(data_dir)]
         if self.load_state and (data_dir / "saves" / f"{self.load_state}.state").exists():
             cmd += ["--load-state", self.load_state]
-        # Best-effort; CLI flags may vary by version.
         log_path = self.run_dir / "pokemon-agent.log"
-        log_f = log_path.open("w", encoding="utf-8")
+        self._log = log_path.open("w", encoding="utf-8")
         try:
             self._proc = subprocess.Popen(
-                cmd,
-                stdout=log_f,
-                stderr=subprocess.STDOUT,
-                text=True,
+                cmd, stdout=self._log, stderr=subprocess.STDOUT, text=True
             )
         except FileNotFoundError as err:
             raise RuntimeError(
-                "pokemon-agent CLI not found. Install with: "
-                "uv sync --extra emu"
+                "pokemon-agent CLI not found. Install with: uv sync --extra emu"
             ) from err
         deadline = time.time() + 45
         while time.time() < deadline:
             if self.healthy():
                 return
             time.sleep(0.4)
-        raise RuntimeError(
-            f"pokemon-agent failed to become healthy. See {log_path}"
-        )
+        raise RuntimeError(f"pokemon-agent failed to become healthy. See {log_path}")
+
+    def shutdown(self) -> None:
+        """Stop the pokemon-agent this object started. A server it found running is left alone."""
+        proc, self._proc = self._proc, None
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+        if self._log is not None:
+            self._log.close()
+            self._log = None
+        self._client.close()
 
     def healthy(self) -> bool:
         try:
-            r = self._client.get(f"{self.base_url}/health")
-            return r.status_code == 200
+            return self._client.get(f"{self.base_url}/health").status_code == 200
         except httpx.HTTPError:
             return False
 
-    def _get_json(self, path: str) -> Any:
-        r = self._client.get(f"{self.base_url}{path}")
+    def _get(self, path: str, **kwargs: Any) -> httpx.Response:
+        r = self._client.get(f"{self.base_url}{path}", **kwargs)
         r.raise_for_status()
-        return r.json()
+        return r
 
     def _post_json(self, path: str, payload: dict[str, Any]) -> Any:
         r = self._client.post(f"{self.base_url}{path}", json=payload)
         r.raise_for_status()
-        if r.content:
-            try:
-                return r.json()
-            except ValueError:
-                return {"raw": r.text}
-        return {}
+        if not r.content:
+            return {}
+        try:
+            return r.json()
+        except ValueError:
+            return {"raw": r.text}
 
     def _observation_from_state(
         self,
@@ -144,6 +164,7 @@ class NousRedEnvironment:
         *,
         screenshot_path: str | None = None,
         collision_ascii: str | None = None,
+        objects: dict[str, Any] | None = None,
     ) -> PlayerObservation:
         player = state.get("player") or {}
         pos = player.get("position") or {}
@@ -153,24 +174,18 @@ class NousRedEnvironment:
         in_battle = bool(
             isinstance(battle, dict)
             and battle.get("in_battle")
-            and (battle.get("type") not in {None, "none", ""})
+            and battle.get("type") not in {None, "none", ""}
         )
-        meta = state.get("metadata") or {}
-        map_name = map_info.get("map_name") or pos.get("map_name")
         map_id = map_info.get("map_id")
-        if map_id is None:
-            map_id = pos.get("map_id")
         joy_ignore = int(dialog.get("joy_ignore") or 0)
-        # pokemon-agent: dialog.active is joy_ignore bit 5 only.
-        dialog_active = bool(dialog.get("active"))
         return PlayerObservation(
             screenshot_path=screenshot_path,
-            map_name=map_name,
-            map_id=map_id,
+            map_name=map_info.get("map_name") or pos.get("map_name"),
+            map_id=pos.get("map_id") if map_id is None else map_id,
             x=pos.get("x"),
             y=pos.get("y"),
             facing=player.get("facing"),
-            dialog_active=dialog_active,
+            dialog_active=bool(dialog.get("active")),
             dialog_text=dialog.get("text"),
             joy_ignore=joy_ignore,
             text_box_id=dialog.get("text_box_id"),
@@ -182,79 +197,87 @@ class NousRedEnvironment:
             badges=list(player.get("badges") or player.get("badges_list") or []),
             money=player.get("money"),
             collision_ascii=collision_ascii,
-            frame_count=meta.get("frame_count"),
+            **_objects_on_map(objects, map_id if map_id is not None else pos.get("map_id")),
+            frame_count=(state.get("metadata") or {}).get("frame_count"),
             raw_player=player,
         )
 
     def peek_state(self) -> PlayerObservation:
-        """Lightweight observe: /state only (no screenshot, no map ASCII)."""
-        return self._observation_from_state(self._get_json("/state"))
+        """/state only: no screenshot, no map ASCII."""
+        return self._observation_from_state(self._get("/state").json())
+
+    def _collision_ascii(self) -> str | None:
+        try:
+            r = self._get("/map/ascii")
+            is_json = "json" in (r.headers.get("content-type") or "").lower()
+            body = r.json() if is_json else r.text
+        except (httpx.HTTPError, ValueError):
+            return None
+        if isinstance(body, dict):
+            body = body.get("map") or body.get("ascii")
+        return body if isinstance(body, str) else None
+
+    def _map_objects(self) -> dict[str, Any] | None:
+        """Warps, signs, and NPCs from WRAM. None on a server without the route."""
+        try:
+            r = self._get("/map/objects")
+            body = r.json()
+        except (httpx.HTTPError, ValueError):
+            return None
+        return body if isinstance(body, dict) else None
 
     def observe(self) -> PlayerObservation:
-        state = self._get_json("/state")
-        collision = None
+        state = self._get("/state").json()
+        collision = self._collision_ascii()
+        objects = self._map_objects()
+        shot: str | None = str(self.run_dir / "screenshots" / "latest.png")
         try:
-            r = self._client.get(f"{self.base_url}/map/ascii")
-            r.raise_for_status()
-            ctype = (r.headers.get("content-type") or "").lower()
-            if "json" in ctype:
-                ascii_map = r.json()
-                if isinstance(ascii_map, dict):
-                    collision = ascii_map.get("map") or ascii_map.get("ascii")
-                elif isinstance(ascii_map, str):
-                    collision = ascii_map
-            else:
-                collision = r.text
-        except (httpx.HTTPError, ValueError):
-            collision = None
-
-        shot_path = self.run_dir / "screenshots" / "latest.png"
-        shot_path_str: str | None
-        try:
-            self.screenshot(str(shot_path))
-            # After load/fade the LCD can be blank; nudge once if needed.
-            try:
+            self.screenshot(shot)
+        except httpx.HTTPError:
+            shot = None
+        else:
+            # After a load or a fade the LCD can be blank; it gets 60 more frames once.
+            with contextlib.suppress(Exception):
                 from PIL import Image
 
-                extrema = Image.open(shot_path).getextrema()
-                flat = all(
-                    isinstance(ch, tuple) and ch[0] == ch[1] for ch in extrema[:3]
-                )
-                if flat:
+                extrema = Image.open(shot).getextrema()
+                if all(isinstance(ch, tuple) and ch[0] == ch[1] for ch in extrema[:3]):
                     self._post_json("/action", {"actions": ["wait_60"]})
-                    self.screenshot(str(shot_path))
-            except Exception:
-                pass
-            shot_path_str = str(shot_path)
-        except httpx.HTTPError:
-            shot_path_str = None
-
+                    self.screenshot(shot)
         return self._observation_from_state(
-            state,
-            screenshot_path=shot_path_str,
-            collision_ascii=collision if isinstance(collision, str) else None,
+            state, screenshot_path=shot, collision_ascii=collision, objects=objects
         )
 
     def screenshot(self, path: str | None = None) -> bytes:
-        r = self._client.get(f"{self.base_url}/screenshot")
-        r.raise_for_status()
-        data = r.content
+        data = self._get("/screenshot").content
         if path:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
             Path(path).write_bytes(data)
         return data
 
-    def save_checkpoint(self, name: str) -> dict[str, Any]:
-        """Crash-recovery only — never used to undo a committed outcome.
+    def vision_frame(self, obs: PlayerObservation) -> PlayerObservation:
+        """``obs`` with ``vision_path`` set to the grid-overlay frame.
 
-        pokemon-agent writes into a session-scoped folder whenever a
-        dashboard "game session" is active, but /load always reads the flat
-        saves/ dir — verify the save actually landed where /load will find
-        it, and fail loudly rather than silently produce an unloadable
-        checkpoint.
+        The emulator is frozen between /action calls, so this is the frame of
+        ``obs.screenshot_path``. An older server without /screenshot/grid keeps the native frame.
+        """
+        try:
+            data = self._get("/screenshot/grid", params={"scale": VISION_GRID_SCALE}).content
+        except httpx.HTTPError:
+            return obs
+        path = self.run_dir / "screenshots" / "latest_grid.png"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        return obs.model_copy(update={"vision_path": str(path)})
+
+    def save_checkpoint(self, name: str) -> dict[str, Any]:
+        """Crash-recovery only, never to undo a committed outcome.
+
+        While a dashboard game session is active, /save writes a session-scoped folder that /load
+        never reads, so a save missing from /saves raises instead of passing silently.
         """
         result = self._post_json("/save", {"name": name})
-        saved = result.get("path")
-        if saved:
+        if saved := result.get("path"):
             from nuzlocke.orchestration.checkpoint import mirror_save
 
             mirror_save(Path(saved), run_dir=self.run_dir, name=name)
@@ -271,11 +294,7 @@ class NousRedEnvironment:
         return self._post_json("/load", {"name": name})
 
     def publish_savestate(self, name: str) -> None:
-        """Copy this run's savestate into the live server's flat saves dir.
-
-        ``/load`` only reads that directory. A server started for another run
-        would otherwise keep looking in its own folder.
-        """
+        """Copy this run's savestate into the live server's flat saves dir; /load reads only that."""
         from nuzlocke.orchestration.checkpoint import data_dir_from_ps
 
         src = self.run_dir / "savestates" / f"{name}.state"
@@ -296,157 +315,195 @@ class NousRedEnvironment:
             shutil.copy2(src, dest)
 
     def list_checkpoints(self) -> list[dict[str, Any]]:
-        data = self._get_json("/saves")
-        return list(data.get("saves") or [])
+        return list(self._get("/saves").json().get("saves") or [])
 
     def _joy_ignore(self) -> int:
         try:
-            dialog = (self._get_json("/state").get("dialog") or {})
+            dialog = self._get("/state").json().get("dialog") or {}
             return int(dialog.get("joy_ignore") or 0)
         except (httpx.HTTPError, TypeError, ValueError):
             return 0
 
-    def _dialog_digest(self) -> str | None:
-        """Hash of the bottom-6-tile-row text-box region of the live frame."""
+    def _live_frame(self, name: str) -> tuple[bytes, str] | None:
+        """The live frame and the file it was saved to, or None when it cannot be read."""
+        path = self.run_dir / "screenshots" / f"{name}.png"
         try:
-            return screen.digests_from_bytes(self.screenshot())[1]
-        except (httpx.HTTPError, ValueError):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            data = self.screenshot(str(path))
+        except (httpx.HTTPError, OSError, TypeError, ValueError):
             return None
+        return (data, str(path)) if isinstance(data, (bytes, bytearray)) else None
 
-    def _mash_dialog_once(self) -> None:
-        # B only. B advances Gen 1 text exactly like A does, but pressing B in
-        # the overworld starts nothing — so a mash can never end by re-opening
-        # the NPC, sign, or TV it just finished reading.
-        self._post_json("/action", {"actions": ["hold_b_120"]})
-        if self.press_interval_s > 0:
-            time.sleep(min(self.press_interval_s, 0.05))
+    def _mash_frame(self) -> tuple[str | None, bool]:
+        """Whole-frame digest, and whether the text box is drawn.
+
+        The digest covers the world region too: in battle "CHARMANDER used SCRATCH!" sits
+        unchanged while the move and the HP bar animate above it, and B does nothing until
+        they finish. An unreadable frame counts as open, so the mash runs on with B.
+        """
+        frame = self._live_frame("mash")
+        if frame is None:
+            return None, True
+        data, path = frame
+        world, dialog = screen.digests_from_bytes(data)
+        return f"{world}:{dialog}", screen.text_box_open(path)
+
+    def _prompt_up(self) -> bool:
+        """A YES/NO or a list waits above the text box: the next B answers NO."""
+        frame = self._live_frame("mash")
+        return frame is not None and screen.prompt_box_open(frame[1])
 
     def execute_skip_dialog(self, *, max_rounds: int = SKIP_DIALOG_MAX_ROUNDS) -> PlayerObservation:
-        """Clear narrative text with B, stopping when the text box goes quiet.
+        """Page narrative text with B until the text box closes or stops changing.
 
-        The old version mashed ``hold_b_120 + press_a`` and exited on a
-        joy_ignore bit-5 transition. On Red Star that bit reads 0 through real
-        dialog (AGENTS.md pitfall #1), so the exit never fired: all rounds ran
-        and the final A re-opened the box. `skip_dialog` became a fixed point —
-        33 minutes of it in run 20260821-164159-3c5a68.
-
-        Termination is now visual and needs no RAM: hash the text-box region
-        between rounds and stop once it stops changing. Naming lock (bit 6)
-        stays as a guard — unlike bit 5, it was correct all run.
+        B advances Gen 1 text like A but starts nothing in the overworld, so a mash cannot
+        re-open the NPC it just finished. The naming keyboard and a prompt end it before a press.
         """
-        max_rounds = max(1, int(max_rounds))
         stable = 0
-        previous = self._dialog_digest()
+        previous, _ = self._mash_frame()
         for _ in range(max_rounds):
-            if is_naming_lock(self._joy_ignore()):
+            if is_naming_lock(self._joy_ignore()) or self._prompt_up():
                 break
-            self._mash_dialog_once()
-            current = self._dialog_digest()
-            if current is not None and current == previous:
-                stable += 1
-                if stable >= SKIP_DIALOG_STABLE_ROUNDS:
-                    break
-            else:
-                stable = 0
+            self._post_json("/action", {"actions": list(MASH_ROUND)})
+            if self.press_interval_s > 0:
+                time.sleep(min(self.press_interval_s, 0.05))
+            current, box_open = self._mash_frame()
+            stable = stable + 1 if current is not None and current == previous else 0
+            if not box_open or stable >= SKIP_DIALOG_STABLE_ROUNDS:
+                break
             previous = current
         return self.observe()
 
-    def _lock_transition_stop(
-        self, before: PlayerObservation, after: PlayerObservation
-    ) -> str | None:
-        if is_naming_lock(after.joy_ignore):
-            return "naming_screen"
-        if after.in_battle and not before.in_battle:
-            return "battle_started"
-        if after.map_name and before.map_name and after.map_name != before.map_name:
-            return "map_transition"
-        return None
+    def _frame_blocks_walk(self) -> bool:
+        """A text box is on the live frame (a prompt always sits above one).
 
-    @staticmethod
-    def _d_pad_moves_sprite(obs: PlayerObservation) -> bool:
-        """True when walk_* should turn-then-step the overworld sprite.
-
-        On the naming grid / menus the same RAM facing is stale: a second
-        walk_right would move the letter cursor two cells and overshoot END.
+        RAM ``dialog_active`` stays false through real text on Red Star. An unreadable frame
+        counts as clear: the tile check still stops a walk that did not move.
         """
-        if obs.in_battle:
-            return False
-        if is_naming_lock(obs.joy_ignore):
-            return False
-        if int(obs.joy_ignore or 0) != 0:
-            return False
-        return True
+        frame = self._live_frame("burst")
+        return frame is not None and screen.text_box_open(frame[1])
+
+    def _scene_frame(self) -> tuple[str | None, bool]:
+        """World-region digest of the live frame, and whether a text box is up."""
+        frame = self._live_frame("burst")
+        if frame is None:
+            return None, False
+        data, path = frame
+        return screen.digests_from_bytes(data)[0], screen.text_box_open(path)
+
+    def _wait_out_scene(self, start: PlayerObservation) -> tuple[bool, str | None]:
+        """Send frames while a scripted scene (the rival walking to his ball) holds the input.
+
+        Returns whether a scene held it, and why the burst should stop instead of trying the
+        walk again. A still picture after the first round is a wall, not a scene.
+        """
+        previous, _ = self._scene_frame()
+        if previous is None:
+            return False, None
+        moving = False
+        still = 0
+        for _ in range(SCENE_MAX_ROUNDS):
+            self._post_json("/action", {"actions": [SCENE_ROUND]})
+            current, boxed = self._scene_frame()
+            state = self.peek_state()
+            stop = "text_box" if boxed else _transition(start, state)
+            if stop:
+                return True, stop
+            if current is None:
+                break
+            if current != previous:
+                moving = True
+                still = 0
+            else:
+                still += 1
+                if not moving or still >= SCENE_STILL_ROUNDS:
+                    break
+            previous = current
+        return moving, None
 
     def execute(self, actions: list[GameAction]) -> ActionResult:
-        # Mid-burst uses peek_state (no screenshot). Full observe once at end
-        # (or after skip_dialog, which already observes).
         before = self.peek_state()
-        # Mechanical naming split (same joy bit skip_dialog already trusts):
-        # walks move the letter cursor; A in the same burst types junk.
-        if is_naming_lock(before.joy_ignore):
+        naming = is_naming_lock(before.joy_ignore)
+        # Naming and an open menu move a cursor: an unchanged map tile there is not a failed walk.
+        cursor = naming or self._frame_blocks_walk()
+        if naming:
             actions = drop_naming_confirm_if_walking(actions)
         actions = expand_actions(actions)
         executed: list[GameAction] = []
+        walks: list[dict[str, object]] = []
         stopped: str | None = None
-        need_full_observe = True
+        waited = False
         for i, action in enumerate(actions):
-            # a_until_dialog_end is pokemon-agent's own opcode and it checks a
-            # flat `dialog_active` key incorrectly (AGENTS.md pitfall #5), so it
-            # either returns instantly or A-mashes an NPC forever. Serve it from
-            # our own visually-terminated macro instead.
+            last = i + 1 == len(actions)
+            executed.append(action)
+            # pokemon-agent's a_until_dialog_end reads a dialog key that never exists. Nothing
+            # follows a mash in the same burst: a walk or an A would re-open what it closed.
             if action in (GameAction.SKIP_DIALOG, GameAction.A_UNTIL_DIALOG_END):
                 after = self.execute_skip_dialog()
-                executed.append(action)
-                need_full_observe = False
-                stopped = self._lock_transition_stop(before, after) or "skip_dialog"
-                before = after
-                # Never walk/A after a mash in the same burst (re-opens TV).
-                break
-
-            direction = _WALK_DIRECTIONS.get(action)
-            buttons = [action.value]
-            if (
-                direction
-                and self._d_pad_moves_sprite(before)
-                and before.facing
-                and before.facing.lower() != direction
-            ):
-                # One /action with turn+step so Field Log shows a single ACT
-                # (not two walk_rights) and the sprite actually leaves the tile.
-                buttons = [action.value, action.value]
-            self._post_json("/action", {"actions": buttons})
-            executed.append(action)
+                stopped = _transition(before, after) or "skip_dialog"
+                if is_naming_lock(after.joy_ignore):
+                    stopped = "naming_screen"
+                return ActionResult(
+                    executed=executed, stopped_early_because=stopped, observation=after, walks=walks
+                )
+            opcodes = [action.value]
+            if action.value.startswith("hold_"):
+                opcodes.append(HOLD_RELEASE)
+            elif action is GameAction.PRESS_A and last:
+                opcodes.append(A_SETTLE)
+            self._post_json("/action", {"actions": opcodes})
             after = self.peek_state()
-            if after.dialog_active and not before.dialog_active:
-                stopped = "dialog_started"
-                before = after
+            walk = action.value.startswith("walk_") and not cursor
+            scene_stop = None
+            if walk and not waited and _same_tile(before, after) and not _turned(before, after):
+                waited = True
+                held, scene_stop = self._wait_out_scene(before)
+                if held:
+                    if scene_stop is None:
+                        self._post_json("/action", {"actions": opcodes})
+                    after = self.peek_state()
+            if walk:
+                walks.append(
+                    {
+                        "action": action.value,
+                        "x0": before.x,
+                        "y0": before.y,
+                        "x1": after.x,
+                        "y1": after.y,
+                        "map_name": after.map_name,
+                        "map_id": after.map_id,
+                    }
+                )
+            if scene_stop:
+                stopped = scene_stop
                 break
-            if after.in_battle and not before.in_battle:
-                stopped = "battle_started"
-                before = after
+            if walk and _same_tile(before, after):
+                next_is_a = not last and actions[i + 1] is GameAction.PRESS_A
+                if next_is_a and _turned_to(action, before, after):
+                    before = after
+                    continue
+                # A wall only turns the player and a stuck press does not; either way the rest
+                # of the path is no longer aimed at the tile it was planned for.
+                stopped = "immobile"
                 break
-            if (
-                after.map_name
-                and before.map_name
-                and after.map_name != before.map_name
-            ):
-                stopped = "map_transition"
-                before = after
+            stopped = _transition(before, after)
+            if stopped is None and not last and not cursor and self._frame_blocks_walk():
+                stopped = "text_box"
+            if stopped:
                 break
             before = after
-            if self.press_interval_s > 0 and i + 1 < len(actions):
+            if self.press_interval_s > 0 and not last:
                 time.sleep(self.press_interval_s)
-        if need_full_observe:
-            before = self.observe()
         return ActionResult(
             executed=executed,
             stopped_early_because=stopped,
-            observation=before,
+            observation=self.observe(),
+            walks=walks,
         )
 
     def get_control(self) -> ControlState:
         try:
-            data = self._get_json("/control")
+            data = self._get("/control").json()
         except httpx.HTTPError:
             return ControlState.RUNNING
         state = (data.get("state") or data.get("status") or "running").lower()
@@ -457,72 +514,32 @@ class NousRedEnvironment:
         return ControlState.RUNNING
 
     def set_control(self, state: ControlState) -> None:
-        try:
+        with contextlib.suppress(httpx.HTTPError):  # older servers have no /control
             self._post_json("/control", {"state": state.value})
-        except httpx.HTTPError:
-            # Older servers may not support control; ignore.
-            return
 
-    def push_event(
-        self,
-        kind: str,
-        text: str,
-        *,
-        category: str | None = None,
-    ) -> None:
-        """Push narration to the Field Log dashboard.
-
-        pokemon-agent expects:
-          reasoning | decision | alert  -> text
-          key_moment                    -> description (+ optional category)
-          action                        -> text (also replayed)
-        """
-        aliases = {
-            "thinking": "reasoning",
-            "thought": "reasoning",
-            "narration": "reasoning",
-            "milestone": "key_moment",
-            "moment": "key_moment",
-        }
-        event_type = aliases.get(kind, kind)
-        if event_type == "key_moment":
-            payload: dict[str, Any] = {
-                "type": "key_moment",
-                "description": text,
-                "category": category or "milestone",
-            }
+    def push_event(self, kind: str, text: str, *, category: str | None = None) -> None:
+        """Push narration to the Field Log dashboard."""
+        if kind in {"thinking", "thought", "narration"}:
+            kind = "reasoning"
+        elif kind in {"milestone", "moment"}:
+            kind = "key_moment"
+        if kind == "key_moment":
+            payload = {"type": kind, "description": text, "category": category or "milestone"}
         else:
-            payload = {"type": event_type, "text": text}
-        try:
+            payload = {"type": kind, "text": text}
+        with contextlib.suppress(httpx.HTTPError):
             self._post_json("/event", payload)
-        except httpx.HTTPError:
-            return
 
     def set_objectives(self, objectives: list[dict]) -> None:
-        # Normalize to pokemon-agent Objective shape.
-        normalized: list[dict[str, Any]] = []
-        tiers = ["primary", "secondary", "tertiary"]
-        for i, obj in enumerate(objectives[:3]):
+        normalized = []
+        for default_tier, obj in zip(("primary", "secondary", "tertiary"), objectives):
             if "tier" in obj and "text" in obj:
-                normalized.append(
-                    {
-                        "tier": obj["tier"],
-                        "text": obj["text"],
-                        "done": bool(obj.get("done", False)),
-                    }
-                )
+                tier, text = obj["tier"], obj["text"]
             else:
-                normalized.append(
-                    {
-                        "tier": tiers[i],
-                        "text": str(obj.get("label") or obj.get("text") or obj),
-                        "done": bool(obj.get("done", False)),
-                    }
-                )
-        try:
+                tier, text = default_tier, str(obj.get("label") or obj.get("text") or obj)
+            normalized.append({"tier": tier, "text": text, "done": bool(obj.get("done", False))})
+        with contextlib.suppress(httpx.HTTPError):
             self._post_json("/objectives", {"objectives": normalized})
-        except httpx.HTTPError:
-            return
 
     def close(self) -> None:
         self._client.close()
@@ -532,3 +549,13 @@ class NousRedEnvironment:
                 self._proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self._proc.kill()
+
+
+def _objects_on_map(objects: dict[str, Any] | None, map_id: Any) -> dict[str, list[dict[str, Any]]]:
+    """The object lists, only when they were read on the map ``/state`` reports."""
+    if not objects or (map_id is not None and objects.get("map_id") not in (None, map_id)):
+        return {}
+    return {
+        key: [item for item in objects.get(key) or [] if isinstance(item, dict)]
+        for key in ("warps", "signs", "npcs")
+    }

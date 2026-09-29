@@ -31,7 +31,6 @@ class OpenAICompatibleProvider(LLMProvider):
         self.model = model
         self.api_key = api_key or os.environ.get(api_key_env) or api_key_default
         self.temperature = temperature
-        self.timeout_s = timeout_s
         self._client = httpx.Client(timeout=timeout_s)
 
     def complete(
@@ -43,11 +42,7 @@ class OpenAICompatibleProvider(LLMProvider):
         schema_hint: dict[str, Any] | None = None,
         image_paths: list | None = None,
     ) -> LLMResponse:
-        schema_text = (
-            json.dumps(schema_hint, indent=2)
-            if schema_hint
-            else "a JSON object"
-        )
+        schema_text = json.dumps(schema_hint, indent=2) if schema_hint else "a JSON object"
         note = ""
         if image_paths:
             note = (
@@ -57,32 +52,25 @@ class OpenAICompatibleProvider(LLMProvider):
         messages = [
             {
                 "role": "system",
-                "content": (
-                    f"{system}\n\nRespond with ONLY JSON matching:\n{schema_text}"
-                ),
+                "content": f"{system}\n\nRespond with ONLY JSON matching:\n{schema_text}",
             },
             {"role": "user", "content": note + user},
         ]
         resp = self._client.post(
             f"{self.base_url}/chat/completions",
             headers={"Authorization": f"Bearer {self.api_key}"},
-            json={
-                "model": self.model,
-                "temperature": self.temperature,
-                "messages": messages,
-            },
+            json={"model": self.model, "temperature": self.temperature, "messages": messages},
         )
         resp.raise_for_status()
         data = resp.json()
         text = data["choices"][0]["message"]["content"] or ""
-        usage = data.get("usage")
         return LLMResponse(
             role=role,
             raw_text=text,
             parsed=extract_json_object(text),
             model=self.model,
             provider=self.name,
-            usage=usage,
+            usage=data.get("usage"),
         )
 
     def close(self) -> None:

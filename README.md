@@ -15,18 +15,20 @@ Working:
 
 - Pokemon Red/Blue-style `.gb` via `pokemon-agent` + dashboard at `http://127.0.0.1:8765/dashboard`
 - Configurable LLM backends (`dual` default: Cursor vision planner + Jev button choices; `cursor` single model; `openai_compatible` stub for local models later)
-- Vision turns: Overworld / Battle / Recovery attach the current **160×144** screenshot
-- **Fixed prompt cadence, no RAM-based readiness gating:** the emulator runs in real time and the orchestrator just observes + prompts every `prompt_interval_s` (default 0.5s) regardless of what's on screen — `joy_ignore`/`dialog_active` can be wrong on ROM hacks like Red Star, so nothing about *when to prompt* depends on them. An open text box is cleared with `skip_dialog` without another planner call.
+- Vision turns: planner / Overworld / Battle / Recovery attach the current frame as pokemon-agent's **4× grid overlay** (640×576, labelled A1..J9 walk cells, player boxed at E5); pixel checks use the native 160×144 frame
+- **No RAM-based readiness gating:** `joy_ignore`/`dialog_active` can be wrong on ROM hacks like Red Star, so nothing about *when to prompt* depends on them. The emulator is **not** real time — pokemon-agent only advances frames inside `/action` — so text is given time to print with wait frames sent in the action, not by sleeping. An open text box with no prompt is mashed with `skip_dialog` (B taps until the box closes or settles; never A) without another planner call; a YES/NO or name list above it always gets a planner look first, because B there answers NO.
 - **Short-term `recent`** (last ~8 actions/outcomes) in each prompt; **OptMem** for long-term landmarks/rollups only
 - **Walkthrough skill** (`.cursor/skills/pokemon-red-walkthrough/`) — excerpt injected when stuck; copied into agent workspace
 - **Vision-only is how we actually run this** (default **on**; `--with-ram` still exists in code but isn't part of the supported path — RAM state on ROM hacks like Red Star can be wrong, so nothing here should depend on it): prompts get screenshot + memory (+ walkthrough when stuck), no RAM JSON
-- Prompt cadence ~0.5s; announce actions → execute with 0.1s per-press gap
+- One `walk_*` press is one tile from any facing (a press into a wall only turns the player)
+- Dual mode: the planner returns a short `steps` path (≤6 buttons), pressed as one overworld burst; the burst stops if a walk does not change the tile or a text box opens
+- Walk grid withheld on a map once real walks contradict it (`GridTrust`)
 - Overworld: short bursts with optional multi-tile `walk_*_N` macros (max 12 logical); Battle: up to 4
 - Agent-owned objectives + landmark notes; OptMem text rollup every 25 steps
-- Action Arbiter is the only writer of button presses; early-stop on dialog / battle / map change
+- Action Arbiter is the only writer of button presses; a walk burst stops on an unchanged tile, a text box, a battle, or a map change
 - Append-only `runs/<run-id>/events.jsonl` + SQLite; dashboard events (`reasoning` / `decision` / `action` / …)
 - Cursor provider: **one durable agent for the whole run**, compacted (self-summarized + recreated) once input context passes `compact_at_tokens`, + retries; orchestrator **fallback macro** if LLM still fails
-- Mid-burst execute uses light `/state` peeks; full screenshot only at cycle boundaries
+- Mid-burst execute peeks `/state` after each button and checks the screenshot before the next overworld walk; a full observe still runs once at the end of the cycle
 - **Nuzlocke referee**: level cap advances automatically with badges earned (through Elite Four), deterministic first-encounter and permadeath ledgers (`nuzlocke/orchestration/ledger.py`) — no separate Encounter/Box/Team agent, just facts injected into the existing Overworld/Battle/Recovery prompts
 - **Battle type hint**: lean Gen-1 type-effectiveness lookup (`nuzlocke/referee/type_chart.py`) surfaced per-party-member against the current enemy — a strategic signal, not a full damage calculator
 - **Continue savestate**: `runs/<run-id>/savestates/auto.state` is written every 50 steps and again on dashboard STOP (not mid-battle, and not right after a committed death or encounter). `uv run nuzlocke run --resume <run-id>` loads it, so the intro does not have to be played again.
@@ -88,17 +90,23 @@ Press **START** on the dashboard if the orchestrator is waiting (`respect_dashbo
 
 ### Prompt cadence
 
-No RAM-based readiness polling: each cycle is **observe (screenshot) → prompt → announce → execute (0.1s between presses) → wait** so the next prompt is ~every N seconds from the start of the cycle, regardless of what's mid-animation on screen. `joy_ignore`/`dialog_active` were found to be wrong on Red Star (RAM said no dialog was active while the screen clearly showed one) — so nothing about *when to prompt* trusts them anymore. The agent recognizes dialog/menus/animations visually and proposes `skip_dialog` itself when it sees scrolling text.
+No RAM-based readiness polling: each cycle is **observe (screenshot) → decide → announce → execute (0.1s between presses) → wait** until at least `prompt_interval_s` has passed since the cycle started. `joy_ignore`/`dialog_active` were found to be wrong on Red Star (RAM said no dialog was active while the screen clearly showed one) — so nothing about *when to prompt* trusts them anymore.
+
+The emulator does **not** run between cycles. pokemon-agent runs PyBoy headless and only advances frames inside `/action` (`press_*` and `walk_*` are 20 frames, `wait_N` is N). The old 0.5s wait let nothing happen in the game, and a bare B press left the next line half-printed — the planner read "of POKEMON LEAGUE are rea". Text boxes are now paged with the button plus `wait_60`, so each press moves one whole box, and the wait between cycles only paces the run for a human watching.
+
+A menu box above an open text box — the starter's YES/NO, the NEW NAME / RED / ASH / JACK list — is detected from its double-line border (`screen.prompt_box_open`). Paging stops there by itself (checked on the emulator: a press or a held B stops at the prompt), but the next B answers NO and turns the starter down. So a prompt always gets a planner look before anything is pressed, and the unsure fallback there is A.
 
 | Source | Default |
 |--------|---------|
-| `config/run.yaml` → `prompt_interval_s` | `0.5` |
+| `config/run.yaml` → `prompt_interval_s` | `0.1` |
 | `config/run.yaml` → `press_interval_s` | `0.1` |
 | Env `NUZLOCKE_PROMPT_INTERVAL_S` | overrides prompt cadence |
 
-`skip_dialog` is a client-side macro (agent-requested, up to 6 rounds internally) that mashes **B** through narrative text, stopping when the text-box region of the frame stops changing — or on naming lock / map / battle transition. Remaining walks/A in the same burst are dropped so a long mash cannot re-A a TV/NPC.
+`skip_dialog` is a client-side macro (agent-requested, up to 6 rounds internally) that taps **B** through narrative text: each round is `hold_b_30` then `wait_30` with B released. It stops when the box closes, when the whole frame stops changing for two rounds (the blinking ▼ is masked out), when a prompt appears, or on naming lock. The picture above the box counts: in battle, "CHARMANDER used SCRATCH!" sits unchanged while the move and the HP bar animate, and B does nothing until they finish. A new box is paged before any planner look, battle narration included; the FIGHT menu and the move list do not read as a text box, so the mash stops there. Remaining walks in the same burst are dropped, and no walk is pressed while a box is open. If a mash leaves an open box unchanged, the next cycle asks the planner and presses its button. The Pokédex page before the starter's YES/NO sets the naming bit, so `skip_dialog` leaves it alone; A turns it.
 
-It is deliberately **B-only and B-terminated**. B advances Gen 1 text exactly like A, but B in the overworld starts nothing, while an A press while facing an NPC re-opens the box that was just closed. The earlier `hold_b_120 + press_a` version exited only on a `joy_ignore` bit-5 transition; that bit reads 0 through real dialog on Red Star, so the exit never fired, every call ran to completion, and the trailing A re-opened the NPC. That made `skip_dialog` a fixed point rather than an escape: run `20260821-164159-3c5a68` spent its final 33 minutes and ~200 vision calls alternating `skip_dialog` / `press_a` in front of Prof Oak. Termination is now visual and needs no RAM.
+Why taps: pokemon-agent's `hold_X_N` releases with no frames after it, and nothing runs between `/action` calls, so two holds in a row are one unbroken press and Gen 1 text advances only on a new press. Four `hold_b_120` never closed Oak's "which POKéMON do you want?"; two tap rounds did. `execute` now sends `wait_12` after every `hold_*`, and `wait_30` after a burst's last `press_a`, because the box A opens is drawn only after `press_a` returns.
+
+B advances ordinary Gen 1 text, and B in the overworld starts nothing, while an A press while facing an NPC re-opens the box that was just closed. A fallback that tapped A when a box seemed to ignore B re-opened Oak every cycle in run `20260928-205856-f65040`; the box had only been fed one long hold. The earlier `hold_b_120 + press_a` version exited only on a `joy_ignore` bit-5 transition; that bit reads 0 through real dialog on Red Star, so the exit never fired, every call ran to completion, and the trailing A re-opened the NPC. That made `skip_dialog` a fixed point rather than an escape: run `20260821-164159-3c5a68` spent its final 33 minutes and ~200 vision calls alternating `skip_dialog` / `press_a` in front of Prof Oak. Termination is now visual and needs no RAM.
 
 `a_until_dialog_end` is served by the same macro — pokemon-agent's version reads a `state["dialog_active"]` key that does not exist (the real one is `state["dialog"]["active"]`), so it always stops after a single A press.
 
@@ -121,31 +129,32 @@ Off by default. Enable: `memory.enabled: true` or `NUZLOCKE_MEMORY=1`.
 
 `.cursor/skills/pokemon-red-walkthrough/` — early-game Red/Red-Star guide (`SKILL.md` + `reference.md`).
 
-When stuck (`noop ≥ 2`, `stuck ≥ 3`, `loop ≥ 3` ping-pong, or `no_progress ≥ 6`), the orchestrator injects a relevant `walkthrough_hint`. Director stays deterministic on any stuck path and routes to Recovery (one vision call). Skill files live in `agent_workspace/skills/` but agents should not `Read` them when a hint is already present.
+The early-game beat script (`nuzlocke/knowledge/beats.py`) owns the objective from Red's bedroom through leaving Pallet onto Route 1. Its short hint is attached to every overworld planner call. The planner cannot replace that objective. When stuck, a longer `walkthrough_hint` excerpt is appended. Director stays deterministic and uses the current beat instead of aiming at the next gym. Skill files live in `agent_workspace/skills/` but agents should not `Read` them when a hint is already present.
 
 ### Progress detection
 
 Hashing the whole frame cannot see a dialogue loop — animating text changes the PNG every cycle, so `noop_streak` stayed at 0 through ~200 wasted steps in run `20260821-164159-3c5a68`. `nuzlocke/environment/screen.py` splits each 160×144 frame at row 96, the top of the Gen 1 text box:
 
 - **`noop_streak`** — whole frame byte-identical.
-- **`no_progress_streak`** — the *world* region (rows 0–95) is identical. Opening or closing a text box does not move it, so an NPC re-talk loop reads as exactly what it is. Text advancing is not progress.
+- **`no_progress_streak`** — the *world* region (rows 0–95) is identical. Opening or closing a text box does not move it, so an NPC re-talk loop reads as exactly what it is. Text advancing is not progress. Water and NPC animation do change this region, so a walk into the shore can look like progress.
+- **`immobile_streak`** — a walk left `(map, x, y)` and the facing unchanged. That direction is blocked on the current tile only, the step is labeled `immobile` instead of `ok`, and the next cycle asks the planner again. The blocked set is cleared when the player leaves the tile, when a text box opens, and when a fourth side would be blocked: a scripted scene (the rival walking to his ball) refuses every walk without there being any wall. Before a walk counts as immobile, `execute` checks whether the picture is still moving; if it is, it sends `wait_30` rounds until it is still, then presses the walk once more. A first press into a wall turns the player and is not counted: that is how a path faces a ball, and the `press_a` after that turn goes out in the same burst.
 
-`no_progress` and the action signatures that keep failing are passed into the role prompts as evidence, and step outcomes are labelled `no_progress xN` instead of `ok`.
+`no_progress`, `blocked_on_tile`, and the action signatures that keep failing are passed into the role prompts as evidence.
 
 Escalation is tiered, because one undifferentiated Recovery call is not an escape hatch — it is the same vision agent looking at the same frozen screen (it fired 222 times in that run and proposed the same two actions every time):
 
 | tier | trigger | response |
 |---|---|---|
-| 1 | `no_progress ≥ 6` or the noop/stuck/loop rules | Recovery vision call, now carrying `no_progress` evidence |
-| 2 | `no_progress ≥ 12` or 20 cycles on one tile | **deterministic disengage, no LLM** — `press_b` then walk off the tile, rotating direction |
-| 3 | `no_progress ≥ 20` | Recovery with `reframe`: assume the objective is already complete and set a new one |
-| 4 | `no_progress ≥ 40` | disengage, drop the stale `primary` objective, write an `ANTI` note, reset every streak |
+| 1 | `no_progress ≥ 24` or the noop/stuck/loop rules | Recovery vision call when Jev is not the actor. An immobile walk still forces a planner refresh |
+| 2 | `no_progress ≥ 48`, 40 frozen cycles on one tile, or `immobile ≥ 12` | **deterministic disengage, no LLM** — `press_b` then walk off the tile, skipping directions blocked on this tile |
+| 3 | `no_progress ≥ 72` | Recovery with `reframe`: assume the objective is already complete and set a new one |
+| 4 | `no_progress ≥ 120` | disengage, drop a stale planner `primary`, write an `ANTI` note, reset every streak. A code-owned beat stays |
 
 Memory rollups are suppressed while stuck. They are generated from `recent`, so rolling up mid-loop distils the loop itself into durable "facts" that `wake()` then feeds back every cycle — that run's `notes.log` restates "deliver Oak's Parcel" six times, long after the parcel was delivered.
 
 ### Screenshots / media resolution
 
-Frames are native **160×144** RGBA PNGs. Cursor `SDKImage` supports optional pixel `dimension` metadata only — **no** Gemini `media_resolution` (low/medium/high) on this path. Vision-only does not by itself reduce image token cost; Gemini 3 often budgets ~1120 tokens per image at default settings.
+Frames are native **160×144** RGBA PNGs for every pixel check. Vision calls attach `GET /screenshot/grid?scale=4` instead: the same frame at 640×576 with labelled A1..J9 walk cells and the player boxed at E5, so the model can count cells to a door or a ball. On a raw 160×144 frame the planner said the player faced "the middle Poké Ball" from the lab's top-left corner. The grid frame is fetched only when a vision call runs, and an older server without the endpoint falls back to the native frame. Cursor `SDKImage` gets the file's real pixel size as `dimension` metadata — **no** Gemini `media_resolution` (low/medium/high) on this path. Gemini 3 often budgets ~1120 tokens per image at default settings.
 
 ### Cost (order of magnitude)
 
@@ -170,7 +179,13 @@ uv run nuzlocke run --rom /path/to/game.gb --with-ram
 
 # Optional cap for smoke / CI
 uv run nuzlocke run --rom /path/to/game.gb --max-steps 20
+
+# Headless sandbox: a private emulator on a copy of a run's savestate
+uv run nuzlocke sandbox --from <run-id> --script "skip_dialog walk_down*2 wait_30"
+uv run nuzlocke sandbox --from <run-id> --steps 30   # the real loop, no dashboard
 ```
+
+`nuzlocke sandbox` never touches the source run: it copies the savestate into a new `runs/sandbox-*` folder and starts its own pokemon-agent on the first free port from 8791, then stops it. `--script` presses buttons with no LLM and prints map, tile, facing, and whether a text box or prompt is up after each one. It saves frames to `frames/` and ends by saving the final state, so `--from sandbox-<id>` continues from the last row. `--steps N` runs the real planner and Jev headless for N cycles and writes `summary.json` (planner looks and why each happened, planner seconds per look, median cycle time, tiles visited, burst stops, and Jev's confidence, unsure share, state size, and latency). Omit `--from` to boot the ROM fresh. See AGENTS.md → Headless sandbox.
 
 Artifacts under `runs/<run-id>/`:
 
@@ -185,7 +200,7 @@ Artifacts under `runs/<run-id>/`:
 
 ## LLM configuration (`config/agents.yaml`)
 
-Default is `dual`: a Cursor vision model writes a short plan from the screenshot (System 2), and [Jev](https://docs.typesafe.ai/concepts/system-one.md) picks one legal button per cycle from that plan (System 1). Jev is text-only, so it never sees the image. The planner looks again when the scene changes (naming, battle, the text box closing), when Jev says the plan is stale or already done, on two low-confidence answers, and at least every `plan_every_s` (default 45). While someone is speaking the loop presses one button and looks again every few seconds. The RAM map is not the scene during that speech. Stuck tiers 2 and 4 stay mechanical and drop the plan.
+Default is `dual`: a Cursor vision model reads the grid screenshot and returns `steps`, a path of up to 6 buttons (System 2). That path is pressed in one burst. The planner looks again when the burst finishes, when a walk does not change the tile (after any scripted scene has been waited out), when a prompt opens, when a text box closes, when the scene changes, when Jev says the plan is stale, on two low-confidence answers, and at least every `plan_every_s` (default 45). When a plan names no steps, a trusted walk grid turns the beat's heading into one run of the open tiles that way (up to five), with one sidestep when it is blocked (System 1). A sidestep is not held, so a plan of `walk_left` cannot walk the width of the map. An untrusted grid does not invent the run. [Jev](https://docs.typesafe.ai/concepts/system-one.md) is asked only when neither steps nor a single named button decide the press. Jev is text-only. Its state is cut to the scene, and each button option carries its own facts: whether the tile is open, which target (the planner's cell, a door from the warp table, an NPC) it is the first A* step toward, and whether it already failed on this tile. Every call is logged as a `jev_call` event (see AGENTS.md → Jev input). The early-game beat script owns the objective. An open text box without a prompt is `skip_dialog`. Stuck tiers 2 and 4 stay mechanical and drop the plan.
 
 ```yaml
 provider: dual
@@ -266,15 +281,16 @@ Note: the OpenAI-compatible path is text-only today (screenshot paths are noted 
 Dashboard START/PAUSE/STOP
         │
         ▼
- observe() — screenshot, every prompt_interval_s (no RAM-based wait)
+ observe() — screenshot + RAM; the emulator is frozen until the next /action
         │
         ▼
- RunLoop ──► recent + OptMem wake ──► walkthrough_hint if stuck
+ RunLoop ──► recent + OptMem wake ──► beat hint every overworld look
         │     referee.advance(badges) ──► ledger.update (encounter/death)
         ▼
- Director (deterministic) → stuck tiers, else:
-        │     dual: Planner vision call only when the plan is stale
-        │           → Jev picks one legal action
+ Director (deterministic) → stuck tiers, else the current beat:
+        │     dual: Planner vision call (grid frame) when the plan is stale, a walk
+        │           was immobile, or a new prompt appeared → `steps`, one burst;
+        │           text boxes mashed without a look; Jev when no step decides
         │     cursor: Overworld / Battle vision call
         │     Recovery on stuck tiers 1 and 3 (screenshot + nuzlocke facts)
         ▼
@@ -300,13 +316,13 @@ Layout:
 nuzlocke/
   agents/          # prompts + role helpers
   environment/     # Nous Red HTTP adapter + checkpoints
-  knowledge/       # walkthrough excerpt loader
+  knowledge/       # walkthrough excerpts + early-game beat script
   llm/             # cursor, jev, openai_compatible providers
   memory/          # OptMem (in-repo durable-notes store)
   orchestration/   # RunLoop, arbiter, stuck/fallback/ledger/checkpoint helpers
   referee/         # level caps, encounter/death ledgers, Gen-1 type chart
   state/           # pydantic contracts + event store
-apps/orchestrator/ # CLI: nuzlocke smoke | run [--resume]
+apps/orchestrator/ # CLI: nuzlocke smoke | run [--resume] | sandbox
 .cursor/skills/    # pokemon-red-walkthrough
 config/
 runs/

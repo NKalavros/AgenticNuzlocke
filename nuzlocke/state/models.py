@@ -20,9 +20,8 @@ class GameMode(str, Enum):
 
 
 class AgentRole(str, Enum):
-    """Task owners. Encounter legality, box, and team concerns are handled
-    as deterministic referee bookkeeping (see NuzlockeReferee / LedgerTracker)
-    and Overworld/Battle prompt playbooks, not as separate agent roles."""
+    """Task owners. Encounters, boxes and the team are referee bookkeeping (NuzlockeReferee,
+    LedgerTracker) and prompt playbooks, not agent roles."""
 
     DIRECTOR = "director"
     OVERWORLD = "overworld"
@@ -66,7 +65,7 @@ class GameAction(str, Enum):
     HOLD_B_120 = "hold_b_120"
     WAIT_60 = "wait_60"
     A_UNTIL_DIALOG_END = "a_until_dialog_end"
-    # Client-side macro: mash B+A through narrative text (not a raw emu opcode).
+    # Client-side macro, not an emulator opcode: mash through narrative text.
     SKIP_DIALOG = "skip_dialog"
 
 
@@ -110,6 +109,8 @@ class ArbiterResult(BaseModel):
     stopped_early_because: str | None = None
     result_state_ref: str | None = None
     rejection_reason: str | None = None
+    # Overworld walks in this burst, each with the tile before and after it.
+    walks: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class PlanScene(str, Enum):
@@ -135,7 +136,17 @@ class PlanCard(BaseModel):
     world_digest: str = ""
     # The screenshot this card was written from had a narrative text box.
     text_box: bool = False
-    # A naming-grid plan is one press. The next cycle looks again.
+    # Text-region digest when a menu box (YES/NO, a name list) sat above the text box, else "".
+    # A different prompt needs a new look.
+    prompt_digest: str = ""
+    # Buttons still to press. An overworld path is one burst; a menu or the naming grid takes one
+    # button per cycle. A failed walk, a text box, or a scene change throws the rest away.
+    steps: list[GameAction] = Field(default_factory=list)
+    # The cell the planner named (``G7``) and, once stamped, the map tile under it.
+    # A map tile stays right while the player walks; a cell does not.
+    target_cell: str | None = None
+    target: dict[str, Any] | None = None
+    # The plan's single button was pressed, or its steps ran out.
     spent: bool = False
     created_at: float = 0.0
 
@@ -165,6 +176,8 @@ class PlayerObservation(BaseModel):
     """Human-assist observation layer (no privileged RNG/hidden IVs)."""
 
     screenshot_path: str | None = None
+    # Grid-overlay copy of the same frame, attached to vision calls.
+    vision_path: str | None = None
     map_name: str | None = None
     map_id: int | None = None
     x: int | None = None
@@ -182,23 +195,13 @@ class PlayerObservation(BaseModel):
     badges: list[str] = Field(default_factory=list)
     money: int | None = None
     collision_ascii: str | None = None
+    # The map's objects from WRAM (``GET /map/objects``), in map tiles like ``x``/``y``.
+    # Empty on a server without that route, or when ``ObjectTrust`` has withheld them.
+    warps: list[dict[str, Any]] = Field(default_factory=list)
+    signs: list[dict[str, Any]] = Field(default_factory=list)
+    npcs: list[dict[str, Any]] = Field(default_factory=list)
     frame_count: int | None = None
     raw_player: dict[str, Any] = Field(default_factory=dict)
-
-
-class RunSummary(BaseModel):
-    run_id: str
-    status: str
-    game: str
-    observation_mode: str
-    current_mode: GameMode
-    current_milestone: str | None = None
-    current_cap: int | None = None
-    active_task: TaskEnvelope | None = None
-    living_party: list[str] = Field(default_factory=list)
-    dead_count: int = 0
-    encounter_count: int = 0
-    last_error: str | None = None
 
 
 class LLMResponse(BaseModel):

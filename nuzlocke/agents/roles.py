@@ -8,14 +8,18 @@ from pathlib import Path
 from typing import Any
 
 from nuzlocke.agents import prompts
+from nuzlocke.agents.locomotion import map_context
 from nuzlocke.environment.joypad import is_naming_lock
+from nuzlocke.environment.macros import expand_actions
+from nuzlocke.knowledge.beats import current_beat, is_intro_boot
 from nuzlocke.llm.base import LLMProvider
 from nuzlocke.orchestration.stuck import (
     LOOP_RECOVERY,
     NO_PROGRESS_RECOVERY,
     NOOP_RECOVERY,
     STUCK_RECOVERY,
-    filter_repeated_noops,
+    avoid_blocked_walk,
+    single_named_walk,
 )
 from nuzlocke.referee.type_chart import battle_matchup
 from nuzlocke.state.models import (
@@ -33,41 +37,39 @@ from nuzlocke.state.models import (
     TaskEnvelope,
 )
 
-_JSON_SEP = (",", ":")
+_TIERS = ("primary", "secondary", "tertiary")
 
 
 def _images(obs: PlayerObservation) -> list[Path]:
-    if obs.screenshot_path and Path(obs.screenshot_path).exists():
-        return [Path(obs.screenshot_path)]
+    for path in (obs.vision_path, obs.screenshot_path):
+        if path and Path(path).exists():
+            return [Path(path)]
     return []
 
 
-def _dumps(payload: dict[str, Any]) -> str:
-    return json.dumps(payload, separators=_JSON_SEP)
-
-
 def _obs_payload(obs: PlayerObservation, *, vision_only: bool) -> dict[str, Any]:
-    if vision_only:
-        payload: dict[str, Any] = {
-            "vision_only": True,
-            "note": (
-                "No RAM / map / coords / collision. "
-                "The attached screenshot is the only game state."
-            ),
-        }
-        # joy_ignore bit 6 (naming keyboard) is the one RAM signal that held up
-        # across a full run — it was set for 58 straight observations while the
-        # agent walked the letter cursor around thinking it was in a bedroom,
-        # which is how the player ended up named "A". Bit 5 (dialog) stays out:
-        # it reads 0 through real dialog on Red Star.
-        if is_naming_lock(obs.joy_ignore):
-            payload["hard_signal"] = (
-                "A NAMING KEYBOARD (letter grid) is on screen. walk_* moves the "
-                "letter cursor and press_a types the highlighted glyph — never "
-                "skip_dialog here. Move onto END, then press_a alone next turn."
-            )
-        return payload
-    return {"observation": obs.model_dump(mode="json")}
+    if not vision_only:
+        return {"observation": obs.model_dump(mode="json")}
+    payload: dict[str, Any] = {
+        "vision_only": True,
+        "note": (
+            "The screenshot decides dialog, menus, and battles. `map` is the tilemap walk grid, "
+            "in the same cells as the screenshot grid. It is usually right; blocked_on_tile and "
+            "recent outcomes are what actually happened."
+        ),
+    }
+    grid = map_context(obs)
+    if grid:
+        payload["map"] = grid
+    # Bit 5 (dialog) stays out: it reads 0 through real dialog on Red Star.
+    if is_naming_lock(obs.joy_ignore):
+        payload["hard_signal"] = (
+            "RAM shows instant-text mode: the NAMING KEYBOARD (letter grid) or a Pokédex page. "
+            "On the letter grid, walk_* moves the letter cursor, press_a types the highlighted "
+            "letter and press_start finishes the name — never skip_dialog there. On a Pokédex "
+            "page, press_a turns the page."
+        )
+    return payload
 
 
 def _with_extras(
@@ -80,68 +82,108 @@ def _with_extras(
     nuzlocke: dict[str, Any] | None = None,
     failed_approaches: list[list[str]] | None = None,
     no_progress: dict[str, Any] | None = None,
+    beat: str | None = None,
+    blocked_on_tile: list[str] | None = None,
+    buttons_on_this_tile: dict[str, int] | None = None,
 ) -> dict[str, Any]:
-    # Short-term working context (orchestrator ring buffer) — not OptMem.
+    memory = (memory or "").strip()
+    walkthrough_hint = (walkthrough_hint or "").strip()
     if recent:
         payload["recent"] = recent
-    # Long-term OptMem only (landmarks / rollups).
-    if memory and memory.strip():
-        payload["memory"] = memory.strip()
-    if walkthrough_hint and walkthrough_hint.strip():
-        payload["walkthrough_hint"] = walkthrough_hint.strip()
+    if memory:
+        payload["memory"] = memory
+    if walkthrough_hint:
+        payload["walkthrough_hint"] = walkthrough_hint
         payload["walkthrough_skill"] = (
             "hint above is the relevant excerpt — do not browse skill files"
         )
     if objectives:
         payload["objectives"] = objectives
-    # Deterministic referee bookkeeping: cap/milestone, dead party members,
-    # and frozen (first-eligible) encounters per area.
     if nuzlocke:
         payload["nuzlocke"] = nuzlocke
-    # Action sequences that already nooped — not RAM coords.
     if failed_approaches:
         payload["failed_approaches"] = failed_approaches
         payload["failed_approaches_note"] = (
             "Walk bursts that already nooped — sidestep; do not ban A/Start/skip_dialog"
         )
-    # Hard evidence that the world is not moving, measured from the top 12 tile
-    # rows of the frame so scrolling text cannot fake progress.
     if no_progress and no_progress.get("streak"):
         payload["no_progress"] = no_progress
         payload["no_progress_note"] = (
-            "The game world has not changed for "
-            f"{no_progress['streak']} straight cycles — only text has. Whatever "
-            "you have been repeating is not working. Either your current "
-            "objective is already complete, or you are talking to the wrong "
-            "thing. Do something structurally different: walk away from this "
-            "tile, or pick a different objective."
+            f"The game world has not changed for {no_progress['streak']} straight cycles — only "
+            "text has. Whatever you have been repeating is not working. Either your current "
+            "objective is already complete, or you are talking to the wrong thing. Do something "
+            "structurally different: walk away from this tile, or pick a different objective."
         )
+    if beat:
+        payload["beat"] = beat
+        payload["beat_note"] = (
+            "This is the only objective. Do not replace it. Name the one button that serves it."
+        )
+    if blocked_on_tile:
+        payload["blocked_on_tile"] = list(blocked_on_tile)
+        payload["blocked_on_tile_note"] = (
+            "These directions did not move the player on this tile. "
+            "Do not choose them. Sidestep, then retry the beat's direction."
+        )
+    if buttons_on_this_tile:
+        payload["buttons_on_this_tile"] = dict(buttons_on_this_tile)
+        pressed_a = int(buttons_on_this_tile.get("press_a") or 0)
+        pressed_b = int(buttons_on_this_tile.get("press_b") or 0)
+        if pressed_a or pressed_b:
+            payload["buttons_note"] = (
+                f"On this tile A was pressed {pressed_a} time(s) and B {pressed_b} time(s). A "
+                "book, sign, or generic chatter is not the beat. Do not press A here again. If "
+                "this is not a YES/NO or the starter itself, name a walk toward the beat."
+            )
     return payload
+
+
+def _ask(
+    llm: LLMProvider,
+    obs: PlayerObservation,
+    payload: dict[str, Any],
+    *,
+    role: AgentRole,
+    system: str,
+    schema: dict[str, Any],
+    **extras: Any,
+) -> tuple[dict[str, Any], str]:
+    resp = llm.complete(
+        role=role,
+        system=system,
+        user=json.dumps(_with_extras(payload, **extras), separators=(",", ":")),
+        schema_hint=schema,
+        image_paths=_images(obs),
+    )
+    return resp.parsed or {}, resp.raw_text
+
+
+def _parse_actions(raw: Any) -> list[GameAction]:
+    actions: list[GameAction] = []
+    for item in raw or ():
+        try:
+            actions.append(GameAction(item))
+        except ValueError:
+            continue
+    return actions
+
+
+def _clean_lines(items: Any, width: int) -> list[str]:
+    texts = (" ".join(str(item).split()) for item in items[:6])
+    return [text[:width] for text in texts if text]
+
+
+def _stripped(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    return value.strip() or None
 
 
 def parse_objectives(raw: Any) -> ObjectivesUpdate | None:
     if not isinstance(raw, dict):
         return None
-    primary = raw.get("primary")
-    secondary = raw.get("secondary")
-    tertiary = raw.get("tertiary")
-    if not any(
-        isinstance(v, str) and v.strip() for v in (primary, secondary, tertiary)
-    ):
-        return None
-    return ObjectivesUpdate(
-        primary=str(primary).strip() if isinstance(primary, str) and primary.strip() else None,
-        secondary=(
-            str(secondary).strip()
-            if isinstance(secondary, str) and secondary.strip()
-            else None
-        ),
-        tertiary=(
-            str(tertiary).strip()
-            if isinstance(tertiary, str) and tertiary.strip()
-            else None
-        ),
-    )
+    tiers = {tier: _stripped(raw.get(tier)) for tier in _TIERS}
+    return ObjectivesUpdate(**tiers) if any(tiers.values()) else None
 
 
 def parse_landmarks(raw: Any) -> list[LandmarkNote]:
@@ -153,36 +195,27 @@ def parse_landmarks(raw: Any) -> list[LandmarkNote]:
             continue
         label = str(item.get("label") or "").strip()
         note = str(item.get("note") or "").strip()
-        if not label or not note:
-            continue
-        out.append(LandmarkNote(label=label[:80], note=note[:200]))
+        if label and note:
+            out.append(LandmarkNote(label=label[:80], note=note[:200]))
     return out
 
 
-def merge_objectives(
-    current: dict[str, str],
-    update: ObjectivesUpdate | None,
-) -> dict[str, str]:
+def merge_objectives(current: dict[str, str], update: ObjectivesUpdate | None) -> dict[str, str]:
     if update is None:
         return current
     merged = dict(current)
-    if update.primary:
-        merged["primary"] = update.primary
-    if update.secondary:
-        merged["secondary"] = update.secondary
-    if update.tertiary:
-        merged["tertiary"] = update.tertiary
+    for tier, text in update.model_dump().items():
+        if text:
+            merged[tier] = text
     return merged
 
 
 def objectives_for_dashboard(objectives: dict[str, str]) -> list[dict[str, Any]]:
-    tiers = ("primary", "secondary", "tertiary")
-    out: list[dict[str, Any]] = []
-    for tier in tiers:
-        text = objectives.get(tier)
-        if text:
-            out.append({"tier": tier, "text": text, "done": False})
-    return out
+    return [
+        {"tier": tier, "text": objectives[tier], "done": False}
+        for tier in _TIERS
+        if objectives.get(tier)
+    ]
 
 
 # Next-gym target per badge count, mirroring NuzlockeReferee.MILESTONE_ORDER.
@@ -199,11 +232,6 @@ _NEXT_GYM_TARGET: tuple[str, ...] = (
 )
 
 
-def _next_gym_target(badge_count: int) -> str:
-    idx = min(max(badge_count, 0), len(_NEXT_GYM_TARGET) - 1)
-    return _NEXT_GYM_TARGET[idx]
-
-
 def decide_director(
     llm: LLMProvider,
     *,
@@ -214,11 +242,18 @@ def decide_director(
     walkthrough_hint: str | None = None,
     speech: bool = False,
 ) -> DirectorDecision:
-    # Title / intro boot: mash A until RAM reader sees a real map.
-    # Still uses RAM for routing even in vision_only (screenshot goes to owner).
-    # A speech on screen wins over the map: NEW GAME places the player in
-    # Red's House while Oak is still talking.
-    if speech and not obs.in_battle:
+    """Deterministic routing: never calls ``llm``."""
+    if obs.in_battle:
+        return DirectorDecision(
+            mode=GameMode.BATTLE,
+            owner=AgentRole.BATTLE,
+            objective="Resolve the current battle turn conservatively",
+            constraints=["One turn at a time", "No trainer items"],
+            abort=["blackout"],
+            narration="Battle detected — routing to Battle Agent.",
+        )
+    # Speech wins over the map: NEW GAME places the player in Red's House while Oak still talks.
+    if speech:
         return DirectorDecision(
             mode=GameMode.OVERWORLD,
             owner=AgentRole.OVERWORLD,
@@ -232,14 +267,7 @@ def decide_director(
             abort=["battle_started"],
             narration="Speech on screen — ignore the map grid.",
         )
-    player_name = (obs.raw_player or {}).get("name") or ""
-    on_boot = (
-        not obs.map_name
-        or player_name.strip("?") == ""
-        or set(player_name) <= {"?"}
-        or (obs.map_name == "Pallet Town" and obs.x == 0 and obs.y == 0 and not obs.party)
-    )
-    if on_boot and not obs.in_battle:
+    if is_intro_boot(obs):
         return DirectorDecision(
             mode=GameMode.OVERWORLD,
             owner=AgentRole.OVERWORLD,
@@ -254,21 +282,11 @@ def decide_director(
             abort=["battle_started"],
             narration="Boot/intro — overworld agent should read the screen.",
         )
-    if obs.in_battle:
-        return DirectorDecision(
-            mode=GameMode.BATTLE,
-            owner=AgentRole.BATTLE,
-            objective="Resolve the current battle turn conservatively",
-            constraints=["One turn at a time", "No trainer items"],
-            abort=["blackout"],
-            narration="Battle detected — routing to Battle Agent.",
-        )
 
     stuck = int(summary.get("stuck_score") or 0)
     noop = int(summary.get("noop_streak") or 0)
     loop = int(summary.get("loop_streak") or 0)
     no_progress = int(summary.get("no_progress_streak") or 0)
-    # Recovery owns the next vision call — never spend a Director LLM turn too.
     if (
         stuck >= STUCK_RECOVERY
         or noop >= NOOP_RECOVERY
@@ -284,7 +302,6 @@ def decide_director(
                 "Screenshot is ground truth",
                 "Do not repeat failed_approaches",
             ],
-            success=[],
             abort=["battle_started"],
             narration=(
                 f"Stuck path → recovery (stuck={stuck}, noop={noop}, loop={loop}, "
@@ -292,20 +309,21 @@ def decide_director(
             ),
         )
 
-    next_target = _next_gym_target(len(obs.badges))
-    objective = f"Make safe progress toward {next_target}"
-    if not vision_only and obs.map_name and "House" in obs.map_name:
-        objective = (
-            f"If the SCREEN shows overworld, leave the house and continue toward "
-            f"{next_target}; if it shows naming/dialog, resolve that first"
-        )
+    next_target = _NEXT_GYM_TARGET[min(len(obs.badges), len(_NEXT_GYM_TARGET) - 1)]
+    beat = None if is_naming_lock(obs.joy_ignore) else current_beat(obs)
+    if beat is not None:
+        objective = beat.text
     elif vision_only:
+        objective = f"Read the screenshot only: clear menus/dialog/naming, then continue toward {next_target}"
+    elif "House" in (obs.map_name or ""):
         objective = (
-            "Read the screenshot only: clear menus/dialog/naming, then continue "
-            f"toward {next_target}"
+            f"If the SCREEN shows overworld, leave the house and continue toward {next_target}; "
+            "if it shows naming/dialog, resolve that first"
         )
     elif not obs.party:
         objective = "Obtain a starter from Professor Oak (screen-first)"
+    else:
+        objective = f"Make safe progress toward {next_target}"
     return DirectorDecision(
         mode=GameMode.OVERWORLD,
         owner=AgentRole.OVERWORLD,
@@ -315,7 +333,6 @@ def decide_director(
             "Screenshot is ground truth",
             "Do not walk while a text box or naming grid is visible",
         ],
-        success=[],
         abort=["battle_started", "stuck_score >= 6"],
         narration=(
             "Fast route → overworld (vision-only)."
@@ -339,51 +356,32 @@ def propose_overworld(
     failed_approaches: list[list[str]] | None = None,
     loop_streak: int = 0,
     no_progress: dict[str, Any] | None = None,
+    beat: str | None = None,
+    blocked_on_tile: list[str] | None = None,
 ) -> ActionProposal:
-    user = _dumps(
-        _with_extras(
-            {
-                "task": task.model_dump(mode="json"),
-                **_obs_payload(obs, vision_only=vision_only),
-            },
-            memory=memory,
-            recent=recent,
-            walkthrough_hint=walkthrough_hint,
-            objectives=objectives,
-            nuzlocke=nuzlocke,
-            failed_approaches=failed_approaches,
-            no_progress=no_progress,
-        )
-    )
-    system = prompts.OVERWORLD_SYSTEM
-    if vision_only:
-        system += "\nVISION-ONLY: screenshot is the sole state input.\n"
-    resp = llm.complete(
+    data, raw_text = _ask(
+        llm,
+        obs,
+        {"task": task.model_dump(mode="json"), **_obs_payload(obs, vision_only=vision_only)},
         role=AgentRole.OVERWORLD,
-        system=system,
-        user=user,
-        schema_hint=prompts.OVERWORLD_SCHEMA,
-        image_paths=_images(obs),
+        system=prompts.OVERWORLD_SYSTEM + (prompts.VISION_ONLY_SUFFIX if vision_only else ""),
+        schema=prompts.OVERWORLD_SCHEMA,
+        memory=memory,
+        recent=recent,
+        walkthrough_hint=walkthrough_hint,
+        objectives=objectives,
+        nuzlocke=nuzlocke,
+        failed_approaches=failed_approaches,
+        no_progress=no_progress,
+        beat=beat,
+        blocked_on_tile=blocked_on_tile,
     )
-    data = resp.parsed or {}
-    actions_raw = data.get("actions") or ["wait_60"]
-    actions: list[GameAction] = []
-    for item in actions_raw:
-        try:
-            actions.append(GameAction(item))
-        except ValueError:
-            continue
-    if not actions:
-        actions = [GameAction.WAIT_60]
-    if failed_approaches:
-        actions = filter_repeated_noops(
-            actions, failed_approaches, alternate=loop_streak
-        )
+    actions = _parse_actions(data.get("actions")) or [GameAction.WAIT_60]
     return ActionProposal(
         task_id=task.task_id,
         agent=AgentRole.OVERWORLD,
-        reason=str(data.get("reason") or resp.raw_text[:300] or "overworld step"),
-        actions=actions[:12],
+        reason=str(data.get("reason") or raw_text[:300] or "overworld step"),
+        actions=avoid_blocked_walk(actions, blocked_on_tile or [], alternate=loop_streak)[:12],
         expected=list(data.get("expected") or []),
         risk=data.get("risk") if data.get("risk") in {"low", "medium", "high"} else "low",
         objectives=parse_objectives(data.get("objectives")),
@@ -403,52 +401,33 @@ def propose_battle(
     objectives: dict[str, str] | None = None,
     nuzlocke: dict[str, Any] | None = None,
 ) -> ActionProposal:
-    enemy_species = str(((obs.battle or {}).get("enemy") or {}).get("species") or "")
-    matchup = battle_matchup(obs.party, enemy_species) if enemy_species else None
     payload = {
         "task": task.model_dump(mode="json"),
         **_obs_payload(obs, vision_only=vision_only),
         "reminder": "ONE battle input only (optional wait_60 after).",
     }
+    enemy_species = str(((obs.battle or {}).get("enemy") or {}).get("species") or "")
+    matchup = battle_matchup(obs.party, enemy_species) if enemy_species else None
     if matchup:
         payload["type_matchup"] = matchup
-    user = _dumps(
-        _with_extras(
-            payload,
-            memory=memory,
-            recent=recent,
-            walkthrough_hint=walkthrough_hint,
-            objectives=objectives,
-            nuzlocke=nuzlocke,
-        )
-    )
-    resp = llm.complete(
+    data, raw_text = _ask(
+        llm,
+        obs,
+        payload,
         role=AgentRole.BATTLE,
         system=prompts.BATTLE_SYSTEM,
-        user=user,
-        schema_hint=prompts.BATTLE_SCHEMA,
-        image_paths=_images(obs),
+        schema=prompts.BATTLE_SCHEMA,
+        memory=memory,
+        recent=recent,
+        walkthrough_hint=walkthrough_hint,
+        objectives=objectives,
+        nuzlocke=nuzlocke,
     )
-    data = resp.parsed or {}
-    actions_raw = data.get("actions") or ["press_a"]
-    actions: list[GameAction] = []
-    for item in actions_raw:
-        try:
-            actions.append(GameAction(item))
-        except ValueError:
-            continue
-    if not actions:
-        actions = [GameAction.PRESS_A]
-    trimmed: list[GameAction] = []
-    for action in actions:
-        if len(trimmed) >= 4:
-            break
-        trimmed.append(action)
     return ActionProposal(
         task_id=task.task_id,
         agent=AgentRole.BATTLE,
-        reason=str(data.get("reason") or resp.raw_text[:300] or "battle step"),
-        actions=trimmed,
+        reason=str(data.get("reason") or raw_text[:300] or "battle step"),
+        actions=(_parse_actions(data.get("actions")) or [GameAction.PRESS_A])[:4],
         expected=list(data.get("expected") or []),
         risk=data.get("risk") if data.get("risk") in {"low", "medium", "high"} else "medium",
     )
@@ -470,6 +449,8 @@ def advise_recovery(
     loop_streak: int = 0,
     no_progress: dict[str, Any] | None = None,
     reframe: bool = False,
+    beat: str | None = None,
+    blocked_on_tile: list[str] | None = None,
 ) -> RecoveryAdvice:
     payload: dict[str, Any] = {
         "stuck_score": stuck_score,
@@ -478,85 +459,59 @@ def advise_recovery(
     if not vision_only:
         payload["recent_positions"] = recent_positions
     if reframe:
-        # Tier 3: the loop has outlived any plausible cutscene. The likeliest
-        # explanation is a goal that was already satisfied — Oak keeps talking
-        # after he has handed over the Pokedex, and the agent read that as
-        # "the parcel delivery has not gone through yet" for 33 minutes.
         payload["reframe"] = (
-            "Your current objective has produced nothing for a long time. "
-            "Assume it is ALREADY COMPLETE or unreachable from here. Do not "
-            "propose talking to the same NPC again. Set new objectives and "
-            "propose actions that leave this spot — a door, stairs, or the "
+            "Your current objective has produced nothing for a long time. Assume it is ALREADY "
+            "COMPLETE or unreachable from here. Do not propose talking to the same NPC again. Set "
+            "new objectives and propose actions that leave this spot — a door, stairs, or the "
             "next walkthrough step."
         )
-    user = _dumps(
-        _with_extras(
-            payload,
-            memory=memory,
-            recent=recent,
-            walkthrough_hint=walkthrough_hint,
-            objectives=objectives,
-            nuzlocke=nuzlocke,
-            failed_approaches=failed_approaches,
-            no_progress=no_progress,
-        )
-    )
-    resp = llm.complete(
+    data, raw_text = _ask(
+        llm,
+        obs,
+        payload,
         role=AgentRole.RECOVERY,
         system=prompts.RECOVERY_SYSTEM,
-        user=user,
-        schema_hint=prompts.RECOVERY_SCHEMA,
-        image_paths=_images(obs),
+        schema=prompts.RECOVERY_SCHEMA,
+        memory=memory,
+        recent=recent,
+        walkthrough_hint=walkthrough_hint,
+        objectives=objectives,
+        nuzlocke=nuzlocke,
+        failed_approaches=failed_approaches,
+        no_progress=no_progress,
+        beat=beat,
+        blocked_on_tile=blocked_on_tile,
     )
-    data = resp.parsed or {}
-    actions: list[GameAction] = []
-    for item in data.get("proposed_actions") or ["hold_b_120", "press_a"]:
-        try:
-            actions.append(GameAction(item))
-        except ValueError:
-            continue
-    if failed_approaches:
-        actions = filter_repeated_noops(
-            actions[:4], failed_approaches, alternate=loop_streak
-        )
-    else:
-        actions = actions[:4]
+    # An empty answer pages with B. A would re-open whoever the player faces.
+    actions = _parse_actions(data.get("proposed_actions") or ["press_b", "press_b"])
+    named = single_named_walk(str(data.get("reason") or ""))
+    if named is not None and actions and actions[0].value.startswith("walk_"):
+        actions[0] = named
     return RecoveryAdvice(
         diagnosis=str(data.get("diagnosis") or "unknown"),
-        proposed_actions=actions[:4],
+        proposed_actions=avoid_blocked_walk(
+            actions[:4], blocked_on_tile or [], alternate=loop_streak
+        ),
         escalate_to_human=bool(data.get("escalate_to_human", stuck_score >= 5)),
-        reason=str(data.get("reason") or resp.raw_text[:300]),
+        reason=str(data.get("reason") or raw_text[:300]),
         objectives=parse_objectives(data.get("objectives")),
         landmarks=parse_landmarks(data.get("landmarks")),
     )
 
 
-def rollup_memory(
-    llm: LLMProvider,
-    *,
-    memory: str,
-) -> list[str]:
-    """Text-only compression of OptMem wake into durable facts (no screenshot)."""
-    if not memory.strip():
+def rollup_memory(llm: LLMProvider, *, memory: str) -> list[str]:
+    memory = memory.strip()
+    if not memory:
         return []
-    user = _dumps({"memory": memory.strip()[:6000]})
     resp = llm.complete(
         role=AgentRole.DIRECTOR,
         system=prompts.MEMORY_ROLLUP_SYSTEM,
-        user=user,
+        user=json.dumps({"memory": memory[:6000]}, separators=(",", ":")),
         schema_hint=prompts.MEMORY_ROLLUP_SCHEMA,
         image_paths=None,
     )
-    data = resp.parsed or {}
-    notes_raw = data.get("notes")
-    if not isinstance(notes_raw, list):
-        return []
-    notes: list[str] = []
-    for item in notes_raw[:6]:
-        text = " ".join(str(item).split()).strip()
-        if text:
-            notes.append(text[:200])
-    return notes
+    notes = (resp.parsed or {}).get("notes")
+    return _clean_lines(notes, 200) if isinstance(notes, list) else []
 
 
 def propose_plan(
@@ -572,57 +527,73 @@ def propose_plan(
     failed_approaches: list[list[str]] | None = None,
     no_progress: dict[str, Any] | None = None,
     objective: str | None = None,
+    beat: str | None = None,
+    blocked_on_tile: list[str] | None = None,
+    buttons_on_this_tile: dict[str, int] | None = None,
 ) -> PlanCard:
     """System 2: read the screenshot and write the card Jev will follow."""
-    payload: dict[str, Any] = {
-        "objective": objective or "",
-        **_obs_payload(obs, vision_only=vision_only),
-    }
-    user = _dumps(
-        _with_extras(
-            payload,
-            memory=memory,
-            recent=recent,
-            walkthrough_hint=walkthrough_hint,
-            objectives=objectives,
-            nuzlocke=nuzlocke,
-            failed_approaches=failed_approaches,
-            no_progress=no_progress,
-        )
-    )
-    system = prompts.PLANNER_SYSTEM
-    if vision_only:
-        system += "\nVISION-ONLY: screenshot is the sole state input.\n"
-    resp = llm.complete(
+    data, _ = _ask(
+        llm,
+        obs,
+        {"objective": objective or "", **_obs_payload(obs, vision_only=vision_only)},
         role=AgentRole.DIRECTOR,
-        system=system,
-        user=user,
-        schema_hint=prompts.PLANNER_SCHEMA,
-        image_paths=_images(obs),
+        system=prompts.PLANNER_SYSTEM + (prompts.VISION_ONLY_SUFFIX if vision_only else ""),
+        schema=prompts.PLANNER_SCHEMA,
+        memory=memory,
+        recent=recent,
+        walkthrough_hint=walkthrough_hint,
+        objectives=objectives,
+        nuzlocke=nuzlocke,
+        failed_approaches=failed_approaches,
+        no_progress=no_progress,
+        beat=beat,
+        blocked_on_tile=blocked_on_tile,
+        buttons_on_this_tile=buttons_on_this_tile,
     )
-    data = resp.parsed or {}
-    raw_scene = str(data.get("scene") or "").strip().lower()
     try:
-        scene = PlanScene(raw_scene)
+        scene = PlanScene(str(data.get("scene") or "").strip().lower())
     except ValueError:
         scene = PlanScene.OVERWORLD
-    see = str(data.get("see") or "").strip()[:300] or "screen unread"
-    plan_text = str(data.get("plan") or "").strip()[:500] or (
-        objective or "Continue the current objective."
-    )
-    do_not: list[str] = []
-    for item in (data.get("do_not") or [])[:6]:
-        text = " ".join(str(item).split()).strip()
-        if text:
-            do_not.append(text[:120])
+    plan = str(data.get("plan") or "").strip()[:500]
     return PlanCard(
         scene=scene,
-        see=see,
-        plan=plan_text,
-        do_not=do_not,
+        see=str(data.get("see") or "").strip()[:300] or "screen unread",
+        plan=plan or objective or "Continue the current objective.",
+        do_not=_clean_lines(data.get("do_not") or [], 120),
+        steps=parse_steps(data.get("steps")),
+        target_cell=parse_cell(data.get("target")),
         objectives=parse_objectives(data.get("objectives")),
         landmarks=parse_landmarks(data.get("landmarks")),
     )
+
+
+# Walks are single tiles so each one can be checked before the next.
+_STEP_BUTTONS = {
+    GameAction.WALK_UP,
+    GameAction.WALK_DOWN,
+    GameAction.WALK_LEFT,
+    GameAction.WALK_RIGHT,
+    GameAction.PRESS_A,
+    GameAction.PRESS_B,
+    GameAction.PRESS_START,
+}
+MAX_PLAN_STEPS = 6
+
+
+def parse_steps(raw: Any) -> list[GameAction]:
+    """The planner's button path, expanded to single presses and capped."""
+    if not isinstance(raw, list):
+        return []
+    actions = _parse_actions(str(item).strip().lower() for item in raw)
+    return [step for step in expand_actions(actions) if step in _STEP_BUTTONS][:MAX_PLAN_STEPS]
+
+
+def parse_cell(raw: Any) -> str | None:
+    """A walk-grid cell like ``G7``, or None."""
+    text = str(raw or "").strip().upper()
+    if len(text) == 2 and text[0] in "ABCDEFGHIJ" and text[1] in "123456789":
+        return text
+    return None
 
 
 def make_task(decision: DirectorDecision) -> TaskEnvelope:

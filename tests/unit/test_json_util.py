@@ -7,6 +7,4 @@ def test_extract_json_fenced():
 
 
 def test_extract_json_raw():
-    assert extract_json_object('prefix {"actions": ["walk_up"]} suffix') == {
-        "actions": ["walk_up"]
-    }
+    assert extract_json_object('prefix {"actions": ["walk_up"]} suffix') == {"actions": ["walk_up"]}

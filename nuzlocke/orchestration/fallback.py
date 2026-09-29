@@ -7,20 +7,12 @@ from nuzlocke.state.models import ActionProposal, AgentRole, GameAction, TaskEnv
 
 def is_bridge_down(err: BaseException) -> bool:
     text = str(err).lower()
-    return (
-        "connection refused" in text
-        or "connecterror" in text
-        or "bridge request failed" in text
-    )
+    return any(s in text for s in ("connection refused", "connecterror", "bridge request failed"))
 
 
 def bridge_down_proposal(task: TaskEnvelope) -> ActionProposal:
     """Cursor SDK bridge unreachable — wait rather than guess."""
-    agent = (
-        task.owner
-        if task.owner in {AgentRole.OVERWORLD, AgentRole.BATTLE, AgentRole.RECOVERY}
-        else AgentRole.OVERWORLD
-    )
+    agent = AgentRole.OVERWORLD if task.owner == AgentRole.DIRECTOR else task.owner
     return ActionProposal(
         task_id=task.task_id,
         agent=agent,
@@ -32,22 +24,11 @@ def bridge_down_proposal(task: TaskEnvelope) -> ActionProposal:
 def llm_error_fallback_proposal(task: TaskEnvelope) -> ActionProposal:
     """Generic LLM failure — safe macro so the run keeps going."""
     if task.owner == AgentRole.BATTLE:
-        return ActionProposal(
-            task_id=task.task_id,
-            agent=AgentRole.BATTLE,
-            reason="fallback after LLM failure",
-            actions=[GameAction.PRESS_A],
-        )
-    # B-only: this macro runs blind, and an A while facing an NPC re-opens the
-    # dialogue it just cleared. B advances Gen 1 text and starts nothing.
+        agent, actions = AgentRole.BATTLE, [GameAction.PRESS_A]
+    else:
+        # B-only: this runs blind, and an A while facing an NPC re-opens the dialogue it just
+        # cleared. Taps, not a hold: each press_b ends with released frames, so each is a new press.
+        agent, actions = AgentRole.OVERWORLD, [GameAction.PRESS_B] * 3 + [GameAction.WAIT_60]
     return ActionProposal(
-        task_id=task.task_id,
-        agent=AgentRole.OVERWORLD,
-        reason="fallback after LLM failure",
-        actions=[
-            GameAction.HOLD_B_120,
-            GameAction.PRESS_B,
-            GameAction.HOLD_B_120,
-            GameAction.WAIT_60,
-        ],
+        task_id=task.task_id, agent=agent, reason="fallback after LLM failure", actions=actions
     )

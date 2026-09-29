@@ -1,19 +1,12 @@
-"""Gen 1 / pokemon-agent joypad ignore bit helpers.
+"""Bits of pokemon-agent's ``dialog.joy_ignore``, which is really 0xD730 (wStatusFlags5).
 
-``wJoyIgnore`` (exposed as ``dialog.joy_ignore``):
-
-- bit 5 (0x20): text box locks D-pad; A/B still advance text
-- bit 6 (0x40): naming keyboard (letter grid) — agent must decide, do not wait-spin
+Bit 6 is set on the naming keyboard's letter grid and on the Pokédex page shown before the
+starter's YES/NO. Bit 5 is not a dialog signal on Red Star: it reads 0 through real text.
 """
 
 from __future__ import annotations
 
-JOY_DIALOG = 0x20
 JOY_NAMING = 0x40
-
-
-def is_dialog_lock(joy_ignore: int) -> bool:
-    return bool(int(joy_ignore) & JOY_DIALOG)
 
 
 def is_naming_lock(joy_ignore: int) -> bool:

@@ -7,34 +7,34 @@ from pathlib import Path
 
 from nuzlocke.config import project_root
 
-_SECTION_RE = re.compile(r"^## (.+)$", re.M)
+_SECTION_RE = re.compile(r"^## (.+)$", re.MULTILINE)
+
+# (keywords in the context, section title substring to pull in)
+_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("name", "keyboard", "letter", "rival name", "your name", "title", "new game"), "title"),
+    (("2f", "bedroom", "stairs"), "2f"),
+    (("1f", "mom", "living", "door mat", "doormat"), "1f"),
+    (("lab", "starter", "poké ball", "poke ball", "ball table", "aide"), "lab"),
+    (("pallet", "fence", "post"), "pallet"),
+    (("parcel", "pokedex", "pokédex", "mart", "aide"), "after starter"),
+    (("route 1", "viridian forest", "forest", "ledge", "viridian"), "route 1"),
+    (("pewter", "brock", "gym"), "pewter"),
+    (("stuck", "noop", "oscillat", "bounce", "loop"), "stuck"),
+)
 
 
 def skill_dir() -> Path:
     return project_root() / ".cursor" / "skills" / "pokemon-red-walkthrough"
 
 
-def walkthrough_paths() -> list[Path]:
-    d = skill_dir()
-    return [d / "reference.md", d / "SKILL.md"]
-
-
 def load_full_walkthrough() -> str:
     path = skill_dir() / "reference.md"
-    if path.is_file():
-        return path.read_text(encoding="utf-8")
-    return ""
+    return path.read_text(encoding="utf-8") if path.is_file() else ""
 
 
 def _split_sections(full: str) -> list[tuple[str, str]]:
-    matches = list(_SECTION_RE.finditer(full))
-    out: list[tuple[str, str]] = []
-    for i, match in enumerate(matches):
-        title = match.group(1).strip()
-        start = match.end()
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(full)
-        out.append((title, full[start:end].strip()))
-    return out
+    parts = _SECTION_RE.split(full)[1:]
+    return [(title.strip(), body.strip()) for title, body in zip(parts[::2], parts[1::2])]
 
 
 def excerpt_for_context(
@@ -48,44 +48,24 @@ def excerpt_for_context(
     full = load_full_walkthrough()
     if not full:
         return ""
-
-    hay = " ".join(x for x in (map_name or "", reason or "", memory or "") if x).lower()
+    hay = " ".join(x for x in (map_name, reason, memory) if x).lower()
     sections = _split_sections(full)
-
-    # (keywords, title substring to prefer)
-    rules: list[tuple[tuple[str, ...], str]] = [
-        (("name", "keyboard", "letter", "rival name", "your name", "title", "new game"), "title"),
-        (("2f", "bedroom", "stairs"), "2f"),
-        (("1f", "mom", "living", "door mat", "doormat"), "1f"),
-        (("lab", "starter", "poké ball", "poke ball", "ball table", "aide"), "lab"),
-        (("pallet", "fence", "post"), "pallet"),
-        (("parcel", "pokedex", "pokédex", "mart", "aide"), "after starter"),
-        (("route 1", "viridian forest", "forest", "ledge", "viridian"), "route 1"),
-        (("pewter", "brock", "gym"), "pewter"),
-        (("stuck", "noop", "oscillat", "bounce", "loop"), "stuck"),
-    ]
-
-    picked: list[tuple[str, str]] = []
-    seen: set[str] = set()
+    picked: dict[str, str] = {}
 
     def add_matching(substr: str) -> None:
         for title, body in sections:
-            if substr in title.lower() and title not in seen:
-                seen.add(title)
-                picked.append((title, body))
+            if substr in title.lower():
+                picked.setdefault(title, body)
 
-    for keys, substr in rules:
+    for keys, substr in _RULES:
         if any(k in hay for k in keys):
             add_matching(substr)
-
-    # Fall back to the generic stuck cheatsheet only — the early-game
-    # sections (2F/1F/Pallet) are location-specific and actively misleading
-    # once a run is past the early game and nothing else matched.
-    if not any("stuck" in t.lower() for t, _ in picked):
+    # Only the generic stuck cheatsheet as a fallback: the early-game sections are
+    # location-specific and actively misleading once a run is past them.
+    if not any("stuck" in title.lower() for title in picked):
         add_matching("stuck")
 
-    chunks = [f"## {title}\n{body}" for title, body in picked]
-    text = "\n\n".join(chunks).strip()
+    text = "\n\n".join(f"## {title}\n{body}" for title, body in picked.items()).strip()
     if len(text) > max_chars:
         text = text[: max_chars - 20].rstrip() + "\n…(truncated)"
     return text

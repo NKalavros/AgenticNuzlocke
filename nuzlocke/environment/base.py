@@ -2,27 +2,25 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from nuzlocke.state.models import ControlState, GameAction, PlayerObservation
 
 
+@dataclass(kw_only=True)
 class ActionResult:
-    def __init__(
-        self,
-        *,
-        executed: list[GameAction],
-        stopped_early_because: str | None,
-        observation: PlayerObservation,
-    ) -> None:
-        self.executed = executed
-        self.stopped_early_because = stopped_early_because
-        self.observation = observation
+    executed: list[GameAction]
+    stopped_early_because: str | None
+    observation: PlayerObservation
+    # One entry per overworld walk, with the tile before and after it.
+    walks: list[dict[str, object]] = field(default_factory=list)
 
 
 class GameEnvironment(Protocol):
     def observe(self) -> PlayerObservation: ...
     def screenshot(self, path: str | None = None) -> bytes: ...
+    def vision_frame(self, obs: PlayerObservation) -> PlayerObservation: ...
     def execute(self, actions: list[GameAction]) -> ActionResult: ...
     def get_control(self) -> ControlState: ...
     def set_control(self, state: ControlState) -> None: ...

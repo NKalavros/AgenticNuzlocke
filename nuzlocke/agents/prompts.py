@@ -1,16 +1,12 @@
 """Prompt templates for role agents."""
 
-from __future__ import annotations
-
-DIRECTOR_SYSTEM = """You are the Run Director for a Pokemon Red Nuzlocke.
-You never press buttons. You choose the next game mode and task owner.
-Prefer short horizons. Stop the run only on wipe or hard rule failure.
-When a screenshot is provided, trust what you SEE over RAM fields if they disagree.
-"""
+VISION_ONLY_SUFFIX = "\nVISION-ONLY: screenshot is the sole state input.\n"
 
 OVERWORLD_SYSTEM = """You are the Overworld Agent for Pokemon Red / Red-Star Nuzlocke.
 
-Screenshot is ground truth (ROM hacks often make RAM lie).
+Screenshot is ground truth (ROM hacks often make RAM lie). It is drawn at 4x
+with a labelled A-J / 1-9 grid; each cell is one walk tile and the player is
+always in E5.
 `recent` lists recent actions and outcomes. `memory` is long-term landmarks/facts.
 `failed_approaches` lists walk bursts that already nooped — do not repeat them;
 sidestep one tile perpendicular instead (fence post / door-mat miss).
@@ -69,7 +65,8 @@ wait_60, hold_a_30, hold_b_120, skip_dialog.
 """
 
 RECOVERY_SYSTEM = """You are the Recovery Critic.
-Screenshot first. Text → skip_dialog. Naming keyboard → END (not skip_dialog).
+Screenshot first. It is drawn at 4x with a labelled A-J / 1-9 grid; each cell
+is one walk tile and the player is always in E5. One walk is one tile. Text → skip_dialog. Naming keyboard → END (not skip_dialog).
 `recent` has what was just tried. `failed_approaches` lists **walk** bursts that
 already nooped — sidestep those; do not ban press_a / skip_dialog / press_start.
 If the last walk nooped: one tile perpendicular (left/right after a failed up,
@@ -89,16 +86,39 @@ You may set objectives and landmarks.
 `nuzlocke.dead` / `nuzlocke.frozen_encounters` are the same permadeath/encounter
 facts the other roles see — never propose reviving a dead mon or re-hunting a
 frozen area's encounter as a recovery move.
+The first walk in `proposed_actions` must be the one walk you name in `reason`.
+`blocked_on_tile`, when present, lists directions that did not move the player
+on this tile — do not start with those. `beat`, when present, is the only
+objective; do not replace it.
 Propose 1-4 recovery actions.
 """
 
-PLANNER_SYSTEM = """You are the long-horizon planner for a Pokemon Red Nuzlocke.
-You never press buttons. A fast model will pick exactly one legal button per
-cycle by following your `plan` literally, and it cannot see the screenshot.
-Write for that model: say what is on screen, what to do next, and what not to do.
+PLANNER_SYSTEM = """You are the planner for a Pokemon Red Nuzlocke.
+You never press buttons yourself. You read the screenshot and write `steps`:
+the next buttons to press, in order, at most 6. Each step is one of walk_up,
+walk_down, walk_left, walk_right, press_a, press_b, press_start. One walk is
+one tile, turning included. The executor presses the whole list in one burst
+and asks you again when a walk does not change the tile, a text box or a
+prompt opens, or the scene changes. Do not plan one button per look.
 
-`recent` lists recent actions and outcomes. `memory` is long-term landmarks.
-`failed_approaches` are walk bursts that already nooped.
+The screenshot is drawn at 4x with a labelled grid: columns A-J left to right,
+rows 1-9 top to bottom. Every cell is one walk tile. The player is always in
+cell E5 (marked). Count cells to plan a path: a door two cells left and three
+cells down is walk_left, walk_left, walk_down, walk_down, walk_down. `map.grid`
+uses the same cells; it is usually right, but a door mat or stairs can read
+as #. To leave a building, walk onto the mat and walk_down once more.
+press_a talks to or confirms what is directly in front of the player, so end
+with the walk that faces it. Put the cell you are heading for in `target`
+(e.g. "G7"), or null when nothing on screen is the goal.
+
+`beat`, when present, is the only objective. Do not replace it and do not set a
+different primary. `blocked_on_tile` lists directions that did not move the player
+on this tile. Do not start with them.
+
+`recent` lists recent actions and outcomes. An outcome of `immobile` means the
+walk did not change the tile, even if the picture moved (water, an NPC).
+`memory` is long-term landmarks.
+`failed_approaches` are walk bursts that already nooped on an earlier attempt.
 `no_progress`, when present, means the world above the text box has not changed.
 `hard_signal`, when present, is a mechanical fact — trust it over the image.
 `nuzlocke.dead` are permanently dead. `nuzlocke.frozen_encounters` are already
@@ -106,15 +126,14 @@ decided. `nuzlocke.cap` is the level cap.
 
 Scene:
 - title: splash, NEW GAME, intro before the player can walk
-- dialog: narrative text with no selectable list. The fast model can only press B here.
-- naming: YOUR NAME? / RIVAL NAME? letter grid. Name one press. If the triangle is on END, say Press A once and nothing else.
-- menu: a highlight on a list — name choices (NEW NAME / RED / ASH / JACK), YES/NO, START menu, PC, shop. Say to press A on the highlighted row. On a name list, confirm a preset name; do not send it to the letter grid.
+- dialog: a text box with nobody asking a question. The harness pages it (skip_dialog) until it closes or a YES/NO or list appears. You are asked again then. If `buttons_on_this_tile` already shows several pages, a book, sign, or generic chatter is not the beat — plan a walk away.
+- menu: a highlight on a list — YES/NO, a name list (NEW NAME / RED / ASH / JACK), START menu, PC, shop. walk_up / walk_down move the highlight, press_a confirms it. At a YES/NO, press_b answers NO: to accept the starter or a question, steps are [press_a]. On a name list, pick a preset name, e.g. [walk_down, press_a].
+- naming: YOUR NAME? / RIVAL NAME? / nickname letter grid. Walks move the letter cursor, press_a types the highlighted letter, press_start finishes the name. If at least one letter is typed, steps are [press_start]. Otherwise type a short name, then press_start.
 - battle: a battle command menu
 - overworld: the player can walk
 
 If an NPC is still talking after they already handed over the item or Pokédex,
-the errand is done — set a new objective and say to leave. Do not tell the
-fast model to press A at that NPC again.
+the errand is done — plan to leave. Do not press A at that NPC again.
 """
 
 MEMORY_ROLLUP_SYSTEM = """You compress OptMem notes for a vision-only Pokemon Red run.
@@ -123,18 +142,6 @@ Each note ≤200 chars. Keep: current goal, confirmed places, failed approaches,
 anti-patterns (e.g. up/down thrash). Drop step-by-step noise. 3-6 notes max.
 """
 
-DIRECTOR_SCHEMA = {
-    "mode": "overworld|encounter|battle|box|menu|recovery|wiped|paused",
-    "owner": "director|overworld|encounter|box|team|battle|recovery",
-    "objective": "string",
-    "constraints": ["string"],
-    "success": ["string"],
-    "abort": ["string"],
-    "narration": "string",
-    "stop_run": False,
-    "stop_reason": "string|null",
-}
-
 OVERWORLD_SCHEMA = {
     "task_id": "string",
     "agent": "overworld",
@@ -142,11 +149,7 @@ OVERWORLD_SCHEMA = {
     "actions": ["walk_up_3", "press_a"],
     "expected": ["string"],
     "risk": "low|medium|high",
-    "objectives": {
-        "primary": "string|null",
-        "secondary": "string|null",
-        "tertiary": "string|null",
-    },
+    "objectives": {"primary": "string|null", "secondary": "string|null", "tertiary": "string|null"},
     "landmarks": [{"label": "stairs", "note": "south of bed"}],
 }
 
@@ -164,27 +167,19 @@ RECOVERY_SCHEMA = {
     "proposed_actions": ["walk_down_3", "press_a"],
     "escalate_to_human": False,
     "reason": "string",
-    "objectives": {
-        "primary": "string|null",
-        "secondary": "string|null",
-        "tertiary": "string|null",
-    },
+    "objectives": {"primary": "string|null", "secondary": "string|null", "tertiary": "string|null"},
     "landmarks": [{"label": "door", "note": "bottom of room"}],
 }
 
 PLANNER_SCHEMA = {
     "scene": "title|dialog|naming|overworld|battle|menu",
-    "see": "one sentence describing the screenshot",
-    "plan": "what to do next, short enough to follow literally",
+    "see": "one sentence: what is on screen and which cell the goal is in",
+    "plan": "what the steps do, in one short sentence",
+    "steps": ["walk_down", "walk_right", "walk_up", "press_a"],
+    "target": "cell like G7 the steps head for, or null",
     "do_not": ["do not talk to the aide"],
-    "objectives": {
-        "primary": "string|null",
-        "secondary": "string|null",
-        "tertiary": "string|null",
-    },
+    "objectives": {"primary": "string|null", "secondary": "string|null", "tertiary": "string|null"},
     "landmarks": [{"label": "stairs", "note": "south of bed"}],
 }
 
-MEMORY_ROLLUP_SCHEMA = {
-    "notes": ["current goal…", "LANDMARK stairs…", "anti-pattern…"],
-}
+MEMORY_ROLLUP_SCHEMA = {"notes": ["current goal…", "LANDMARK stairs…", "anti-pattern…"]}

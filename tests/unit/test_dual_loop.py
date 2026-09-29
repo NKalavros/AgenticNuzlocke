@@ -40,34 +40,36 @@ class _Planner(LLMProvider):
         )
 
 
-def _no_facts() -> dict:
-    return {}
+def _context() -> dict:
+    return {
+        "memory": None,
+        "recent": [],
+        "vision_only": True,
+        "walkthrough_hint": None,
+        "objectives": {},
+        "nuzlocke": {},
+        "failed_approaches": None,
+        "no_progress": None,
+        "beat": None,
+        "blocked_on_tile": [],
+    }
 
 
 def _decision() -> DirectorDecision:
     return DirectorDecision(
-        mode=GameMode.OVERWORLD,
-        owner=AgentRole.OVERWORLD,
-        objective="go north",
+        mode=GameMode.OVERWORLD, owner=AgentRole.OVERWORLD, objective="go north"
     )
 
 
 def _obs() -> PlayerObservation:
     return PlayerObservation(
-        map_name="Pallet Town",
-        x=1,
-        y=2,
-        party=[{"name": "Bulbasaur"}],
-        raw_player={"name": "RED"},
+        map_name="Pallet Town", x=1, y=2, party=[{"name": "Bulbasaur"}], raw_player={"name": "RED"}
     )
 
 
 def _proposal(reason: str) -> ActionProposal:
     return ActionProposal(
-        task_id="t",
-        agent=AgentRole.OVERWORLD,
-        reason=reason,
-        actions=[GameAction.WALK_UP],
+        task_id="t", agent=AgentRole.OVERWORLD, reason=reason, actions=[GameAction.WALK_UP]
     )
 
 
@@ -85,10 +87,8 @@ def test_cursor_path_calls_overworld(monkeypatch):
     loop = RunLoop.__new__(RunLoop)
     loop.jev = None
     loop.llm = _Planner()
-    loop.vision_only = True
-    loop.objectives = {}
     loop.stuck = SimpleNamespace(loop_streak=0)
-    loop._nuzlocke_state = _no_facts
+    loop.env = SimpleNamespace(vision_frame=lambda obs: obs)
     seen: dict[str, object] = {}
 
     def fake_overworld(llm, **kwargs):
@@ -102,11 +102,7 @@ def test_cursor_path_calls_overworld(monkeypatch):
         task=make_task(_decision()),
         obs=_obs(),
         steps=1,
-        memory_text=None,
-        recent_ctx=[],
-        walkthrough_hint=None,
-        failed_approaches=None,
-        no_progress_ctx=None,
+        context=_context(),
     )
     assert seen["llm"] is loop.llm
     assert proposal is not None
@@ -135,15 +131,150 @@ def test_dual_branch_calls_fast_actor_not_overworld(monkeypatch):
         task=make_task(_decision()),
         obs=_obs(),
         steps=1,
-        memory_text=None,
-        recent_ctx=[],
-        walkthrough_hint=None,
-        failed_approaches=None,
-        no_progress_ctx=None,
+        context=_context(),
     )
     assert proposal is sentinel
     assert used is False
     assert pause is False
+
+
+def test_fast_path_sends_the_whole_overworld_path(monkeypatch):
+    import time
+
+    path = [GameAction.WALK_DOWN, GameAction.WALK_RIGHT, GameAction.WALK_UP, GameAction.PRESS_A]
+    plan = PlanCard(
+        scene=PlanScene.OVERWORLD,
+        see="the door is south",
+        plan="walk to the mat",
+        world_digest="0",
+        created_at=time.time(),
+        steps=path,
+    )
+    loop = _fast_loop(plan, recent=[])
+
+    def boom(*args, **kwargs):
+        raise AssertionError("the path is already planned")
+
+    monkeypatch.setattr("nuzlocke.orchestration.loop.propose_plan", boom)
+    proposal = loop._fast_proposal(task=make_task(_decision()), obs=_obs(), context=_context())
+    assert proposal.actions == path
+
+
+def _fast_loop(plan: PlanCard | None, *, recent: list[dict]) -> RunLoop:
+    loop = RunLoop.__new__(RunLoop)
+    loop.jev = object()
+    loop.llm = object()
+    loop.plan_every_s = 45
+    loop.stale_noul = 0.7
+    loop.confidence_floor = 0.55
+    loop._low_confidence_streak = 0
+    loop._prev_world = "0"
+    loop._prev_dialog = "0"
+    loop._beat_heading = None
+    loop.recent_steps = recent
+    loop.stuck = SimpleNamespace(same_tile_streak=0, immobile_streak=0, press_counts={})
+    loop.plan = plan
+    loop.env = SimpleNamespace(
+        vision_frame=lambda obs: obs, push_event=lambda *args, **kwargs: None
+    )
+    loop.store = SimpleNamespace(append=lambda *args, **kwargs: None)
+    return loop
+
+
+def test_a_mash_that_left_the_box_unchanged_gets_a_look(monkeypatch):
+    import time
+
+    from nuzlocke.agents.jev_policy import FrameSignals
+
+    looks: list[int] = []
+
+    def planner(*args, **kwargs):
+        looks.append(1)
+        return PlanCard(
+            scene=PlanScene.DIALOG,
+            see="the box did not move",
+            plan="press A",
+            steps=[GameAction.PRESS_A],
+        )
+
+    plan = PlanCard(
+        scene=PlanScene.DIALOG,
+        see="Oak is talking",
+        plan="page it",
+        world_digest="w",
+        text_box=True,
+        created_at=time.time(),
+    )
+    loop = _fast_loop(plan, recent=[{"actions": ["skip_dialog"]}])
+    loop._frame_signals = lambda obs: FrameSignals("w", "d", False, False, True, False)  # type: ignore[method-assign]
+    monkeypatch.setattr("nuzlocke.orchestration.loop.propose_plan", planner)
+    proposal = loop._fast_proposal(task=make_task(_decision()), obs=_obs(), context=_context())
+    assert looks == [1]
+    assert proposal.actions == [GameAction.PRESS_A, GameAction.WAIT_60]
+
+
+def test_a_mash_that_paged_the_box_mashes_again(monkeypatch):
+    import time
+
+    from nuzlocke.agents.jev_policy import FrameSignals
+
+    def boom(*args, **kwargs):
+        raise AssertionError("paging text needs no look")
+
+    plan = PlanCard(
+        scene=PlanScene.DIALOG,
+        see="Oak is talking",
+        plan="page it",
+        world_digest="w",
+        text_box=True,
+        created_at=time.time(),
+    )
+    loop = _fast_loop(plan, recent=[{"actions": ["skip_dialog"]}])
+    loop._frame_signals = lambda obs: FrameSignals("w", "d2", False, True, True, False)  # type: ignore[method-assign]
+    monkeypatch.setattr("nuzlocke.orchestration.loop.propose_plan", boom)
+    proposal = loop._fast_proposal(task=make_task(_decision()), obs=_obs(), context=_context())
+    assert proposal.actions == [GameAction.SKIP_DIALOG]
+
+
+def test_a_forced_look_names_its_reason():
+    from nuzlocke.agents.jev_policy import FrameSignals
+
+    loop = _fast_loop(None, recent=[])
+    clear = FrameSignals("w", "d", False, False, False, False)
+    boxed = FrameSignals("w", "d", False, False, True, False)
+    assert loop._forced_look(clear, mash_stalled=False) is False
+    loop.stuck.immobile_streak = 1
+    assert loop._forced_look(clear, mash_stalled=False) == "a walk did not move"
+    assert loop._forced_look(boxed, mash_stalled=True) == "skip_dialog left the box unchanged"
+    loop.stuck.immobile_streak = 0
+    loop.stuck.press_counts = {"press_b": 8}
+    assert loop._forced_look(boxed, mash_stalled=False) == "long text on one tile"
+
+
+def test_mashes_count_as_pages_but_do_not_force_a_look():
+    from nuzlocke.agents.jev_policy import FrameSignals
+
+    loop = _fast_loop(None, recent=[])
+    loop.stuck.press_counts = {"skip_dialog": 4, "walk_up": 1}
+    assert loop._pages() == 4
+    boxed = FrameSignals("w", "d", False, False, True, False)
+    assert loop._forced_look(boxed, mash_stalled=False) is False
+
+
+def test_a_headless_loop_does_not_wait_for_the_dashboard():
+    loop = RunLoop.__new__(RunLoop)
+    loop.headless = True
+    loop.run_cfg = {"control": {"respect_dashboard_control": True}}
+    sent: list = []
+
+    def never(*args, **kwargs):
+        raise AssertionError("a headless loop does not poll /control")
+
+    loop.env = SimpleNamespace(set_control=sent.append, get_control=never)
+    from nuzlocke.state.models import ControlState
+
+    assert loop._wait_until_running() == ControlState.RUNNING
+    assert sent == [ControlState.RUNNING]
 
 
 def test_disengage_drops_the_plan():
@@ -152,18 +283,14 @@ def test_disengage_drops_the_plan():
     loop.plan = PlanCard(scene=PlanScene.OVERWORLD, see="stuck", plan="talk to oak")
     loop._last_recovery_step = -1
     loop.arbiter = SimpleNamespace(set_owner=lambda owner: None)
-    loop._disengage_proposal = lambda task, tier: _proposal("disengage")  # type: ignore[method-assign]
+    loop._disengage_proposal = lambda task, tier, obs=None: _proposal("disengage")  # type: ignore[method-assign]
     proposal, used, pause = loop._select_proposal(
         tier=2,
         decision=_decision(),
         task=make_task(_decision()),
         obs=_obs(),
         steps=4,
-        memory_text=None,
-        recent_ctx=[],
-        walkthrough_hint=None,
-        failed_approaches=None,
-        no_progress_ctx=None,
+        context=_context(),
     )
     assert loop.plan is None
     assert proposal is not None
@@ -176,16 +303,17 @@ def test_recovery_advice_becomes_the_plan(monkeypatch):
     loop = RunLoop.__new__(RunLoop)
     loop.jev = object()
     loop.llm = object()
-    loop.vision_only = True
-    loop.objectives = {}
     loop.plan = None
     loop._low_confidence_streak = 4
     loop._prev_world = None
     loop._prev_dialog = None
     loop._last_recovery_step = -1
-    loop._nuzlocke_state = _no_facts
     loop.stuck = SimpleNamespace(stuck_score=6, recent_positions=[], loop_streak=0)
-    loop.env = SimpleNamespace(push_event=lambda *a, **k: None, set_control=lambda *a, **k: None)
+    loop.env = SimpleNamespace(
+        push_event=lambda *a, **k: None,
+        set_control=lambda *a, **k: None,
+        vision_frame=lambda obs: obs,
+    )
     loop.store = SimpleNamespace(append=lambda *a, **k: None)
     loop.arbiter = SimpleNamespace(set_owner=lambda owner: None)
 
@@ -203,11 +331,7 @@ def test_recovery_advice_becomes_the_plan(monkeypatch):
         task=make_task(_decision()),
         obs=_obs(),
         steps=3,
-        memory_text=None,
-        recent_ctx=[],
-        walkthrough_hint=None,
-        failed_approaches=None,
-        no_progress_ctx=None,
+        context=_context(),
     )
     assert used is True
     assert pause is False

@@ -2,9 +2,7 @@ from nuzlocke.orchestration.checkpoint import should_checkpoint
 
 
 def test_saves_on_cadence_outside_battle():
-    assert should_checkpoint(
-        steps=50, every_steps=50, in_battle=False, last_ledger_change_step=0
-    )
+    assert should_checkpoint(steps=50, every_steps=50, in_battle=False, last_ledger_change_step=0)
 
 
 def test_does_not_save_off_cadence():
@@ -84,3 +82,13 @@ def test_data_dir_from_ps_matches_the_listening_port():
     )
     assert data_dir_from_ps(text, "8766") == __import__("pathlib").Path("/tmp/emu")
     assert data_dir_from_ps(text, "9999") is None
+
+
+def test_data_dir_from_ps_matches_the_wrapped_server():
+    from nuzlocke.orchestration.checkpoint import data_dir_from_ps
+
+    text = (
+        "/venv/bin/python -m nuzlocke.environment.pa_serve serve --rom red.gb "
+        "--port 8765 --data-dir /tmp/emu\n"
+    )
+    assert data_dir_from_ps(text, "8765") == __import__("pathlib").Path("/tmp/emu")

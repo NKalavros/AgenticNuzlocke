@@ -18,9 +18,7 @@ from nuzlocke.environment.nous_red import NousRedEnvironment
 
 @pytest.fixture
 def env(tmp_path: Path) -> NousRedEnvironment:
-    e = NousRedEnvironment(
-        base_url="http://127.0.0.1:8765", run_dir=tmp_path, auto_start=False
-    )
+    e = NousRedEnvironment(base_url="http://127.0.0.1:8765", run_dir=tmp_path, auto_start=False)
     e._client = MagicMock()
     return e
 
@@ -31,9 +29,7 @@ def _json_response(payload):
 
 def test_save_checkpoint_succeeds_when_flat_listing_has_it(env: NousRedEnvironment):
     env._client.post = MagicMock(return_value=_json_response({"success": True}))
-    env._client.get = MagicMock(
-        return_value=_json_response({"saves": [{"name": "auto"}]})
-    )
+    env._client.get = MagicMock(return_value=_json_response({"saves": [{"name": "auto"}]}))
     result = env.save_checkpoint("auto")
     assert result["success"] is True
 

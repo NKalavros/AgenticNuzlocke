@@ -1,15 +1,14 @@
-"""TypeSafe Jev client — System One decisions, not chat completions.
+"""TypeSafe Jev client: System One decisions over ``POST /v1/systemone``, not chat completions.
 
-``POST /v1/systemone`` takes text state plus typed questions and returns a
-choice, probabilities, and confidence. Jev does not see images and does not
-write text. The API key is read from the environment and never logged.
+Jev takes text state plus typed questions and returns a choice, probabilities, and confidence.
+It sees no images and writes no text. The API key is never logged.
 """
 
 from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import httpx
@@ -26,6 +25,9 @@ class JevAnswers:
     plan_stale: float
     objective_done: float
     model: str
+    # The whole distribution over the menu. Confidence is its spread, not the top value.
+    probabilities: dict[str, float] = field(default_factory=dict)
+    latency_s: float = 0.0
 
 
 class JevClient:
@@ -62,39 +64,32 @@ class JevClient:
         allowed: set[str] | None = None,
     ) -> JevAnswers:
         body = {"model": self.model, "state": state, "questions": questions}
-        response: httpx.Response | None = None
         delay = 0.25
-        for attempt in range(self.max_retries):
+        started = time.monotonic()
+        for attempt in range(1, self.max_retries + 1):
             response = self._client.post("/v1/systemone", json=body)
-            if response.status_code in (429, 529) and attempt + 1 < self.max_retries:
-                retry_after = response.headers.get("retry-after")
-                try:
-                    wait = float(retry_after) if retry_after else delay
-                except ValueError:
-                    wait = delay
-                self._sleep(min(max(wait, 0.0), 8.0))
-                delay = min(delay * 2, 4.0)
-                continue
-            break
-        if response is None:
-            raise JevDecisionError("jev request was not sent")
+            if response.status_code not in (429, 529) or attempt == self.max_retries:
+                break
+            try:
+                wait = float(response.headers.get("retry-after") or delay)
+            except ValueError:
+                wait = delay
+            self._sleep(min(max(wait, 0.0), 8.0))
+            delay = min(delay * 2, 4.0)
         if response.status_code >= 400:
             raise JevDecisionError(f"jev HTTP {response.status_code}")
         try:
             payload = response.json()
         except ValueError as err:
             raise JevDecisionError("jev response was not JSON") from err
-        return parse_answers(payload, allowed=allowed)
+        answers = parse_answers(payload, allowed=allowed)
+        return replace(answers, latency_s=round(time.monotonic() - started, 3))
 
     def close(self) -> None:
         self._client.close()
 
 
-def parse_answers(
-    payload: dict[str, Any],
-    *,
-    allowed: set[str] | None = None,
-) -> JevAnswers:
+def parse_answers(payload: dict[str, Any], *, allowed: set[str] | None = None) -> JevAnswers:
     """Pull the action choice and the two noul gates out of a systemone body."""
     if not isinstance(payload, dict):
         raise JevDecisionError("jev response was not an object")
@@ -111,16 +106,28 @@ def parse_answers(
         confidence = float(action.get("confidence") or 0.0)
     except (TypeError, ValueError) as err:
         raise JevDecisionError("jev action confidence was not a number") from err
+    probabilities: dict[str, float] = {}
+    raw = action.get("probabilities")
+    if isinstance(raw, dict):
+        for key, value in raw.items():
+            try:
+                probabilities[str(key)] = float(value)
+            except (TypeError, ValueError):
+                continue
     return JevAnswers(
         action=choice,
         confidence=confidence,
         plan_stale=_noul(answers.get("plan_stale"), name="plan_stale"),
         objective_done=_noul(answers.get("objective_done"), name="objective_done"),
         model=str(payload.get("model") or ""),
+        probabilities=probabilities,
     )
 
 
 def _noul(raw: Any, *, name: str) -> float:
+    if raw is None:
+        # Not asked this call: menus, naming, and battle send no noul questions.
+        return 0.0
     if not isinstance(raw, dict) or "noul" not in raw:
         raise JevDecisionError(f"jev response missing {name}")
     try:
