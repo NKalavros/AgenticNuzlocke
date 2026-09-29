@@ -147,7 +147,7 @@ class GridTrust:
     The grid comes from vanilla pokered collision tables, which Red Star's maps
     do not always follow. A walk that lands on a tile the grid called ``#`` is
     a strike; after ``strikes`` of them the map's grid is withheld from prompts
-    and from the step picker for the rest of the run. A press into ``#`` that
+    and from the step picker until eight corroborating open-tile walks. A press into ``#`` that
     does not move is the grid being right, and a door mat that reads ``#``
     changes the map, so neither counts.
     """
@@ -155,6 +155,7 @@ class GridTrust:
     def __init__(self, strikes: int = 2) -> None:
         self._strikes = max(1, int(strikes))
         self._counts: dict[object, int] = {}
+        self._confirmed: dict[object, int] = {}
 
     @staticmethod
     def _key(obs: PlayerObservation) -> object:
@@ -222,6 +223,13 @@ class GridTrust:
                 int(x1) - int(before.x),  # type: ignore[arg-type]
                 int(y1) - int(before.y),  # type: ignore[arg-type]
             )
+            key = self._key(before)
+            if cell == ".":
+                self._confirmed[key] = self._confirmed.get(key, 0) + 1
+                if self._confirmed[key] >= 8:
+                    self._counts[key] = 0
+            elif cell == "#":
+                self._confirmed[key] = 0
             if cell == "#" and self._strike(before):
                 crossed = True
         return crossed

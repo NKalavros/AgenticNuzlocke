@@ -183,6 +183,15 @@ def _fast_loop(plan: PlanCard | None, *, recent: list[dict]) -> RunLoop:
     )
     loop.store = SimpleNamespace(append=lambda *args, **kwargs: None)
     loop.room = RoomMap()
+    from nuzlocke.agents.navigation import Navigator
+
+    loop.navigator = Navigator()
+    loop._cycle = 0
+    loop.run_id = "test"
+    loop.env.publish_navigation = lambda payload: None
+    from nuzlocke.agents.locomotion import GridTrust
+
+    loop.grid_trust = GridTrust()
     loop.journal = Journal(Path(tempfile.mkdtemp()) / "journal.jsonl")
     loop._goal_fails = {}
     loop._goal_texts = {}

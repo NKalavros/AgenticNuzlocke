@@ -1,6 +1,8 @@
+> **Historical design proposal.** For implemented behavior and commands, use [README.md](README.md) and [AGENTS.md](AGENTS.md); measured results are in [docs/validation.md](docs/validation.md). The current runner uses three systems and targets Brock. Separate specialist agents, a damage-calculation service, and FireRed below describe future scope.
+
 # Realistic Multi-Agent Nuzlocke Runner
 
-**Status:** Agent-ready architecture and weekend MVP plan  
+**Status:** Historical architecture and weekend MVP proposal
 **Primary MVP:** Pokemon Red  
 **Target port:** Pokemon FireRed  
 **Inference:** Existing local Qwen 3.6 endpoint on four RTX 3090 GPUs

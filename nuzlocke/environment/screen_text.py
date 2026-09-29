@@ -88,9 +88,7 @@ def parse_screen(rows: list[str] | None) -> ScreenText:
     def leads(box: Box, glyph: str) -> bool:
         return any(line.strip().startswith(glyph) for line in box.lines)
 
-    menu = next((b for b in menus if leads(b, "▶")), None) or next(
-        (b for b in menus if leads(b, "▷")), None
-    )
+    menu = next((b for b in menus if leads(b, "▶")), None)
     if menu is None:
         return ScreenText(text_lines=text_lines)
     menu_rows: list[str] = []
@@ -99,8 +97,8 @@ def parse_screen(rows: list[str] | None) -> ScreenText:
         label = line.strip()
         if not label:
             continue
-        if label[0] in "¥×" and menu_rows:
-            # A Mart price or a bag count sits on its own line under the item: that row's.
+        if (label[0] in "¥×" or label.isdecimal()) and menu_rows:
+            # Prices/counts and PC Pokémon levels are continuation lines, not choices.
             menu_rows[-1] = f"{menu_rows[-1]} {label}"
             continue
         if label[0] in _CURSORS:

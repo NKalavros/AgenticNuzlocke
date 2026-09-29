@@ -5,7 +5,10 @@ The emulator only advances inside /action, so every wait is frames sent there.
 
 from __future__ import annotations
 
+import base64
 import contextlib
+import os
+import secrets
 import shutil
 import subprocess
 import sys
@@ -84,11 +87,18 @@ class NousRedEnvironment:
         self.press_interval_s = max(0.0, float(press_interval_s))
         self.load_state = load_state
         # trust_env=False: a dev HTTP(S)_PROXY would turn /health into a 503.
-        self._client = httpx.Client(timeout=60.0, trust_env=False)
+        self._writer_token = secrets.token_urlsafe(32)
+        self._client = httpx.Client(
+            timeout=60.0, trust_env=False, headers={"X-Nuzlocke-Writer": self._writer_token}
+        )
         self._proc: subprocess.Popen[str] | None = None
         # The map the last observation was on; a change means a warp is still loading.
         self._last_map_id: Any = None
         self._log: Any = None
+        self.on_transition = None
+        self.on_before_action = None
+        self.snapshot_supported = True
+        self._last_snapshot: PlayerObservation | None = None
         if auto_start:
             self._ensure_server()
 
@@ -113,7 +123,11 @@ class NousRedEnvironment:
         self._log = log_path.open("w", encoding="utf-8")
         try:
             self._proc = subprocess.Popen(
-                cmd, stdout=self._log, stderr=subprocess.STDOUT, text=True
+                cmd,
+                stdout=self._log,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env={**os.environ, "NUZLOCKE_WRITER_TOKEN": self._writer_token},
             )
         except FileNotFoundError as err:
             raise RuntimeError(
@@ -153,14 +167,20 @@ class NousRedEnvironment:
         return r
 
     def _post_json(self, path: str, payload: dict[str, Any]) -> Any:
+        if path in {"/action", "/nuzlocke/prepare"} and getattr(self, "on_before_action", None):
+            self.on_before_action()
         r = self._client.post(f"{self.base_url}{path}", json=payload)
         r.raise_for_status()
         if not r.content:
             return {}
         try:
-            return r.json()
+            result = r.json()
         except ValueError:
             return {"raw": r.text}
+        if path == "/action" and getattr(self, "on_transition", None):
+            observation = self.snapshot()
+            self.on_transition(observation)
+        return result
 
     def _observation_from_state(
         self,
@@ -202,7 +222,13 @@ class NousRedEnvironment:
             input_ready=agent_can_act(joy_ignore),
             in_battle=in_battle,
             battle=battle if in_battle else None,
-            party=list(state.get("party") or []),
+            party=[
+                m
+                for m in state.get("party") or []
+                if not str(m.get("species", "")).startswith("???")
+                and m.get("max_hp", 1) > 0
+                and 1 <= m.get("level", 1) <= 100
+            ],
             bag=list(state.get("bag") or []),
             badges=list(player.get("badges") or player.get("badges_list") or []),
             money=player.get("money"),
@@ -215,6 +241,15 @@ class NousRedEnvironment:
             flags=dict(state.get("flags") or {}),
             frame_count=(state.get("metadata") or {}).get("frame_count"),
             raw_player=player,
+            active_party_slot=(objects or {}).get("active_party_slot"),
+            active_mon=(objects or {}).get("active_mon") or {},
+            return_map=(objects or {}).get("return_map"),
+            battle_result=(objects or {}).get("battle_result"),
+            battle_lost=(objects or {}).get("input", {}).get("battle") == 255,
+            battle_style=(objects or {}).get("battle_style"),
+            menu_index=(objects or {}).get("menu_index"),
+            menu_scroll=(objects or {}).get("menu_scroll", 0),
+            grass_tiles=(objects or {}).get("grass_tiles", []),
         )
 
     def peek_state(self) -> PlayerObservation:
@@ -248,14 +283,47 @@ class NousRedEnvironment:
         vision look made then is spent on a frame that is about to change. Returns the rounds.
         """
         for rounds in range(SETTLE_ROUNDS):
+            if getattr(self, "terminal", False):
+                return rounds
             objects = self._map_objects()
             if not objects or not busy(objects):
                 return rounds
             self._post_json("/action", {"actions": [SETTLE_ROUND]})
         return SETTLE_ROUNDS
 
+    def snapshot(self) -> PlayerObservation:
+        """Read one frozen frame. This method never advances the emulator."""
+        if getattr(self, "snapshot_supported", True):
+            try:
+                payload = self._get("/snapshot").json()
+                path = self.run_dir / "screenshots" / "latest.png"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(base64.b64decode(payload["screenshot"]))
+                obs = self._observation_from_state(
+                    payload["state"],
+                    screenshot_path=str(path),
+                    collision_ascii=payload["collision"],
+                    objects=payload["objects"],
+                )
+                self._last_snapshot = obs
+                return obs
+            except (httpx.HTTPError, KeyError, ValueError):
+                self.snapshot_supported = False
+        if getattr(self, "on_transition", None):
+            raise RuntimeError(
+                "This server lacks a valid atomic /snapshot. Start an updated private server; live servers are not restarted automatically."
+            )
+        return self.peek_state()
+
     def observe(self) -> PlayerObservation:
         self.settle()
+        if getattr(self, "on_transition", None):
+            obs = self.snapshot()
+            if self._last_map_id is not None and obs.map_id != self._last_map_id:
+                self._post_json("/action", {"actions": ["wait_60"]})
+                obs = self.snapshot()
+            self._last_map_id = obs.map_id
+            return obs
         shot: str | None = str(self.run_dir / "screenshots" / "latest.png")
         try:
             self.screenshot(shot)
@@ -401,6 +469,8 @@ class NousRedEnvironment:
         stable = 0
         previous, _ = self._mash_frame()
         for _ in range(max_rounds):
+            if getattr(self, "terminal", False):
+                break
             if is_naming_lock(self._joy_ignore()) or self._prompt_up():
                 break
             self._post_json("/action", {"actions": list(MASH_ROUND)})
@@ -466,9 +536,19 @@ class NousRedEnvironment:
             previous = current
         return moving, None
 
+    @staticmethod
+    def _health_changed(before: PlayerObservation, after: PlayerObservation) -> bool:
+        return any(
+            a.get("hp", 0) < b.get("hp", 0) or a.get("status") != b.get("status")
+            for b, a in zip(before.party, after.party)
+        )
+
     def execute(self, actions: list[GameAction]) -> ActionResult:
-        before = self.peek_state()
-        naming = is_naming_lock(before.joy_ignore)
+        before = self.snapshot() if getattr(self, "on_transition", None) else self.peek_state()
+        rows = before.screen_rows or (self._map_objects() or {}).get("screen", [])
+        naming = is_naming_lock(before.joy_ignore) and any(
+            "A B C D E F G H I" in row for row in rows
+        )
         # Naming and an open menu move a cursor: an unchanged map tile there is not a failed walk.
         cursor = naming or self._frame_blocks_walk() or self._menu_cursor_open()
         if naming:
@@ -497,7 +577,7 @@ class NousRedEnvironment:
             elif action is GameAction.PRESS_A and last:
                 opcodes.append(A_SETTLE)
             self._post_json("/action", {"actions": opcodes})
-            after = self.peek_state()
+            after = self.snapshot() if getattr(self, "on_transition", None) else self.peek_state()
             walk = action.value.startswith("walk_") and not cursor
             scene_stop = None
             if walk and not waited and _same_tile(before, after) and not _turned(before, after):
@@ -517,14 +597,29 @@ class NousRedEnvironment:
                         "y1": after.y,
                         "map_name": after.map_name,
                         "map_id": after.map_id,
+                        "blocked": bool(
+                            not after.in_battle
+                            and not after.cutscene
+                            and not before.cutscene
+                            and scene_stop is None
+                            and _same_tile(before, after)
+                            and not _turned(before, after)
+                            and not self._frame_blocks_walk()
+                        ),
                     }
                 )
+            if getattr(self, "terminal", False):
+                stopped = "nuzlocke_wipe"
+                break
+            if walk and self._health_changed(before, after):
+                stopped = "health_changed"
+                break
             if scene_stop:
                 stopped = scene_stop
                 break
             if walk and _same_tile(before, after):
                 next_is_a = not last and actions[i + 1] is GameAction.PRESS_A
-                if next_is_a and _turned_to(action, before, after):
+                if next_is_a and str(after.facing).lower() == action.value.removeprefix("walk_"):
                     before = after
                     continue
                 # A wall only turns the player and a stuck press does not; either way the rest
@@ -575,6 +670,11 @@ class NousRedEnvironment:
         with contextlib.suppress(httpx.HTTPError):
             self._post_json("/event", payload)
 
+    def publish_navigation(self, payload: dict) -> None:
+        # Telemetry must not stop gameplay when attached to an older server.
+        with contextlib.suppress(httpx.HTTPError):
+            self._post_json("/nuzlocke/navigation", payload)
+
     def set_objectives(self, objectives: list[dict]) -> None:
         normalized = []
         for default_tier, obj in zip(("primary", "secondary", "tertiary"), objectives):
@@ -616,6 +716,11 @@ def busy(objects: dict[str, Any]) -> bool:
     rows = objects.get("screen") or []
     if any("▶" in row for row in rows) or parse_screen(rows).text_lines:
         return False
+    # Red Star's shrinking battle transition paints solid black tiles (decoded as 9)
+    # before wIsInBattle changes. Measured at the lab rival: both outer rows filled
+    # while the overworld remained visible inside. Give that animation frames.
+    if len(rows) == 18 and rows[0] == "9" * 20 and rows[-1] == "9" * 20:
+        return True
     flags = objects.get("input") or {}
     return bool(int(flags.get("walking") or 0) or int(flags.get("battle") or 0) or _cutscene(flags))
 

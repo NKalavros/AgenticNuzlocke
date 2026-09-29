@@ -8,6 +8,7 @@ savestate and the same buttons give the same frames every time.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import socket
@@ -65,6 +66,17 @@ def new_sandbox(
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dest)
         meta["savestate"] = str(src)
+        source_dir = runs / source
+        record_path = source_dir / "checkpoints" / (
+            "current.json" if state == CHECKPOINT_NAME else f"{state}.json"
+        )
+        if record_path.exists():
+            record = json.loads(record_path.read_text())
+            if record.get("state_sha256") == hashlib.sha256(src.read_bytes()).hexdigest():
+                shutil.copy2(record_path, run_dir / "sandbox-controller.json")
+                meta["controller_history"] = "paired diagnostic copy"
+                meta["source_sequence"] = record.get("sequence")
+        meta.setdefault("controller_history", "legacy: empty controller")
     (run_dir / "sandbox.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     return run_id, run_dir
 
@@ -180,12 +192,24 @@ def summarize(run_dir: Path) -> dict[str, Any]:
     tiles: list[tuple[Any, Any, Any]] = []
     cycle_times: list[float] = []
     last_ts: float | None = None
+    last_observation: dict[str, Any] = {}
+    rule_alerts = 0
+    eligibility_alerts = 0
     for event in session:
         kind, payload = event["kind"], event["payload"]
         if kind == "observation":
+            last_observation = payload
             tile = (payload.get("map_name"), payload.get("x"), payload.get("y"))
             if not tiles or tiles[-1] != tile:
                 tiles.append(tile)
+        elif kind == "party_ineligible":
+            eligibility_alerts += 1
+        elif kind == "rule_violation":
+            # Older runs labeled the post-battle/pre-badge cap gap as a violation.
+            if last_observation and not last_observation.get("in_battle"):
+                eligibility_alerts += 1
+            else:
+                rule_alerts += 1
         elif kind == "plan" and payload.get("latency_s") is not None:
             planner.append(float(payload["latency_s"]))
         elif kind == "jev_call":
@@ -202,6 +226,22 @@ def summarize(run_dir: Path) -> dict[str, Any]:
     cycles = sum(stops.values())
     return {
         "cycles": cycles,
+        "completed_brock": any(
+            e["kind"] == "milestone_complete" and e["payload"].get("milestone") == "brock"
+            for e in session
+        ),
+        "wiped": any(e["kind"] == "nuzlocke_wipe" for e in session),
+        "rule_alerts": rule_alerts,
+        "eligibility_alerts": eligibility_alerts,
+        "policy_rejections": sum(e["kind"] == "policy_rejection" for e in session),
+        "candy_grants": sum(
+            e["payload"].get("granted", 0) for e in session if e["kind"] == "candy_grant"
+        ),
+        "candy_uses": sum(e["kind"] == "candy_use" for e in session),
+        "casualties": max(
+            (len(e["payload"].get("deaths", [])) for e in session if e["kind"] == "ledger_commit"),
+            default=0,
+        ),
         "planner_looks": sum(1 for e in session if e["kind"] == "plan"),
         "looks_by_reason": dict(looks.most_common()),
         "planner_s": _spread(planner),
@@ -233,4 +273,40 @@ def _jev_stats(calls: list[dict[str, Any]]) -> dict[str, Any] | None:
         "state_bytes_mean": round(statistics.mean(size)),
         "latency_s": _spread(latency),
         "by_scene": dict(Counter(str(call.get("scene")) for call in calls).most_common()),
+    }
+
+
+def benchmark(*, trials: int = 5, steps: int = 1500, rom: Path | None = None) -> dict[str, Any]:
+    """Independent fresh boots; failures are retained, never retried into the success count."""
+    from nuzlocke.orchestration.loop import RunLoop
+
+    if trials < 1 or steps < 1:
+        raise ValueError("benchmark requires positive trials and steps")
+    reports = []
+    for trial in range(trials):
+        run_id, run_dir = new_sandbox(None)
+        loop = None
+        error = None
+        try:
+            loop = RunLoop(rom_path=rom, run_id=run_id, port=free_port(), headless=True)
+            loop.run(max_steps=steps)
+        except Exception as exc:  # noqa: BLE001 — retain failed trials of every kind
+            error = f"{type(exc).__name__}: {exc}"
+        finally:
+            if loop is not None:
+                loop.env.shutdown()
+        report = summarize(run_dir) if (run_dir / "events.jsonl").exists() else {}
+        report.update(trial=trial + 1, run_id=run_id, error=error)
+        (run_dir / "summary.json").write_text(json.dumps(report, indent=2))
+        reports.append(report)
+    return {
+        "trials": reports,
+        "passed": len(reports) == trials
+        and all(
+            r.get("completed_brock")
+            and not r.get("wiped")
+            and not r.get("error")
+            and not r.get("rule_alerts")
+            for r in reports
+        ),
     }

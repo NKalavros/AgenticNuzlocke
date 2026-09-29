@@ -48,12 +48,12 @@ memory:
   # Text-only OptMem compression every N prompt cycles (0 = off).
   rollup_every: 25
 
-# Continue savestate. Written every N steps and again when the dashboard
-# STOPs, outside battle. Resume with `nuzlocke run --resume <run-id>` —
-# that loads runs/<run-id>/savestates/auto.state instead of the title screen.
+# Legacy convenience-checkpoint settings. The active RunLoop commits a paired
+# emulator/controller checkpoint every completed cycle, including battles,
+# regardless of these values. --resume validates checkpoints/current.json.
 checkpoint:
   enabled: true
-  # Save every N steps, skipped mid-battle and right after a ledger commit.
+  # Retained for the legacy helper; does not set paired-checkpoint cadence.
   every_steps: 50
 
 milestones:
@@ -86,4 +86,9 @@ milestones:
 
 rare_candy:
   enabled: true
-  inject_count: 0  # audited injection only when Box Agent requests prep
+  source: audited_grant
+  rival_level: 8
+  first_center_level: 12
+  brock_level: 14
+
+stop_after: brock

@@ -19,6 +19,9 @@ class LedgerTracker:
         self._prev_fainted: dict[str, bool] = {}
         # This wild battle is the area's first encounter since the player had Poké Balls.
         self.first_encounter = False
+        self.duplicate_encounter = False
+        self._battle_owned = 0
+        self._encounter_classified = False
         # (in battle, lowest HP fraction in the party, map id) from the last observation.
         self._prev_state: tuple[bool, float, object] | None = None
 
@@ -29,40 +32,87 @@ class LedgerTracker:
 
     def update(self, obs: PlayerObservation, *, step: int) -> bool:
         """Advance ledger state for this step. True when it just committed a new death or
-        encounter outcome, which checkpointing waits out while it settles."""
+        encounter outcome. The current loop commits paired checkpoints after each cycle."""
         before = self._ledger_snapshot()
+        self.referee.identify(obs)
         self._track_encounter(obs)
         self._track_deaths(obs, step=step)
         self._track_wipe(obs, step=step)
         return self._ledger_snapshot() != before
 
     def _track_encounter(self, obs: PlayerObservation) -> None:
+        from nuzlocke.referee.families import family
+
         battle = obs.battle or {}
+        self.referee.balls_acquired |= any(
+            "ball" in str(item.get("item") or "").casefold() and item.get("quantity", 1) > 0
+            for item in obs.bag
+        )
         if obs.in_battle and not self._prev_in_battle:
+            self.referee.battle_eligible = {
+                m["capture_id"]
+                for m in obs.party
+                if not m.get("dead") and (m.get("level") or 0) <= self.referee.current_cap
+            }
             self._battle_area = None
             self.first_encounter = False
-            balls = any("ball" in str(item.get("item") or "").casefold() for item in obs.bag)
-            # Encounters before the player has Poké Balls do not count (rules_red.yaml).
-            if battle.get("type") == "wild" and obs.map_name and balls:
-                self.first_encounter = obs.map_name not in self.referee.encounter_ledger
-                enemy = battle.get("enemy") or {}
-                self.referee.freeze_encounter(
-                    area=obs.map_name,
-                    species=str(enemy.get("species") or "unknown"),
-                    outcome="engaged",
-                )
-                self._battle_area = obs.map_name
+            self.duplicate_encounter = False
+            self._encounter_classified = False
             self._battle_party_size = len(obs.party)
-        elif not obs.in_battle and self._prev_in_battle and self._battle_area:
+            self._battle_owned = obs.flags.get("pokedex_owned", 0)
+        if obs.in_battle and not self._encounter_classified:
+            area = str(obs.map_id) if obs.map_id is not None else obs.map_name
+            species = str((battle.get("enemy") or {}).get("species") or "unknown")
+            # Battle flags change before the enemy structure finishes loading.
+            if battle.get("type") == "wild" and (species == "unknown" or "?" in species):
+                self._prev_in_battle = True
+                return
+            if battle.get("type") not in {"wild", "trainer"}:
+                self._prev_in_battle = True
+                return
+            self._encounter_classified = True
+            clauses = self.referee.rules.get("clauses", {})
+            duplicate = (
+                clauses.get("duplicates_clause", False) or clauses.get("species_clause", False)
+            ) and family(species) in self.referee.owned_families
+            self.duplicate_encounter = duplicate
+            if (
+                battle.get("type") == "wild"
+                and area
+                and self.referee.balls_acquired
+                and not duplicate
+            ):
+                self.first_encounter = area not in self.referee.encounter_ledger
+                if self.first_encounter:
+                    self.referee.freeze_encounter(area=area, species=species, outcome="engaged")
+                    self._battle_area = area
+        elif not obs.in_battle and self._prev_in_battle:
+            if self._battle_area:
+                caught = (
+                    len(obs.party) > self._battle_party_size
+                    or obs.flags.get("pokedex_owned", 0) > self._battle_owned
+                )
+                outcome = "caught" if caught else "forfeited"
+                if caught:
+                    self.referee.owned_families.add(
+                        family(self.referee.encounter_ledger[self._battle_area]["species"])
+                    )
+                self.referee.resolve_encounter(self._battle_area, outcome)
             self.first_encounter = False
-            outcome = "caught" if len(obs.party) > self._battle_party_size else "resolved"
-            self.referee.resolve_encounter(self._battle_area, outcome)
+            self.duplicate_encounter = False
             self._battle_area = None
+            self.referee.battle_eligible.clear()
         self._prev_in_battle = obs.in_battle
+
+    def snapshot(self) -> dict:
+        return dict(self.__dict__, referee=None)
+
+    def restore(self, data: dict) -> None:
+        self.__dict__.update({k: v for k, v in data.items() if k != "referee"})
 
     def _track_deaths(self, obs: PlayerObservation, *, step: int) -> None:
         for mon in obs.party:
-            nickname = mon.get("nickname") or mon.get("species") or ""
+            nickname = mon.get("capture_id") or mon.get("nickname") or mon.get("species") or ""
             fainted = is_fainted(mon)
             if fainted and not self._prev_fainted.get(nickname):
                 self.referee.note_faint(mon, context={"map": obs.map_name, "step": step})
@@ -78,16 +128,17 @@ class LedgerTracker:
             return
         lowest = min(mon.get("hp", 0) / mon["max_hp"] for mon in party)
         context = {"map": obs.map_name, "step": step}
-        if all(is_fainted(mon) for mon in party):
+        if obs.battle_lost or all(is_fainted(mon) or self.referee.is_dead(mon) for mon in party):
             self.referee.note_wipe("every POKéMON fainted", party, context)
         elif self._prev_state is not None:
             was_in_battle, was_lowest, was_map = self._prev_state
             if (
-                was_in_battle
-                and was_lowest <= 0.2
+                (was_in_battle or was_lowest < 1)
+                and was_lowest < 1
                 and not obs.in_battle
                 and lowest == 1.0
                 and (was_map != obs.map_id)
+                and obs.map_id in {0, 37, 41, 58, 64, 68}
             ):
                 self.referee.note_wipe(
                     f"blacked out; woke up healed in {obs.map_name}", party, context

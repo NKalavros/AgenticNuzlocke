@@ -1,6 +1,6 @@
 """System 3: the Nuzlocke controller. Deterministic rules, checked before System 1 and 2.
 
-No items in this Nuzlocke except Poké Balls. Run 20260929-030330-de1d51 blacked out twice with
+Battle items are limited to Poké Balls; audited preparation candies are allowed outside battle. Run 20260929-030330-de1d51 blacked out twice with
 one Charmander that walked through grass at 3/23 and 1/29 HP and chose FIGHT there, and never
 caught anything. The rules:
 
@@ -20,7 +20,8 @@ from nuzlocke.knowledge.beats import Beat
 from nuzlocke.state.models import PlayerObservation
 
 _RULES = (
-    "Nuzlocke: no items except POKé BALLs; a fainted POKéMON is dead; the first wild encounter "
+    "Nuzlocke: only POKé BALLs in battle; audited Rare Candies for preparation outside battle; "
+    "SET battle style; a fainted POKéMON is permanently dead; the first eligible wild encounter "
     "in each area is the only one that may be caught; never let the party wipe."
 )
 RUN_BELOW = 0.25
@@ -66,14 +67,17 @@ _ROUTE: dict[int, Beat] = {
 
 def lead_fraction(obs: PlayerObservation) -> float | None:
     """HP left of the first POKéMON that can still fight, as a fraction."""
-    for mon in obs.party:
-        if mon.get("max_hp") and mon.get("hp"):
+    from nuzlocke.agents.battle import active_mon
+
+    candidates = [active_mon(obs)] if obs.in_battle else obs.party
+    for mon in candidates:
+        if mon.get("max_hp") and mon.get("hp") and not mon.get("dead"):
             return mon["hp"] / mon["max_hp"]
     return None
 
 
 def needs_heal(obs: PlayerObservation) -> bool:
-    party = [mon for mon in obs.party if mon.get("max_hp")]
+    party = [mon for mon in obs.party if mon.get("max_hp") and not mon.get("dead")]
     if not party or obs.in_battle:
         return False
     fraction = lead_fraction(obs)
@@ -83,14 +87,35 @@ def needs_heal(obs: PlayerObservation) -> bool:
     return (
         fraction is None
         or fraction < HEAL_BELOW
+        or any(m.get("hp", 0) / m["max_hp"] < HEAL_BELOW for m in party)
         or poisoned
         or any(not mon.get("hp") for mon in party)
+        or any(m.get("status", "OK") != "OK" for m in party)
+        or any(m.get("moves") and all(not move.get("pp", 1) for move in m["moves"]) for m in party)
     )
 
 
 def heal_beat(obs: PlayerObservation) -> Beat | None:
     """Where healing is from here, or None when healthy or no route is known."""
-    if not needs_heal(obs) or obs.map_id is None:
+    living = [m for m in obs.party if not m.get("dead")]
+    target = obs.policy.get("preparation_target", 12 if obs.map_id == 41 else 14)
+    preparing = any((m.get("level") or 14) < target for m in living)
+    # The grant requires the whole party healthy, including members already at target.
+    preparation_heal = (
+        obs.map_id in {41, 58}
+        and preparing
+        and any(m.get("hp") != m.get("max_hp") or m.get("status", "OK") != "OK" for m in living)
+    )
+    if obs.map_id in {2, 54, 58} and "Boulder" not in obs.badges:
+        preparation_heal |= any(
+            m.get("hp") != m.get("max_hp")
+            or m.get("status", "OK") != "OK"
+            or any(
+                move.get("pp", 0) < move.get("observed_max_pp", 0) for move in m.get("moves", [])
+            )
+            for m in living
+        )
+    if (not needs_heal(obs) and not preparation_heal) or obs.map_id is None:
         return None
     if obs.map_id in POKECENTERS:
         return _NURSE
@@ -109,11 +134,28 @@ def heal_beat(obs: PlayerObservation) -> Beat | None:
             "leave the forest by the nearer gate.",
             {"kind": "warp", "dest_map": gate},
         )
+    if obs.map_id in {38, 39, 40, 42, 54}:
+        return _toward(
+            "heal_exit", "leave this building for healing.", {"kind": "warp", "dest_map": 255}
+        )
     return _ROUTE.get(obs.map_id)
 
 
 def current_beat(obs: PlayerObservation) -> Beat | None:
     """Healing outranks the story."""
+    if any(m.get("dead") for m in obs.party) and not obs.in_battle:
+        if obs.map_id in POKECENTERS:
+            return Beat(
+                "box_dead",
+                "Deposit permanently dead Pokémon in storage.",
+                "Use the PC, SOMEONE'S PC, DEPOSIT, then the dead Pokémon.",
+                target={"kind": "face", "x": 13, "y": 4, "dir": "up"},
+            )
+        # Route to a Center even if the surviving party is healthy.
+        hurt = obs.model_copy(
+            update={"party": [{**m, "hp": 1} for m in obs.party if not m.get("dead")]}
+        )
+        return heal_beat(hurt)
     return heal_beat(obs) or beats.current_beat(obs)
 
 
@@ -138,6 +180,10 @@ def forced_battle_choice(obs: PlayerObservation, first_encounter: bool = False) 
     """
     fraction = lead_fraction(obs)
     wild = (obs.battle or {}).get("type") == "wild"
+    if wild and obs.policy.get("duplicate_encounter"):
+        return "run"
+    if wild and obs.policy.get("avoid_wild_grinding") and not first_encounter:
+        return "run"
     if wild and fraction is not None and fraction < RUN_BELOW:
         return "run"
     if wild and first_encounter and has_balls(obs):

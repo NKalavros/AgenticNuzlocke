@@ -9,6 +9,7 @@ from typing import Any
 
 from nuzlocke.agents import prompts
 from nuzlocke.agents.locomotion import map_context
+from nuzlocke.agents.navigation import parse_route_plan
 from nuzlocke.environment.joypad import is_naming_lock
 from nuzlocke.environment.macros import expand_actions
 from nuzlocke.knowledge.beats import current_beat, is_intro_boot
@@ -89,6 +90,7 @@ def _with_extras(
     journal: list[str] | None = None,
     battle: dict[str, Any] | None = None,
     constraints: list[str] | None = None,
+    navigation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     memory = (memory or "").strip()
     for key, value in (
@@ -96,6 +98,7 @@ def _with_extras(
         ("journal", journal),
         ("battle", battle),
         ("constraints", constraints),
+        ("navigation", navigation),
     ):
         if value:
             payload[key] = value
@@ -546,6 +549,7 @@ def propose_plan(
     journal: list[str] | None = None,
     battle: dict[str, Any] | None = None,
     constraints: list[str] | None = None,
+    navigation: dict[str, Any] | None = None,
 ) -> PlanCard:
     """System 2: read the screenshot and the journal, and set the next objective."""
     data, _ = _ask(
@@ -569,6 +573,7 @@ def propose_plan(
         journal=journal,
         battle=battle,
         constraints=constraints,
+        navigation=navigation,
     )
     try:
         scene = PlanScene(str(data.get("scene") or "").strip().lower())
@@ -585,6 +590,7 @@ def propose_plan(
         goal_target=parse_target(data.get("target")),
         done_when=data.get("done_when") if isinstance(data.get("done_when"), dict) else {},
         battle_plan=_battle_plan(data.get("battle_plan")),
+        route_plan=parse_route_plan(data.get("route_plan")),
         objectives=parse_objectives(data.get("objectives")),
         landmarks=parse_landmarks(data.get("landmarks")),
     )
@@ -620,12 +626,18 @@ def _battle_plan(raw: Any) -> dict[str, Any]:
         below = float(raw.get("switch_below") or 0.0)
     except (TypeError, ValueError):
         below = 0.0
-    plan = {"moves": moves[:4], "switch_below": min(max(below, 0.0), 1.0)}
+    from nuzlocke.state.models import BattlePlan
+
+    plan = BattlePlan(
+        moves=moves[:4],
+        opening_moves=[str(m).upper() for m in raw.get("opening_moves", [])][:4],
+        switch_below=min(max(below, 0.0), 1.0),
+    ).model_dump(exclude_none=True)
     if raw.get("switch_to"):
         plan["switch_to"] = str(raw["switch_to"]).strip()
     if raw.get("notes"):
         plan["notes"] = str(raw["notes"])[:200]
-    return plan if moves or "switch_to" in plan else {}
+    return plan if moves or plan["opening_moves"] or "switch_to" in plan else {}
 
 
 def _target_value(raw: Any, kind: str) -> Any:

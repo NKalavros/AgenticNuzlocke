@@ -123,7 +123,7 @@ def test_jev_picks_a_goal_and_code_walks_it():
 def test_decisions_go_to_system_2():
     decide, _ = _jev("exit_255", 0.1, exit_0=0.4, talk_0=0.35, wait=0.25)
     assert _turn(objective=None, jev_decide=decide).trigger == "no objective"
-    unsure = _turn(jev_decide=decide, low_confidence_streak=1)
+    unsure = _turn(jev_decide=decide, low_confidence_streak=1, objective_from_code=False)
     assert unsure.trigger == "jev unsure twice"
     far = _turn(
         objective={"kind": "warp", "dest_map": 12}, objective_from_code=False, jev_decide=decide
@@ -288,3 +288,11 @@ def test_an_offscreen_target_pulls_toward_unvisited_ground():
     )
     goal = next(g for g in goals if g.key == "objective")
     assert goal.path and "closer" in goal.facts[1]
+
+
+def test_uncertain_jev_uses_executable_code_target_without_another_look():
+    decide, _ = _jev("exit_255", 0.1, exit_0=0.4, talk_0=0.35, wait=0.25)
+    turn = _turn(jev_decide=decide, low_confidence_streak=2)
+    assert turn.trigger is None
+    assert turn.goal.objective
+    assert turn.actions

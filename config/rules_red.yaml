@@ -8,12 +8,13 @@ clauses:
   duplicates_clause: true
   species_clause: true
   shiny_clause: true
-  nicknames_required: true
+  nicknames_required: false
   set_battle_style: true
   no_items_in_trainer_battles: true
   poke_balls_allowed_in_wild: true
   level_caps: true
   rare_candy_clause: true
+  level_cap_at_battle_entry: true
   no_outcome_rollback: true
   blackout_ends_run: true
 

@@ -99,6 +99,16 @@ System 1 (a fast decision model plus pathfinding code) walks, talks to people,
 pages text, and answers menus on its own. `journal` is what it did since your
 last look, oldest first. You set the next objective; you do not press buttons.
 
+`navigation` contains the WHOLE OBSERVED MAP, not just the screen. Rows and coordinates
+are zero-based map tiles; ? is unknown, . open, # wall, comma grass. The map comes from
+verified movement and observed grids; never invent unseen corridors. Use its exits,
+current route, and temporary directional blockers to plan around obstacles. Optional
+`route_plan` contains map_id, objective_key copied from navigation.route, up to eight
+[x,y] waypoints on known reachable floor, preference "safe" or "shortest", and reason.
+Safe routes penalize grass; shortest is appropriate for urgent healing. Keep the current
+code-owned destination, use waypoints only to resolve route choices. System 1 validates
+waypoints and follows a persistent path; ordinary walking needs no explicit steps.
+
 Write `target`, the thing System 1 should reach next:
 - {"kind": "exit", "value": "<map name the door or stairs lead to>"}
 - {"kind": "edge", "value": "up|down|left|right"} to walk off the map that way
@@ -113,16 +123,20 @@ Otherwise leave it [].
 If the journal shows the same text each time a goal is tried (someone blocking a
 road), that way is closed until a story event: set a different objective.
 
-`constraints` is System 3's briefing: the Nuzlocke rules (no items except POKé BALLs,
+`constraints` is System 3's briefing: the Nuzlocke rules (no items except POKé BALLs and audited out-of-battle preparation candies,
 a fainted POKéMON is dead, one catch per area), the level cap, the next boss, and the
 trainers known on this map with their teams. Obey it over everything else.
 
 When `trigger` is "trainer battle", `battle` holds both POKéMON on the field, our moves
-with type and PP, and the party. Write `battle_plan`: `moves`, our move names in the order
-to use them (super effective first, no moves the enemy is immune to, stat moves only when
+with type and PP, and the party. Write `battle_plan`: `opening_moves` (moves to use exactly once in sequence, such as ["GROWL"]),
+`moves`, our repeatable move priorities (super effective first, no moves the enemy is immune to, stat moves only when
 it helps); `switch_to`, a party POKéMON to switch to or null; `switch_below`, the lead's
 HP fraction at which to switch (a faint is death, so switch early rather than late); and
 `notes`. There is no running from a trainer and no items.
+For the level-5 lab rival, compare how many incoming hits we survive with how many attacks
+we need. Bulbasaur can lose a straight Tackle race against Charmander. Growl reduces future
+Scratch damage; consider two opening Growls before repeated Tackles. Do not dismiss its effect
+as merely spending a turn. Put one-use defensive moves in opening_moves, never the repeat list.
 
 The screenshot is drawn at 4x with a labelled grid: columns A-J left to right,
 rows 1-9 top to bottom. Every cell is one walk tile. The player is always in
@@ -199,6 +213,13 @@ PLANNER_SCHEMA = {
         "switch_to": None,
         "switch_below": 0.3,
         "notes": "",
+    },
+    "route_plan": {
+        "map_id": 51,
+        "objective_key": "exit_47",
+        "waypoints": [],
+        "preference": "safe",
+        "reason": "",
     },
     "steps": [],
     "do_not": ["do not talk to the aide"],

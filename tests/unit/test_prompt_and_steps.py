@@ -452,6 +452,7 @@ def test_a_burst_stops_when_a_walk_does_not_move(tmp_path: Path):
 def test_naming_steps_are_not_cut_short_when_the_tile_stays_put(tmp_path: Path):
     env, pos, posted = _burst_env(tmp_path)
     pos["joy"] = 0x40
+    env._map_objects = lambda: {"screen": ["A B C D E F G H I"]}
 
     result = env.execute([GameAction.WALK_LEFT, GameAction.WALK_LEFT, GameAction.PRESS_START])
 
@@ -612,3 +613,11 @@ def test_an_older_server_keeps_the_native_frame(tmp_path: Path):
 
     assert obs.vision_path is None
     assert _images(obs) == [native]
+
+
+def test_already_facing_counter_keeps_interaction_a(tmp_path: Path):
+    env, pos, posted = _burst_env(tmp_path)
+    pos["facing"] = "up"
+    env._client.post = _press(posted, pos, {})
+    env.execute([GameAction.WALK_UP, GameAction.PRESS_A])
+    assert posted == [["walk_up"], ["press_a", A_SETTLE]]

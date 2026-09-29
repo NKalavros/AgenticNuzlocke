@@ -160,3 +160,20 @@ def test_summary_reports_jev_calls(tmp_path: Path):
     assert jev["unsure_share"] == 0.5
     assert jev["state_bytes_mean"] == 900
     assert jev["by_scene"] == {"overworld": 2}
+
+
+def test_post_battle_cap_gap_is_an_eligibility_notice(tmp_path):
+    events = [
+        {"kind": "observation", "ts": 0, "payload": {"in_battle": False, "badges": []}},
+        {
+            "kind": "rule_violation",
+            "ts": 1,
+            "payload": {"violations": ["BULBASAUR level 16 > cap 14"]},
+        },
+        {"kind": "milestone_complete", "ts": 2, "payload": {"milestone": "brock"}},
+    ]
+    (tmp_path / "events.jsonl").write_text("\n".join(json.dumps(e) for e in events))
+    report = summarize(tmp_path)
+    assert report["rule_alerts"] == 0
+    assert report["eligibility_alerts"] == 1
+    assert report["completed_brock"]

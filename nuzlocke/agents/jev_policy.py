@@ -184,7 +184,9 @@ def _recent_lines(recent: list[dict[str, Any]] | None, keep: int) -> list[str]:
 def battle_facts(obs: PlayerObservation) -> dict[str, Any] | None:
     """The two mons on the field, their HP, and the type matchup from the type chart."""
     enemy = (obs.battle or {}).get("enemy") or {}
-    lead = obs.party[0] if obs.party else {}
+    from nuzlocke.agents.battle import active_mon
+
+    lead = active_mon(obs)
     if not enemy and not lead:
         return None
     facts: dict[str, Any] = {}

@@ -64,7 +64,7 @@ PALLET_TO_OAK = Beat(
 )
 LAB_STARTER = Beat(
     id="get_starter",
-    text="Face a starter ball from the south and confirm it.",
+    text="Choose BULBASAUR. Check the Pokédex species before confirming YES.",
     hint=(
         "The three Poké Balls sit on the table just right of Oak. Stand on the tile directly below "
         "a ball, walk_up once to face it, then press_a. After its Pokédex page, press_a at YES — "
@@ -284,13 +284,13 @@ def is_intro_boot(obs: PlayerObservation) -> bool:
 
 def script(obs: PlayerObservation) -> list[Beat]:
     """Remaining early-game beats, current first. Empty once the script is done."""
-    if is_intro_boot(obs) or obs.in_battle:
+    if is_intro_boot(obs) or obs.in_battle or "Boulder" in obs.badges:
         return []
     name = (obs.map_name or "").casefold()
     party = bool(obs.party)
-    if "2f" in name:
+    if obs.map_id == 38:
         return [BEDROOM, LIVING, PALLET_TO_OAK]
-    if "1f" in name:
+    if obs.map_id == 37:
         return [LIVING, PALLET_TO_OAK, LAB_STARTER]
     if not party:
         if "lab" in name:
@@ -320,6 +320,29 @@ _DELIVER = [
 
 def _parcel_errand(obs: PlayerObservation, name: str) -> list[Beat]:
     """Starter in hand: fetch Oak's Parcel in Viridian, bring it back, then go north."""
+    if obs.map_id in {1, 2}:
+        target_level = obs.policy.get("preparation_target", 12 if obs.map_id == 1 else 14)
+        if any(
+            (m.get("level") or target_level) < target_level and not m.get("dead") for m in obs.party
+        ):
+            return [
+                Beat(
+                    "prepare_center",
+                    "Visit the Pokémon Center to heal and prepare the team.",
+                    "Enter the Center.",
+                    target={"kind": "warp", "dest_map": 41 if obs.map_id == 1 else 58},
+                )
+            ]
+    if obs.map_id in {39, 41, 58, 64, 68}:
+        return [
+            Beat(
+                "leave_interior",
+                "Leave through the exit and resume the journey.",
+                "Walk out the door.",
+                heading="down",
+                target={"kind": "warp", "dest_map": 255},
+            )
+        ]
     if obs.flags.get("has_pokedex"):
         if "lab" in name:
             return [LEAVE_LAB]

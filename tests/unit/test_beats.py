@@ -22,11 +22,11 @@ def _obs(**kwargs) -> PlayerObservation:
 
 
 def test_beats_advance_from_the_bedroom_to_route_1():
-    bedroom = current_beat(_obs(map_name="Red's House 2F"))
+    bedroom = current_beat(_obs(map_name="Red's House 2F", map_id=38))
     assert bedroom is not None
     assert bedroom.id == "leave_bedroom"
 
-    living = current_beat(_obs(map_name="Red's House 1F"))
+    living = current_beat(_obs(map_name="Red's House 1F", map_id=37))
     assert living is not None
     assert living.id == "exit_house"
 
@@ -34,7 +34,7 @@ def test_beats_advance_from_the_bedroom_to_route_1():
     assert shore is not None
     assert "north" in shore["primary"].lower()
     assert "water" in shore["primary"].lower()
-    assert shore["secondary"].startswith("Face a starter")
+    assert shore["secondary"].startswith("Choose BULBASAUR")
 
     lab = current_beat(_obs(map_name="Oak's Lab", party=[]))
     assert lab is not None

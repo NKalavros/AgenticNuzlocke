@@ -83,3 +83,25 @@ def test_the_mart_list_is_the_active_menu_with_prices_on_their_rows():
     screen = parse_screen(MART)
     assert screen.menu_rows[:2] == ["POKé BALL ¥200", "ANTIDOTE ¥100"]
     assert screen.cursor_row == 0
+
+
+def test_hollow_shop_cursor_is_inactive_while_text_prints():
+    rows = [r.replace("▶", "▷") for r in MART]
+    assert parse_screen(rows).menu_rows == []
+
+
+def test_pc_levels_do_not_count_as_selectable_rows():
+    rows = [
+        "┌──────────────┐",
+        "│ BULBASAUR    │",
+        "│ 12           │",
+        "│▶RATTATA      │",
+        "│ 12           │",
+        "│ PIDGEY       │",
+        "│ 12           │",
+        "│ CANCEL       │",
+        "└──────────────┘",
+    ]
+    screen = parse_screen(rows)
+    assert screen.menu_rows == ["BULBASAUR 12", "RATTATA 12", "PIDGEY 12", "CANCEL"]
+    assert screen.cursor_row == 1

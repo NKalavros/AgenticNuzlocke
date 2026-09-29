@@ -87,6 +87,8 @@ def system1_turn(
     last_texts: dict[str, str] | None = None,
     first_encounter: bool = False,
     battle_plan: dict[str, Any] | None = None,
+    navigator: Any = None,
+    route_plan: dict | None = None,
 ) -> S1Turn | None:
     if is_naming_lock(obs.joy_ignore):
         # 0xD730 bit 6 is "instant text": the naming keyboard, but also the Pokédex page before
@@ -132,6 +134,8 @@ def system1_turn(
     if not objective:
         return _look("no objective")
 
+    if navigator is not None:
+        navigator.observe(obs, room)
     goals = build_goals(
         obs,
         room,
@@ -148,10 +152,26 @@ def system1_turn(
         if heading_goal is None or not objective_from_code:
             return _look("objective not on this map")
         mark(heading_goal, goal_text)
+    routed = None
+    if navigator is not None:
+        routed = navigator.select(
+            obs,
+            room,
+            goals,
+            objective_text=goal_text,
+            plan=route_plan,
+            failed=any(fails.get(g.key, 0) for g in goals if g.objective),
+        )
+        if routed is not None:
+            goals = [routed, *[g for g in goals if g.key != routed.key]]
+            if navigator.reason == "Continuing verified route":
+                return S1Turn(
+                    routed.actions, f"route: {routed.label}", "goal", goal=routed, choice=routed.key
+                )
     if any(goal.objective and not goal.actions for goal in goals):
-        # Every known way is shut. Bumping the same wall again teaches nothing.
         return _look("objective path blocked")
     state = {
+        "navigation": navigator.brief if navigator else None,
         "goal": goal_text,
         "where": {"map": obs.map_name, "x": obs.x, "y": obs.y, "facing": obs.facing},
         "recent": journal[-6:],
@@ -170,10 +190,16 @@ def system1_turn(
             why += f"; failed here, runner-up {chosen.key}"
     else:
         streak = low_confidence_streak + 1
-        if streak >= 2:
+        executable_objective = any(
+            g.objective and g.actions and fails.get(g.key, 0) == 0 for g in goals
+        )
+        if streak >= 2 and not (objective_from_code and executable_objective):
             return _look("jev unsure twice")
         chosen, probability, why = None, None, "jev unsure; objective goal"
     wait = next(g for g in goals if g.key == "wait")
+    if routed is not None and objective_from_code and not fails.get(routed.key, 0):
+        chosen = routed
+        why = "follow verified objective route"
     chosen = chosen or next((g for g in goals if g.objective and g.actions), wait)
     if fails.get(chosen.key, 0) >= _GOAL_FAILS_FOR_LOOK:
         return _look("goal keeps failing")
@@ -201,6 +227,33 @@ def _battle_turn(
     battle_plan: dict[str, Any] | None = None,
 ) -> S1Turn | None:
     screen = battle.parse_battle(obs.screen_rows)
+    party_cursor = battle.party_cursor(obs)
+    if party_cursor is not None:
+        desired = str((battle_plan or {}).get("switch_to") or "").upper()
+        eligible = [
+            (i, m)
+            for i, m in enumerate(obs.party)
+            if m.get("hp")
+            and not m.get("dead")
+            and not m.get("ineligible")
+            and i != (obs.active_party_slot or 0)
+        ]
+        eligible.sort(
+            key=lambda pair: (
+                not any(
+                    desired == str(pair[1].get(k, "")).upper()
+                    for k in ("species", "nickname", "capture_id")
+                )
+            )
+        )
+        if eligible:
+            slot, _ = eligible[0]
+            return S1Turn(
+                menu_actions(f"choose_{slot}", party_cursor),
+                f"select legal party slot {slot}",
+                "battle",
+            )
+        return S1Turn([GameAction.PRESS_B], "no eligible replacement; leave party menu", "battle")
     known = move_types if move_types is not None else {}
     if screen.kind == "moves" and screen.cursor is not None and screen.highlighted_type:
         # The TYPE/ box shows only the highlighted move; each one seen is remembered.
@@ -208,7 +261,9 @@ def _battle_turn(
     if screen.kind is None:
         other = parse_screen(obs.screen_rows)
         if other.menu_rows and other.cursor_row is not None:
-            return _battle_menu(other, first_encounter, journal, confidence_floor, jev_decide)
+            return _battle_menu(
+                other, first_encounter, journal, confidence_floor, jev_decide, obs, battle_plan
+            )
         # In battle B only pages: a line that did not move yet is an animation still running.
         if text_box:
             special = _special_page(obs.screen_rows)
@@ -247,6 +302,28 @@ def _battle_turn(
             "battle",
             choice=forced,
         )
+    planned = None
+    if screen.kind == "moves" and (battle_plan or {}).get("opening_moves"):
+        name = battle_plan["opening_moves"][0].upper()
+        planned = next(
+            (
+                f"move_{i}"
+                for i, m in enumerate(screen.options)
+                if m.upper() == name and battle._pp(obs).get(name, 1)
+            ),
+            None,
+        )
+    elif screen.kind == "menu" and (battle_plan or {}).get("switch_to"):
+        lead = battle.active_mon(obs)
+        if lead.get("hp", 0) / (lead.get("max_hp") or 1) < battle_plan.get("switch_below", 0):
+            planned = "pkmn" if "pkmn" in criteria else None
+    if planned in criteria:
+        return S1Turn(
+            battle.actions_for(screen, planned),
+            "execute System 2's conditional plan",
+            "battle",
+            choice=planned,
+        )
     state = {"battle": battle_facts(obs), "constraints": constraints, "recent": journal[-4:]}
     read = _ask(jev_decide, state, questions)
     if accepts(read, confidence_floor) and read is not None and read.action in criteria:
@@ -268,6 +345,8 @@ def _battle_menu(
     journal: list[str],
     confidence_floor: float,
     jev_decide: Decide,
+    obs: PlayerObservation | None = None,
+    plan: dict | None = None,
 ) -> S1Turn:
     """A ▶ menu in battle other than FIGHT/PKMN/ITEM/RUN and the moves: the bag, a YES/NO."""
     rows = [row.upper() for row in screen.menu_rows]
@@ -279,7 +358,50 @@ def _battle_menu(
             "battle",
             choice=f"choose_{index}",
         )
-    if "CANCEL" in rows and not first_encounter:
+    if obs:
+        desired = str((plan or {}).get("switch_to") or "").upper()
+        eligible = [
+            (i, m)
+            for i, m in enumerate(obs.party)
+            if m.get("hp")
+            and not m.get("dead")
+            and not m.get("ineligible")
+            and i != (obs.active_party_slot or 0)
+        ]
+        eligible.sort(
+            key=lambda pair: (
+                not any(
+                    desired == str(pair[1].get(k, "")).upper()
+                    for k in ("species", "nickname", "capture_id")
+                )
+            )
+        )
+        for slot, mon in eligible:
+            index = next(
+                (
+                    i
+                    for i, row in enumerate(rows)
+                    if any(
+                        n and str(n).upper() in row
+                        for n in (mon.get("species"), mon.get("nickname"))
+                    )
+                ),
+                None,
+            )
+            if index is not None:
+                return S1Turn(
+                    menu_actions(f"choose_{index}", screen.cursor_row),
+                    f"switch to party slot {slot}",
+                    "battle",
+                )
+        if "SWITCH" in rows or "SEND OUT" in rows:
+            label = "SWITCH" if "SWITCH" in rows else "SEND OUT"
+            return S1Turn(
+                menu_actions(f"choose_{rows.index(label)}", screen.cursor_row),
+                "confirm switch",
+                "battle",
+            )
+    if "CANCEL" in rows and any("×" in row for row in rows) and not first_encounter:
         # No items in this Nuzlocke: an open bag is closed.
         index = rows.index("CANCEL")
         return S1Turn(menu_actions(f"choose_{index}", screen.cursor_row), "bag: CANCEL", "battle")

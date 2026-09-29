@@ -1,4 +1,4 @@
-"""CLI entrypoint: nuzlocke smoke / run / sandbox."""
+"""CLI entrypoint: nuzlocke smoke / run / sandbox / benchmark."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ load_project_env()
 ensure_relay_routing()
 
 ROM_OPTION = typer.Option(None, "--rom", help="Path to Pokemon Red/Blue .gb ROM")
+BENCHMARK_OUTPUT_OPTION = typer.Option(Path("runs/benchmark.json"))
 PROVIDER_OPTION = typer.Option(None, "--provider", help="cursor | openai_compatible | dual")
 
 
@@ -48,7 +49,9 @@ def run(
     rom: Path | None = ROM_OPTION,
     provider: str | None = PROVIDER_OPTION,
     max_steps: int | None = typer.Option(
-        -1, "--max-steps", help="Stop after N agent steps. Default -1 = run until dashboard STOP."
+        -1,
+        "--max-steps",
+        help="Stop after N agent steps. Default -1 = no step limit; milestone/wipe/STOP still end play.",
     ),
     vision_only: bool | None = typer.Option(
         None,
@@ -59,11 +62,11 @@ def run(
     resume: str | None = typer.Option(
         None,
         "--resume",
-        help="Continue run-id from its savestate (runs/<run-id>/savestates/) "
+        help="Continue run-id from its validated paired checkpoint (checkpoints/current.json) "
         "instead of starting a new game.",
     ),
 ) -> None:
-    """Start an autonomous Nuzlocke segment. Runs until STOP unless --max-steps is set."""
+    """Start a segment; stop on the configured milestone, wipe, dashboard STOP, or step limit."""
     steps = None if max_steps is None or max_steps < 0 else max_steps
     with _exit_on(FileNotFoundError, RuntimeError):
         loop = RunLoop(
@@ -82,7 +85,7 @@ def run(
         models = f"model={(cfg.get('cursor') or {}).get('model')}"
     console.print(f"[cyan]Provider:[/cyan] {cfg.get('provider')} {models}")
     limit = (
-        "none — press STOP on the dashboard when done reviewing"
+        "no step cap — configured milestone, wipe, or dashboard STOP ends play"
         if steps is None
         else f"{steps} agent steps"
     )
@@ -184,6 +187,24 @@ def sandbox(
     report = summarize(run_dir)
     (run_dir / "summary.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     console.print_json(json.dumps(report))
+
+
+@app.command("benchmark")
+def benchmark_command(
+    trials: int = typer.Option(5, min=1, max=20),
+    steps: int = typer.Option(1500, min=1),
+    rom: Path | None = ROM_OPTION,
+    output: Path = BENCHMARK_OUTPUT_OPTION,
+) -> None:
+    """Verify fresh boots through Brock on private servers (real planner calls)."""
+    from nuzlocke.orchestration.sandbox import benchmark
+
+    report = benchmark(trials=trials, steps=steps, rom=rom)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(report, indent=2))
+    console.print_json(json.dumps(report))
+    if not report["passed"]:
+        raise typer.Exit(code=1)
 
 
 @app.callback()

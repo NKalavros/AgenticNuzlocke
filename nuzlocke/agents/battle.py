@@ -18,6 +18,7 @@ is allowed); code moves the cursor and presses A.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -68,7 +69,7 @@ def parse_battle(rows: list[str]) -> BattleScreen:
 
 def menu_questions(obs: PlayerObservation, plan: dict[str, Any] | None = None) -> dict[str, Any]:
     enemy = (obs.battle or {}).get("enemy") or {}
-    lead = obs.party[0] if obs.party else {}
+    lead = active_mon(obs)
     trainer = (obs.battle or {}).get("type") == "trainer"
     criteria = {
         "fight": (
@@ -77,7 +78,14 @@ def menu_questions(obs: PlayerObservation, plan: dict[str, Any] | None = None) -
             f"{enemy.get('hp', '?')}/{enemy.get('max_hp', '?')} HP"
         )
     }
-    others = [mon for mon in obs.party[1:] if mon.get("hp")]
+    others = [
+        mon
+        for i, mon in enumerate(obs.party)
+        if i != (obs.active_party_slot or 0)
+        and mon.get("hp")
+        and not mon.get("dead")
+        and not mon.get("ineligible")
+    ]
     if others:
         names = ", ".join(f"{m.get('species')} {m.get('hp')}/{m.get('max_hp')}" for m in others)
         criteria["pkmn"] = f"switch POKéMON: {names}"
@@ -114,6 +122,8 @@ def move_questions(
     pp = _pp(obs)
     criteria = {}
     for index, move in enumerate(moves):
+        if pp.get(move.upper()) == 0:
+            continue
         facts = [move]
         kind = move_types.get(move)
         if kind:
@@ -122,8 +132,8 @@ def move_questions(
                 facts.append(_verdict(effectiveness(kind.title(), defender), enemy.get("species")))
         else:
             facts.append("type not seen yet")
-        if pp.get(move) is not None:
-            facts.append(f"{pp[move]} PP left" if pp[move] else "OUT OF PP")
+        if pp.get(move.upper()) is not None:
+            facts.append(f"{pp[move.upper()]} PP left" if pp[move.upper()] else "OUT OF PP")
         ranked = (plan or {}).get("moves") or []
         if move.upper() in ranked:
             facts.append(f"System 2's plan: choice {ranked.index(move.upper()) + 1}")
@@ -142,8 +152,23 @@ def move_questions(
 
 def _pp(obs: PlayerObservation) -> dict[str, Any]:
     """PP left per move of the lead POKéMON, from the party RAM the referee already reads."""
-    moves = (obs.party[0].get("moves") if obs.party else None) or []
-    return {str(move.get("name")): move.get("pp") for move in moves if isinstance(move, dict)}
+    moves = active_mon(obs).get("moves") or []
+    return {
+        str(move.get("name")).upper(): move.get("pp") for move in moves if isinstance(move, dict)
+    }
+
+
+def party_cursor(obs: PlayerObservation) -> int | None:
+    """The unframed party list: its solid cursor sits on an HP fraction row."""
+    for index, row in enumerate(obs.screen_rows):
+        if "▶" not in row or not re.search(r"\d+\s*/\s*\d+", row):
+            continue
+        slot = index // 2
+        if slot < len(obs.party) and index:
+            name = str(obs.party[slot].get("nickname") or obs.party[slot].get("species") or "")
+            if name.upper() in obs.screen_rows[index - 1].upper():
+                return slot
+    return None
 
 
 def _verdict(multiplier: float, species: Any) -> str:
@@ -180,6 +205,14 @@ def fallback(screen: BattleScreen, obs: PlayerObservation) -> str:
         return "fight"
     pp = _pp(obs)
     for index, move in enumerate(screen.options):
-        if pp.get(move, 1):
+        if pp.get(move.upper(), 1):
             return f"move_{index}"
     return "move_0"
+
+
+def active_mon(obs: PlayerObservation) -> dict[str, Any]:
+    slot = obs.active_party_slot if obs.active_party_slot is not None else 0
+    mon = dict(obs.party[slot]) if 0 <= slot < len(obs.party) else {}
+    if obs.in_battle and obs.active_mon:
+        mon.update(obs.active_mon)
+    return mon

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import shutil
 import time
@@ -54,7 +55,12 @@ from nuzlocke.knowledge.walkthrough import excerpt_for_context, skill_dir
 from nuzlocke.llm.factory import create_jev, create_provider
 from nuzlocke.memory import OptMem
 from nuzlocke.orchestration.arbiter import ActionArbiter
-from nuzlocke.orchestration.checkpoint import CHECKPOINT_NAME, should_checkpoint, stage_for_boot
+from nuzlocke.orchestration.checkpoint import (
+    CHECKPOINT_NAME,
+    RunCheckpoint,
+    should_checkpoint,
+    stage_for_boot,
+)
 from nuzlocke.orchestration.fallback import (
     bridge_down_proposal,
     is_bridge_down,
@@ -177,7 +183,30 @@ class RunLoop:
         self.run_id = run_id or time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
         self.run_dir = self.root / "runs" / self.run_id
         self.store = EventStore(self.run_dir)
+        rom = configured_rom(rom_path, self.run_cfg)
+        identity = {
+            "rom": hashlib.sha256(rom.read_bytes()).hexdigest() if rom else None,
+            "rules": hashlib.sha256(json.dumps(self.rules, sort_keys=True).encode()).hexdigest(),
+        }
+        self.integrity = RunCheckpoint(self.run_dir, identity)
+        restored = None
         if resume:
+            if headless and (self.run_dir / "sandbox.json").exists():
+                paired = self.run_dir / "sandbox-controller.json"
+                if paired.exists():
+                    record = json.loads(paired.read_text())
+                    if record.get("identity") != identity:
+                        raise RuntimeError("Sandbox source uses a different ROM or rules")
+                    restored = record["controller"]
+                    restored["cycle"] = 0  # --steps is the diagnostic's budget.
+            else:
+                restored = self.integrity.load()
+                from nuzlocke.orchestration.checkpoint import IntegrityError
+
+                if restored.get("integrity_head") != self.store.integrity_head(verify=True):
+                    raise IntegrityError("Checkpoint does not match the latest rule-event history")
+                if restored.get("referee", {}).get("wiped"):
+                    raise IntegrityError("This run ended in a wipe; inspect it with sandbox --from")
             stage_for_boot(self.run_dir)
         self.referee = NuzlockeReferee(self.rules)
         self.vision_only = bool(
@@ -190,6 +219,7 @@ class RunLoop:
         # and the server it started is stopped when the loop ends.
         self.headless = headless
         self.dashboard_url = f"{base_url}/dashboard"
+        self.navigation_url = f"{base_url}/navigation"
         self.env = NousRedEnvironment(
             base_url=base_url,
             run_dir=self.run_dir,
@@ -226,6 +256,9 @@ class RunLoop:
         self.object_trust = ObjectTrust()
         # System 1: the map it has walked, goals that went nowhere, and the log System 2 reads.
         self.room = RoomMap()
+        from nuzlocke.agents.navigation import Navigator
+
+        self.navigator = Navigator()
         self.journal = Journal(self.run_dir / "journal.jsonl")
         self._goal_fails: dict[str, int] = {}
         # The text each goal ended in last time on this map, shown on its option.
@@ -266,7 +299,192 @@ class RunLoop:
                 f"rom={Path(rom).name if rom else 'none'}; "
                 "Red Star: trust screenshot; avoid up/down outdoor hallucination loops"
             )
-        self._write_manifest(rom)
+        self._cycle = 0
+        self._cached_observation = None
+        self._preparing_target = None
+        self._closing_preparation = False
+        self._starter_seen = None
+        self._pending_move = None
+        self._rejected_starters = set()
+        self._previous_party = []
+        self._encounter_search_counts = {}
+        self._grass_visits = {}
+        self._last_search_cycle = None
+        if restored:
+            self._restore_controller(restored)
+        self.env.on_before_action = self.integrity.begin
+        self.env.on_transition = self._ingest
+        self.arbiter.policy = lambda obs: self._policy(obs)
+        if not resume:
+            self._write_manifest(rom)
+
+    def _ingest(self, obs: PlayerObservation) -> None:
+        """Observe irreversible outcomes at every actual emulator advancement."""
+        self.referee.advance(len(obs.badges))
+        if self._pending_move and self.plan:
+            slot, name, old_pp = self._pending_move
+            mon = obs.party[slot] if slot < len(obs.party) else {}
+            current = next(
+                (m.get("pp") for m in mon.get("moves", []) if str(m.get("name")).upper() == name),
+                None,
+            )
+            if current is not None and current < old_pp:
+                opening = self.plan.battle_plan.get("opening_moves", [])
+                if opening and opening[0].upper() == name:
+                    opening.pop(0)
+                self._pending_move = None
+                self.store.append("battle_plan_advanced", {"move": name})
+        if obs.in_battle and obs.active_mon and obs.active_party_slot is not None:
+            slot = obs.active_party_slot
+            if 0 <= slot < len(obs.party) and obs.active_mon.get("species") == obs.party[slot].get(
+                "species"
+            ):
+                obs.party[slot].update(obs.active_mon)
+        if self.ledger.update(obs, step=self._cycle):
+            self._last_ledger_change_step = self._cycle
+            self.store.append("ledger_commit", self.referee.snapshot())
+        self.referee.identify(obs)
+        if self._preparing_target and not obs.in_battle:
+            previous = {m.get("capture_id"): m for m in self._previous_party}
+            for mon in obs.party:
+                old = previous.get(mon.get("capture_id"))
+                if old and mon.get("level", 0) > old.get("level", 0):
+                    self.store.append(
+                        "candy_use",
+                        {
+                            "capture_id": mon["capture_id"],
+                            "before": old["level"],
+                            "after": mon["level"],
+                            "target": self._preparing_target,
+                        },
+                    )
+                    if mon["level"] > self._preparing_target or mon.get("dead"):
+                        raise RuntimeError("candy preparation violated its authorization")
+        self._previous_party = [dict(m) for m in obs.party]
+        preparation = self.run_cfg.get("rare_candy") or {}
+        target = (
+            int(
+                preparation.get(
+                    "brock_level" if obs.map_id in {2, 54, 58} else "first_center_level",
+                    14 if obs.map_id in {2, 54, 58} else 12,
+                )
+            )
+            if preparation.get("enabled")
+            else 0
+        )
+        obs.policy.update(
+            preparation_target=min(target, self.referee.current_cap),
+            first_encounter=self.ledger.first_encounter,
+            duplicate_encounter=self.ledger.duplicate_encounter,
+            avoid_wild_grinding=bool((self.run_cfg.get("rare_candy") or {}).get("enabled")),
+            wiped=self.referee.wiped,
+            preparing=bool(self._preparing_target),
+        )
+        if self.referee.wiped:
+            self.env.terminal = True
+            return
+
+    def _policy(self, obs):
+        from nuzlocke.agents.policy import decision
+
+        self.referee.identify(obs)
+        obs.policy.update(
+            first_encounter=self.ledger.first_encounter,
+            duplicate_encounter=self.ledger.duplicate_encounter,
+            avoid_wild_grinding=bool((self.run_cfg.get("rare_candy") or {}).get("enabled")),
+            preparing=bool(self._preparing_target),
+            wiped=self.referee.wiped,
+        )
+        return decision(obs, first_encounter=self.ledger.first_encounter)
+
+    def _controller_snapshot(self) -> dict:
+        def tiles(data):
+            return {str(k): [[*tile, value] for tile, value in v.items()] for k, v in data.items()}
+
+        return {
+            "integrity_head": self.store.integrity_head(),
+            "referee": self.referee.snapshot(),
+            "ledger": self.ledger.snapshot(),
+            "cycle": self._cycle,
+            "plan": self.plan.model_dump(mode="json") if self.plan else None,
+            "objectives": self.objectives,
+            "move_types": self.move_types,
+            "preparing_target": self._preparing_target,
+            "closing_preparation": self._closing_preparation,
+            "starter_seen": self._starter_seen,
+            "pending_move": self._pending_move,
+            "rejected_starters": list(self._rejected_starters),
+            "previous_party": self._previous_party,
+            "encounter_search_counts": self._encounter_search_counts,
+            "grass_visits": self._grass_visits,
+            "navigation": self.navigator.snapshot(),
+            "room": {
+                "known": tiles(self.room.known),
+                "blocked": tiles(self.room._blocked),
+                "visited": {str(k): list(v) for k, v in self.room.visited.items()},
+                "cycle": self.room.cycle,
+                "edge_blocks": {
+                    str(k): [[*edge, at] for edge, at in v.items()]
+                    for k, v in self.room.edge_blocks.items()
+                },
+            },
+            "grid_trust": self.grid_trust._counts,
+            "object_trust": self.object_trust._counts,
+            "grid_confirmed": self.grid_trust._confirmed,
+            "object_confirmed": self.object_trust._confirmed,
+        }
+
+    def _restore_controller(self, data: dict) -> None:
+        self.referee.restore(data["referee"])
+        self.ledger.restore(data["ledger"])
+        self._cycle = data["cycle"]
+        self.plan = PlanCard.model_validate(data["plan"]) if data.get("plan") else None
+        self.objectives = data["objectives"]
+        self.move_types = data["move_types"]
+        self._preparing_target = data.get("preparing_target")
+        self._closing_preparation = data.get("closing_preparation", False)
+        self._starter_seen = data.get("starter_seen")
+        self._pending_move = data.get("pending_move")
+        self._previous_party = data.get("previous_party", [])
+        self._encounter_search_counts = data.get("encounter_search_counts", {})
+        self._grass_visits = data.get("grass_visits", {})
+        self._rejected_starters = {tuple(t) for t in data.get("rejected_starters", [])}
+
+        def key(k):
+            return int(k) if str(k).isdigit() else k
+
+        room = data["room"]
+        self.room.known = {
+            key(k): {(x, y): v for x, y, v in rows} for k, rows in room["known"].items()
+        }
+        self.room._blocked = {
+            key(k): {(x, y): v for x, y, v in rows} for k, rows in room["blocked"].items()
+        }
+        self.room.visited = {
+            key(k): {tuple(t) for t in rows} for k, rows in room["visited"].items()
+        }
+        self.room.cycle = room["cycle"]
+        self.room.edge_blocks = {
+            key(k): {(x, y, d): at for x, y, d, at in rows}
+            for k, rows in room.get("edge_blocks", {}).items()
+        }
+        self.navigator.restore(data.get("navigation", {}))
+        self.grid_trust._counts = {key(k): v for k, v in data["grid_trust"].items()}
+        self.object_trust._counts = {key(k): v for k, v in data["object_trust"].items()}
+        self.grid_trust._confirmed = {key(k): v for k, v in data.get("grid_confirmed", {}).items()}
+        self.object_trust._confirmed = {
+            key(k): v for k, v in data.get("object_confirmed", {}).items()
+        }
+
+    def _intervention(self, obs, task):
+        from nuzlocke.agents.preparation import preparation_turn
+
+        actions, reason = preparation_turn(self, obs)
+        if actions:
+            return ActionProposal(
+                task_id=task.task_id, agent=task.owner, actions=actions, reason=reason
+            )
+        return None
 
     def _seed_objectives(self) -> dict[str, str]:
         texts: list[str] = []
@@ -316,6 +534,23 @@ class RunLoop:
             return {"id": cursor.get("model"), "params": cursor.get("params")}
         return (self.agents_cfg.get("openai_compatible") or {}).get("model")
 
+    def _publish_navigation(self, obs: PlayerObservation) -> None:
+        from nuzlocke.referee.type_chart import types_for_species
+
+        payload = self.navigator.context(obs, self.room)
+        payload.update(
+            run_id=self.run_id,
+            cycle=self._cycle,
+            in_battle=obs.in_battle,
+            party=[
+                {**m, "types": list(types_for_species(m.get("species", ""))) or m.get("types", [])}
+                for m in obs.party
+            ],
+            badges=obs.badges,
+            updated_at=time.time(),
+        )
+        self.env.publish_navigation(payload)
+
     def _publish_objectives(self) -> None:
         dash = objectives_for_dashboard(self.objectives)
         if dash:
@@ -346,13 +581,14 @@ class RunLoop:
         )
         self._publish_objectives()
         console.print(f"[bold cyan]Watch live:[/bold cyan] {self.dashboard_url}")
+        console.print(f"[bold cyan]Route monitor:[/bold cyan] {self.navigation_url}")
         console.print("[dim]Cursor agents: Agents panel → Filter → Source → SDK[/dim]")
         if not self.headless:
             with contextlib.suppress(Exception):
-                webbrowser.open(self.dashboard_url)
+                webbrowser.open(self.navigation_url)
         self._wait_until_running()
 
-        steps = 0
+        steps = self._cycle
         while max_steps is None or steps < max_steps:
             control = self.env.get_control()
             if control == ControlState.STOPPED:
@@ -363,7 +599,11 @@ class RunLoop:
                 continue
 
             cycle_started = time.time()
+            self._cycle = steps
+            # Even a cached atomic read can be mid-transition; settle before decisions.
             raw_obs = self.env.observe()
+            self._cached_observation = None
+            self._ingest(raw_obs)
             # Prompts and the step picker see the grid only while this map's
             # grid has matched real movement. The event log keeps the raw read.
             obs = self.object_trust.view(self.grid_trust.view(raw_obs))
@@ -376,6 +616,7 @@ class RunLoop:
                 else f"[dim]map={obs.map_name} battle={obs.in_battle}[/dim]"
             )
             self.store.append("observation", raw_obs.model_dump(mode="json"))
+            self._publish_navigation(obs)
             if obs.cutscene or self._cutscene_screen(obs):
                 self.stuck.pause_for_cutscene()
             self.stuck.update_position(obs)
@@ -388,10 +629,15 @@ class RunLoop:
                 self.env.push_event("alert", f"Nuzlocke lost: {self.referee.wiped}")
                 console.print(f"[red]Nuzlocke lost: {self.referee.wiped}. Stopping.[/red]")
                 break
+            if "Boulder" in obs.badges and self.run_cfg.get("stop_after", "brock") == "brock":
+                self.store.append("milestone_complete", {"milestone": "brock", "step": steps})
+                self.integrity.commit(self.env, self._controller_snapshot())
+                break
             violations = self.referee.assert_party_legal(obs)
             if violations:
                 self.env.push_event("alert", "; ".join(violations))
-                self.store.append("rule_violation", {"violations": violations})
+                # Carrying an ineligible Pokémon is legal; using it in a later battle is not.
+                self.store.append("party_ineligible", {"violations": violations})
 
             stuck = self.stuck
             hint = _first_streak(
@@ -471,13 +717,36 @@ class RunLoop:
             if pause:
                 continue
 
+            if self._s1 and self._s1.choice.startswith("move_"):
+                from nuzlocke.agents.battle import active_mon, parse_battle
+
+                screen = parse_battle(obs.screen_rows)
+                index = int(self._s1.choice.removeprefix("move_"))
+                if index < len(screen.options):
+                    name = screen.options[index].upper()
+                    pp = next(
+                        (
+                            m.get("pp")
+                            for m in active_mon(obs).get("moves", [])
+                            if str(m.get("name")).upper() == name
+                        ),
+                        None,
+                    )
+                    if pp is not None:
+                        self._pending_move = (obs.active_party_slot or 0, name, pp)
             self._apply_proposal_meta(proposal)
             announce = f"[{proposal.agent.value}] {proposal.reason} → {[a.value for a in proposal.actions]}"
             self.env.push_event("decision", announce)
             console.print(f"[magenta]next[/magenta] {announce}")
             before_fp = stuck.fingerprint(obs)
+            if self.env.get_control() == ControlState.STOPPED:
+                if self.integrity.pending.exists():
+                    self.integrity.commit(self.env, self._controller_snapshot())
+                break
             result = self.arbiter.apply(proposal)
-            after = self.env.observe()
+            after = result.observation or self.env.observe()
+            self._ingest(after)
+            self._cached_observation = after
             after_fp = stuck.fingerprint(after)
             executed = [a.value for a in result.executed_actions]
             after_box = text_box_open(after.screenshot_path)
@@ -511,6 +780,7 @@ class RunLoop:
                     "where the player walked; it is withheld from now on",
                 )
                 self.store.append("grid_untrusted", {"map": after.map_name, "map_id": after.map_id})
+                self.room.known.pop(after.map_id, None)
             if used_recovery and not is_noop:
                 stuck.discount(2)
             if is_noop:
@@ -582,11 +852,15 @@ class RunLoop:
             self.recent_steps = self.recent_steps[-RECENT_LIMIT:]
             steps += 1
             self._maybe_rollup_memory(steps=steps, in_battle=after.in_battle)
-            self._maybe_checkpoint(steps=steps, in_battle=after.in_battle)
+            self._cycle = steps
+            self.integrity.commit(self.env, self._controller_snapshot())
             remaining = self.prompt_interval_s - (time.time() - cycle_started)
             if remaining > 0:
                 time.sleep(remaining)
-        self._save_continue_point()
+        if self.integrity.pending.exists() and (
+            self._cached_observation is not None or self.referee.wiped
+        ):
+            self.integrity.commit(self.env, self._controller_snapshot())
         self.store.append("run_end", {"run_id": self.run_id, "steps": steps})
         self.close()
 
@@ -635,6 +909,16 @@ class RunLoop:
         context: dict[str, Any],
     ) -> tuple[ActionProposal | None, bool, bool]:
         """Pick this cycle's buttons. Returns proposal, used_recovery, pause."""
+        if getattr(self, "referee", None) is not None:
+            intervention = self._intervention(obs, task)
+            if intervention is not None:
+                return intervention, False, False
+        if obs.in_battle:
+            tier = 0  # Battle menus never receive an overworld disengage.
+        elif getattr(self, "referee", None) is not None:
+            self._objective(obs)
+            if obs.policy.get("encounter_search"):
+                tier = 0  # Intentional grass walking has its own finite search budget.
         if tier in (2, 4):
             # Mechanical, no LLM: the screen looks the same every cycle, so a
             # vision call re-proposes what already failed. Tier 4 also tears
@@ -719,6 +1003,7 @@ class RunLoop:
                 trigger=trigger,
                 journal=self.journal.since_last_look() or None,
                 battle=self._battle_brief(obs) if obs.in_battle else None,
+                navigation=self.navigator.context(obs, self.room) if not obs.in_battle else None,
                 constraints=self._constraints(obs),
                 **context,
             )
@@ -770,6 +1055,14 @@ class RunLoop:
             and s1.trigger in _COOLDOWN_TRIGGERS
             and len(self.journal.lines) - self._last_look < S2_COOLDOWN_CYCLES
         ):
+            # Healing must retain its objective during the planning cooldown.
+            if current_beat(obs) and current_beat(obs).id.startswith("heal"):
+                return ActionProposal(
+                    task_id=task.task_id,
+                    agent=task.owner,
+                    reason="retain healing objective",
+                    actions=[GameAction.WAIT_60],
+                )
             # System 2 looked moments ago. Asking again buys the same answer; explore instead.
             s1 = self._system1(
                 obs, signals, mash_stalled=mash_stalled, jev_decide=jev_decide, explore=True
@@ -840,6 +1133,100 @@ class RunLoop:
     def _objective(self, obs: PlayerObservation) -> tuple[dict[str, Any] | None, str | None, bool]:
         """The target System 1 walks toward: the beat's, else System 2's card, else none."""
         beat = current_beat(obs) if self._beat_locked else None
+        searches = getattr(self, "_encounter_search_counts", {})
+        visits = getattr(self, "_grass_visits", {})
+        area = str(obs.map_id)
+        search_available = searches.get(area, 0) < 100
+        obs.policy["encounter_search"] = False
+        if (
+            beat is not None
+            and not beat.id.startswith(("heal", "box_dead", "prepare"))
+            and obs.flags.get("has_pokedex")
+        ):
+            from nuzlocke.agents.goals import Routes, collision_map
+            from nuzlocke.agents.system3 import has_balls
+
+            if (
+                has_balls(obs)
+                and obs.map_id == 1
+                and "12" not in self.referee.encounter_ledger
+                and searches.get("12", 0) < 100
+            ):
+                return (
+                    {"kind": "edge", "dir": "down"},
+                    "Return to Route 1 for its legal encounter.",
+                    True,
+                )
+            if (
+                has_balls(obs)
+                and obs.map_id in {12, 13, 51}
+                and str(obs.map_id) not in self.referee.encounter_ledger
+                and obs.grass_tiles
+                and search_available
+                and not obs.in_battle
+            ):
+                routes = Routes((obs.x, obs.y), collision_map(obs, self.room) or {})
+                candidates = [
+                    ((t["x"], t["y"]), routes.onto((t["x"], t["y"])))
+                    for t in obs.grass_tiles
+                    if (t["x"], t["y"]) != (obs.x, obs.y)
+                ]
+                candidates = [(tile, path) for tile, path in candidates if path]
+                if candidates:
+                    tile, _ = min(
+                        candidates,
+                        key=lambda pair: (
+                            visits.get(f"{area}:{pair[0][0]}:{pair[0][1]}", 0),
+                            len(pair[1]),
+                        ),
+                    )
+                    if getattr(self, "_last_search_cycle", None) != self._cycle:
+                        searches[area] = searches.get(area, 0) + 1
+                        key = f"{area}:{obs.x}:{obs.y}"
+                        visits[key] = visits.get(key, 0) + 1
+                        self._last_search_cycle = self._cycle
+                        self._encounter_search_counts, self._grass_visits = searches, visits
+                    obs.policy["encounter_search"] = True
+                    return (
+                        {"kind": "tile", "x": tile[0], "y": tile[1]},
+                        "Seek the first eligible encounter in this area's grass.",
+                        True,
+                    )
+        if (
+            beat is not None
+            and not beat.id.startswith(("heal", "box_dead", "prepare"))
+            and obs.flags.get("has_pokedex")
+        ):
+            from nuzlocke.agents.system3 import has_balls
+
+            if (
+                has_balls(obs)
+                and obs.map_id == 12
+                and "12" not in self.referee.encounter_ledger
+                and search_available
+            ):
+                return (
+                    {"kind": "edge", "dir": "down"},
+                    "Search south into Route 1's grass for its first eligible encounter.",
+                    True,
+                )
+        if beat is not None and beat.id == "heal_forest":
+            from nuzlocke.agents.goals import Routes, collision_map
+
+            routes = Routes((obs.x, obs.y), collision_map(obs, self.room) or {})
+            choices = []
+            for warp in obs.warps:
+                destination = warp.get("dest_map")
+                if destination not in {47, 50}:
+                    continue
+                path = routes.onto((warp["x"], warp["y"]))
+                if path is not None:
+                    # Remaining gate/Route 2 walks are a conservative allowance, not a guarantee.
+                    choices.append((len(path) + (32 if destination == 47 else 64), destination))
+            if choices:
+                cost, destination = min(choices)
+                obs.policy["healing_route_steps"] = cost
+                return {"kind": "warp", "dest_map": destination}, beat.text, True
         if beat is not None and beat.target:
             return beat.target, beat.text, True
         card = self.plan
@@ -863,6 +1250,14 @@ class RunLoop:
         explore: bool = False,
     ) -> S1Turn | None:
         target, text, from_code = self._objective(obs)
+        if not obs.party and obs.map_id == 40 and self._rejected_starters:
+            balls = [
+                n
+                for n in obs.npcs
+                if n.get("picture") == 74 and (n["x"], n["y"] + 1) not in self._rejected_starters
+            ]
+            if balls:
+                target = {"kind": "face", "x": balls[0]["x"], "y": balls[0]["y"] + 1, "dir": "up"}
         if explore:
             target, text, from_code = _EXPLORE, "explore until System 2 looks again", True
         return system1_turn(
@@ -887,12 +1282,16 @@ class RunLoop:
             move_types=self.move_types,
             first_encounter=self.ledger.first_encounter,
             battle_plan=self._battle_plan(obs),
+            navigator=self.navigator,
+            route_plan=self.plan.route_plan if self.plan else None,
         )
 
     def _battle_brief(self, obs: PlayerObservation) -> dict[str, Any]:
         """What System 2 plans a battle from: the field, our moves with types, the party."""
         brief = dict(battle_facts(obs) or {})
-        lead = obs.party[0] if obs.party else {}
+        from nuzlocke.agents.battle import active_mon
+
+        lead = active_mon(obs)
         brief["our_moves"] = [
             f"{m.get('name')} ({self.move_types.get(str(m.get('name')).upper(), 'type unknown')},"
             f" {m.get('pp')} PP)"
@@ -909,8 +1308,31 @@ class RunLoop:
         """System 2's plan for this trainer battle; dropped once the battle is over."""
         if self.plan is None:
             return None
-        if not obs.in_battle:
+        from nuzlocke.agents.battle import active_mon
+
+        lead = active_mon(obs)
+        exhausted = sorted(m.get("name", "") for m in lead.get("moves", []) if m.get("pp") == 0)
+        critical = lead.get("hp", 0) / (lead.get("max_hp") or 1) < 0.35
+        context = json.dumps(
+            [
+                obs.map_id,
+                (obs.battle or {}).get("type"),
+                (obs.battle or {}).get("enemy", {}).get("species"),
+                (obs.battle or {}).get("enemy", {}).get("level"),
+                obs.active_party_slot,
+                lead.get("status"),
+                critical,
+                exhausted,
+                [
+                    m.get("capture_id")
+                    for m in obs.party
+                    if not m.get("dead") and not m.get("ineligible")
+                ],
+            ]
+        )
+        if not obs.in_battle or (self.plan.battle_context and self.plan.battle_context != context):
             self.plan.battle_plan = {}
+        self.plan.battle_context = context
         return self.plan.battle_plan or None
 
     def _constraints(self, obs: PlayerObservation) -> list[str]:
@@ -946,8 +1368,13 @@ class RunLoop:
         cycle: int,
     ) -> None:
         """Teach the room map, count goals that went nowhere, and write the journal line."""
-        self.room.record_walks(before, list(result.walks or []))
-        self.room.visit(after)
+        if not before.cutscene and not before.in_battle:
+            self.room.record_walks(before, list(result.walks or []))
+        if not self.grid_trust.trusted(after):
+            self.room.known.pop(after.map_id, None)
+        self.room.visit(self.grid_trust.view(after))
+        self.navigator.observe(after, self.room)
+        self._publish_navigation(after)
         moved = sum(
             1
             for step in result.walks or []
@@ -969,6 +1396,8 @@ class RunLoop:
             repeated = bool(text) and self._goal_texts.get(goal.key) == text
             if repeated or not (moved or text or after.in_battle):
                 self._goal_fails[goal.key] = self._goal_fails.get(goal.key, 0) + 1
+            elif moved:
+                self._goal_fails.pop(goal.key, None)
             if text:
                 self._goal_texts[goal.key] = text
         self.journal.add(
@@ -1061,8 +1490,12 @@ class RunLoop:
     ) -> ActionProposal:
         """Leave the tile toward the beat heading. One step, not a random circle."""
         stuck = self.stuck
+        target, _, _ = self._objective(obs)
+        recovery_heading = (
+            target.get("dir") if target and target.get("kind") == "edge" else self._beat_heading
+        )
         step = next_tile(
-            heading=self._beat_heading, grid=obs.collision_ascii, blocked=set(stuck.blocked_on_tile)
+            heading=recovery_heading, grid=obs.collision_ascii, blocked=set(stuck.blocked_on_tile)
         )
         if step and step.action:
             actions = [step.action]

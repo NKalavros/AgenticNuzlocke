@@ -15,8 +15,8 @@ is remembered, so the room is learned by walking it.
 
 from __future__ import annotations
 
+import heapq
 import re
-from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -30,7 +30,7 @@ _WALK = {name: GameAction(f"walk_{name}") for name in DIRS}
 # A burst stops at a text box, a prompt, a battle, a map change, or a walk that does not move.
 MAX_BURST = 8
 # A bump by a wandering NPC must not become a permanent wall.
-_BLOCK_TTL = 40
+_BLOCK_TTL = 6
 _FAILS_BEFORE_RUNNER_UP = 2
 
 Tile = tuple[int, int]
@@ -43,6 +43,7 @@ _PICTURES = {
     13: "girl",
     32: "scientist",
     38: "clerk",
+    41: "nurse",
     74: "item ball",
     78: "Pokédex",
 }
@@ -79,6 +80,8 @@ class RoomMap:
         self.known: dict[Any, dict[Tile, bool]] = {}
         self._blocked: dict[Any, dict[Tile, int]] = {}
         self.cycle = 0
+        self.edge_blocks: dict[Any, dict[tuple[int, int, str], int]] = {}
+        self.costs: dict[Tile, float] = {}
 
     def visit(self, obs: PlayerObservation) -> None:
         self.cycle += 1
@@ -87,7 +90,10 @@ class RoomMap:
         tile = (obs.x, obs.y)
         self.visited.setdefault(map_key(obs), set()).add(tile)
         self._blocked.get(map_key(obs), {}).pop(tile, None)
-        self.known.setdefault(map_key(obs), {}).update(_grid_tiles(obs))
+        from nuzlocke.environment.screen_text import find_boxes
+
+        if not obs.in_battle and not obs.cutscene and not find_boxes(obs.screen_rows):
+            self.known.setdefault(map_key(obs), {}).update(_grid_tiles(obs))
 
     def record_walks(self, before: PlayerObservation, walks: list[dict[str, Any]]) -> None:
         """Every tile a burst stood on is open; a walk that did not move marks the tile ahead."""
@@ -99,12 +105,20 @@ class RoomMap:
             if None in (x0, y0, x1, y1):
                 continue
             if (x0, y0) != (x1, y1):
+                edge = (x0, y0, str(step.get("action", "")).removeprefix("walk_"))
+                self.edge_blocks.get(key, {}).pop(edge, None)
                 self.visited.setdefault(key, set()).add((x1, y1))
                 continue
             direction = str(step.get("action") or "").removeprefix("walk_")
-            if direction in DIRS:
-                dx, dy = DIRS[direction]
-                self._blocked.setdefault(key, {})[(x0 + dx, y0 + dy)] = self.cycle
+            if direction in DIRS and step.get("blocked", True):
+                self.edge_blocks.setdefault(key, {})[(x0, y0, direction)] = self.cycle
+
+    def blocked_edges(self, obs: PlayerObservation) -> set[tuple[int, int, str]]:
+        return {
+            edge
+            for edge, at in self.edge_blocks.get(map_key(obs), {}).items()
+            if self.cycle - at <= 6
+        }
 
     def blocked(self, obs: PlayerObservation) -> set[Tile]:
         stamps = self._blocked.get(map_key(obs), {})
@@ -126,8 +140,10 @@ class Goal:
     objective: bool = False
     # What an exit leads to, or who a talk goal is for (matched against the objective).
     dest_map: int | None = None
+    raw_dest_map: int | None = None
     picture: int | None = None
     name: str = ""
+    finish: GameAction | None = None
 
     def criterion(self) -> str:
         return "; ".join([self.label, *self.facts])
@@ -139,6 +155,22 @@ def _grid_tiles(obs: PlayerObservation) -> dict[Tile, bool]:
     if parsed is None or obs.x is None or obs.y is None or _boxed_in(*parsed):
         return {}
     rows, (p_row, p_col) = parsed
+    # At an indoor entrance the only '.' can be the adjacent door mat. That is
+    # still a trapped player once non-goal warps are excluded from paths.
+    obstructions = {(w["x"], w["y"]) for w in obs.warps}
+    obstructions |= {(n["x"], n["y"]) for n in obs.npcs if n.get("on_screen", True)}
+    usable = False
+    for dx, dy in DIRS.values():
+        r, c = p_row + dy, p_col + dx
+        if (
+            0 <= r < len(rows)
+            and 0 <= c < len(rows[r])
+            and rows[r][c] in {".", "@"}
+            and (obs.x + dx, obs.y + dy) not in obstructions
+        ):
+            usable = True
+    if not usable:
+        return {}
     return {
         (obs.x + col_index - p_col, obs.y + row_index - p_row): cell in {".", "@"}
         for row_index, row in enumerate(rows)
@@ -183,7 +215,7 @@ def collision_map(obs: PlayerObservation, room: RoomMap) -> dict[Tile, bool] | N
 
 
 class Routes:
-    """The shortest walk from the player to every reachable tile: one BFS per cycle."""
+    """Minimum-cost paths from the player; uniform costs reduce to shortest walks."""
 
     def __init__(
         self,
@@ -192,20 +224,30 @@ class Routes:
         limit: int = 4000,
         seen: set[Tile] | None = None,
         size: tuple[int, int] | None = None,
+        costs: dict[Tile, float] | None = None,
+        blocked_edges: set[tuple[int, int, str]] | None = None,
     ) -> None:
         self.start = start
         self.walkable = walkable
         self.seen = seen or set()
         self.size = size
+        self.blocked_edges = blocked_edges or set()
         self.paths: dict[Tile, list[str]] = {start: []}
-        queue = deque([start])
+        distance = {start: 0.0}
+        queue = [(0.0, start)]
         while queue and len(self.paths) < limit:
-            here = queue.popleft()
+            total, here = heapq.heappop(queue)
+            if total != distance[here]:
+                continue
             for name, (dx, dy) in DIRS.items():
                 tile = (here[0] + dx, here[1] + dy)
-                if tile not in self.paths and walkable.get(tile):
+                if (here[0], here[1], name) in self.blocked_edges or not walkable.get(tile):
+                    continue
+                cost = total + max(1.0, (costs or {}).get(tile, 1.0))
+                if cost < distance.get(tile, float("inf")):
+                    distance[tile] = cost
                     self.paths[tile] = [*self.paths[here], name]
-                    queue.append(tile)
+                    heapq.heappush(queue, (cost, tile))
 
     def onto(self, tile: Tile) -> list[str] | None:
         """Walk onto ``tile``, which may be a door or other tile the map marks shut."""
@@ -215,6 +257,7 @@ class Routes:
             [*self.paths[(tile[0] - dx, tile[1] - dy)], name]
             for name, (dx, dy) in DIRS.items()
             if (tile[0] - dx, tile[1] - dy) in self.paths
+            and (tile[0] - dx, tile[1] - dy, name) not in self.blocked_edges
         ]
         return min(entries, key=len) if entries else None
 
@@ -285,7 +328,10 @@ class Routes:
             return None
         dx, dy = DIRS[direction]
         return (
-            direction if self.walkable.get((self.start[0] + dx, self.start[1] + dy), True) else None
+            direction
+            if self.walkable.get((self.start[0] + dx, self.start[1] + dy), True)
+            and (*self.start, direction) not in self.blocked_edges
+            else None
         )
 
 
@@ -327,23 +373,45 @@ def build_goals(
         collision_map(obs, room) or {start: True},
         seen=room.seen(obs),
         size=size if all(size) else None,
+        costs=room.costs,
+        blocked_edges=room.blocked_edges(obs),
     )
 
     def toward(tile: Tile) -> str | None:
         return routes.step(_straight(tile[0] - start[0], tile[1] - start[1]))
 
     goals: list[Goal] = []
-    # Exits: one per destination, the nearest tile of a two-tile door.
-    by_dest: dict[int, Tile] = {}
+    # Adjacent mats form one door; disconnected doors retain distinct identities.
+    clusters: list[tuple[int, list[Tile]]] = []
     for warp in obs.warps:
         dest, tile = int(warp.get("dest_map", -1)), (int(warp["x"]), int(warp["y"]))
-        if dest not in by_dest or _manhattan(start, tile) < _manhattan(start, by_dest[dest]):
-            by_dest[dest] = tile
-    for dest, tile in sorted(by_dest.items(), key=lambda item: _manhattan(start, item[1])):
-        name = map_name(dest)
-        path = routes.onto(tile)
+        group = next(
+            (
+                tiles
+                for d, tiles in clusters
+                if d == dest and any(_manhattan(t, tile) <= 1 for t in tiles)
+            ),
+            None,
+        )
+        if group is None:
+            clusters.append((dest, [tile]))
+        else:
+            group.append(tile)
+    for dest, tiles in clusters:
+        entries = [(tile, routes.onto(tile)) for tile in tiles]
+        reachable = [(tile, path) for tile, path in entries if path is not None]
+        if reachable:
+            tile, path = min(reachable, key=lambda pair: len(pair[1]))
+        else:
+            tile = min(tiles, key=lambda t: _manhattan(start, t))
+            path = None
+        resolved = obs.return_map if dest == 255 and obs.return_map is not None else dest
+        name = map_name(resolved)
+        anchor = min(tiles)
+        duplicate = sum(d == dest for d, _ in clusters) > 1
+        key = f"exit_{dest}" + (f"_{anchor[0]}_{anchor[1]}" if duplicate else "")
         goal = _goal(
-            f"exit_{dest}",
+            key,
             "exit",
             f"door or stairs to {name}",
             path,
@@ -352,7 +420,7 @@ def build_goals(
             distance=_manhattan(start, tile),
             partial=None if path is not None else routes.closest(tile),
         )
-        goal.dest_map = dest
+        goal.dest_map, goal.raw_dest_map = resolved, dest
         goals.append(goal)
 
     goals.extend(_edge_goal(obs, side, routes) for side in obs.connections)
@@ -474,7 +542,9 @@ def _goal(
     actions = [_WALK[step] for step in walks[:MAX_BURST]]
     if finish is not None and path is not None and len(walks) <= MAX_BURST:
         actions.append(finish)
-    return Goal(key=key, kind=kind, label=label, actions=actions, facts=facts, path=walks)
+    return Goal(
+        key=key, kind=kind, label=label, actions=actions, facts=facts, path=walks, finish=finish
+    )
 
 
 def _exit_step(obs: PlayerObservation, tile: Tile, path: list[str] | None) -> str:
@@ -560,7 +630,15 @@ def _mark_objective(
     kind = objective.get("kind")
     match: Goal | None = None
     if kind == "warp":
-        match = next((g for g in goals if g.dest_map == objective.get("dest_map")), None)
+        match = next(
+            (
+                g
+                for g in goals
+                if g.dest_map == objective.get("dest_map")
+                or g.raw_dest_map == objective.get("dest_map")
+            ),
+            None,
+        )
     elif kind == "edge":
         match = next((g for g in goals if g.key == f"edge_{objective.get('dir')}"), None)
         if match is None and objective.get("dir") in DIRS:
@@ -672,12 +750,14 @@ class ObjectTrust:
 
     A map change after a walk from a tile that is not on or next to a listed
     warp is a strike. After ``strikes`` of them the map's warps, signs, and
-    NPCs are withheld for the rest of the run: they come from the same tables.
+    NPCs are withheld: they come from the same tables. Two corroborating warp
+    transitions restore trust; edge connections, battles, and scripts are excluded.
     """
 
     def __init__(self, strikes: int = 2) -> None:
         self._strikes = max(1, int(strikes))
         self._counts: dict[Any, int] = {}
+        self._confirmed: dict[Any, int] = {}
 
     def trusted(self, obs: PlayerObservation) -> bool:
         return self._counts.get(map_key(obs), 0) < self._strikes
@@ -696,6 +776,23 @@ class ObjectTrust:
         """Score one cycle's map change. True when it just made the map untrusted."""
         if not before.warps or map_key(before) == map_key(after):
             return False
+        # Connections and scripts change maps without using the warp table.
+        if before.cutscene or after.cutscene or before.in_battle or after.in_battle:
+            return False
+        width, height = (before.map_size or {}).get("w"), (before.map_size or {}).get("h")
+        for step in walks or []:
+            if step.get("map_id") == before.map_id:
+                continue
+            side = str(step.get("action", "")).removeprefix("walk_")
+            x, y = step.get("x0"), step.get("y0")
+            boundary = {
+                "up": y == 0,
+                "down": height is not None and y == height - 1,
+                "left": x == 0,
+                "right": width is not None and x == width - 1,
+            }
+            if side in before.connections and boundary.get(side):
+                return False
         last = (before.x, before.y)
         for step in walks or []:
             if step.get("x0") is not None:
@@ -709,8 +806,13 @@ class ObjectTrust:
             return False
         near = any(abs(w["x"] - last[0]) + abs(w["y"] - last[1]) <= 1 for w in before.warps)
         if near:
+            key = map_key(before)
+            self._confirmed[key] = self._confirmed.get(key, 0) + 1
+            if self._confirmed[key] >= 2:
+                self._counts[key] = 0
             return False
         was = self.trusted(before)
         key = map_key(before)
+        self._confirmed[key] = 0
         self._counts[key] = self._counts.get(key, 0) + 1
         return was and not self.trusted(before)

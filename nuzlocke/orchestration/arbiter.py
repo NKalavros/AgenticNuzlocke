@@ -22,6 +22,7 @@ class ActionArbiter:
         self.store = store
         self.active_owner = active_owner
         self.max_actions = max_actions
+        self.policy = None
 
     def set_owner(self, owner: AgentRole) -> None:
         self.active_owner = owner
@@ -44,6 +45,22 @@ class ActionArbiter:
     def apply(self, proposal: ActionProposal) -> ArbiterResult:
         proposal_id = f"proposal-{uuid.uuid4().hex[:8]}"
         rejection = self.validate(proposal)
+        if not rejection and self.policy:
+            obs = self.env.snapshot()
+            policy = self.policy(obs)
+            rejection = policy.validate(proposal.actions)
+            if rejection:
+                self.store.append(
+                    "policy_rejection",
+                    {"reason": rejection, "actions": [a.value for a in proposal.actions]},
+                )
+                legal = policy.legal_sequences
+                actions = legal.get(policy.required) if policy.required else None
+                actions = actions or [GameAction.WAIT_60]
+                proposal = proposal.model_copy(
+                    update={"actions": actions, "reason": f"System 3: {rejection}"}
+                )
+                rejection = policy.validate(actions)
         self.store.append(
             "proposal", {"proposal_id": proposal_id, **proposal.model_dump(mode="json")}
         )
@@ -63,6 +80,7 @@ class ActionArbiter:
                 stopped_early_because=action_result.stopped_early_because,
                 result_state_ref=state_ref,
                 walks=list(action_result.walks),
+                observation=action_result.observation,
             )
         self.store.append("arbiter", result.model_dump(mode="json"))
         return result

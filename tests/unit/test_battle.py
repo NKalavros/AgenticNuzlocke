@@ -87,7 +87,7 @@ def test_options_carry_the_facts():
     moves = battle.move_questions(_obs(MOVES), ("SCRATCH", "GROWL"), {"SCRATCH": "NORMAL"})
     criteria = moves["action"]["criteria"]
     assert "normal damage on Squirtle" in criteria["move_0"]
-    assert "OUT OF PP" in criteria["move_1"]
+    assert "move_1" not in criteria
 
 
 def test_system_1_fights_through_jev_and_learns_move_types():
@@ -200,7 +200,7 @@ def test_a_trainer_battle_asks_system_2_for_a_plan_once():
     system1_turn(obs=_obs(MENU), **args)
     assert "System 2's plan: SCRATCH" in calls[0]["action"]["criteria"]["fight"]
     moves = battle.move_questions(_obs(MOVES), ("SCRATCH", "GROWL"), {}, {"moves": ["GROWL"]})
-    assert "choice 1" in moves["action"]["criteria"]["move_1"]
+    assert "move_1" not in moves["action"]["criteria"]
 
 
 def test_system_3_throws_a_ball_at_the_first_encounter_and_says_no_to_nicknames():
@@ -230,3 +230,13 @@ def test_the_mart_quantity_box_is_set_from_the_money():
 
     turn = _quantity_turn(PlayerObservation(money=3000, screen_rows=["│ ×01   ¥200│"]))
     assert turn.actions == [GameAction.WALK_UP] * 9 + [GameAction.PRESS_A]
+
+
+def test_exhausted_move_menu_requires_return_to_fight():
+    from nuzlocke.agents.policy import decision
+    obs = _obs(MOVES)
+    for move in obs.party[0]['moves']:
+        move['pp'] = 0
+    policy = decision(obs)
+    assert policy.required == 'back'
+    assert policy.legal_sequences['back'] == [GameAction.PRESS_B]

@@ -109,6 +109,7 @@ class ArbiterResult(BaseModel):
     stopped_early_because: str | None = None
     result_state_ref: str | None = None
     rejection_reason: str | None = None
+    observation: PlayerObservation | None = Field(default=None, exclude=True)
     # Overworld walks in this burst, each with the tile before and after it.
     walks: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -122,6 +123,16 @@ class PlanScene(str, Enum):
     OVERWORLD = "overworld"
     BATTLE = "battle"
     MENU = "menu"
+
+
+class BattlePlan(BaseModel):
+    """Conditional trainer strategy, with an opening consumed only on observed PP use."""
+
+    moves: list[str] = Field(default_factory=list)
+    opening_moves: list[str] = Field(default_factory=list)
+    switch_to: str | None = None
+    switch_below: float = Field(default=0.3, ge=0, le=1)
+    notes: str = ""
 
 
 class PlanCard(BaseModel):
@@ -151,6 +162,8 @@ class PlanCard(BaseModel):
     done_when: dict[str, Any] = Field(default_factory=dict)
     # System 2's plan for the current trainer battle: moves in order, and when to switch.
     battle_plan: dict[str, Any] = Field(default_factory=dict)
+    battle_context: str | None = None
+    route_plan: dict[str, Any] = Field(default_factory=dict)
     # The plan's single button was pressed, or its steps ran out.
     spent: bool = False
     created_at: float = 0.0
@@ -218,6 +231,16 @@ class PlayerObservation(BaseModel):
     flags: dict[str, Any] = Field(default_factory=dict)
     frame_count: int | None = None
     raw_player: dict[str, Any] = Field(default_factory=dict)
+    active_party_slot: int | None = None
+    active_mon: dict[str, Any] = Field(default_factory=dict)
+    return_map: int | None = None
+    battle_result: int | None = None
+    battle_lost: bool = False
+    battle_style: str | None = None
+    menu_index: int | None = None
+    menu_scroll: int = 0
+    grass_tiles: list[dict[str, int]] = Field(default_factory=list)
+    policy: dict[str, Any] = Field(default_factory=dict)
 
 
 class LLMResponse(BaseModel):
