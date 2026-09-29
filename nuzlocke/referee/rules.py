@@ -26,6 +26,8 @@ class NuzlockeReferee:
         self.rules = rules
         self.encounter_ledger: dict[str, dict[str, Any]] = {}
         self.death_ledger: list[dict[str, Any]] = []
+        # Why the run is lost (every POKéMON fainted), or None. A Nuzlocke ends there.
+        self.wiped: str | None = None
         self._caps = rules.get("level_caps") or {}
         self.current_milestone = MILESTONE_ORDER[0]
         self.current_cap = int(self._caps.get(self.current_milestone, 100))
@@ -43,7 +45,7 @@ class NuzlockeReferee:
             level = mon.get("level")
             if level is not None and int(level) > self.current_cap:
                 violations.append(f"{name} level {level} > cap {self.current_cap}")
-            if (mon.get("status") or "").lower() in FAINT_STATUSES:
+            if is_fainted(mon):
                 violations.append(f"{name} is fainted/dead")
         return violations
 
@@ -54,6 +56,12 @@ class NuzlockeReferee:
                 {"species": mon.get("species"), "nickname": nickname, **context}
             )
 
+    def note_wipe(self, reason: str, party: list[dict[str, Any]], context: dict[str, Any]) -> None:
+        """Every POKéMON fainted. Each is dead, and the run is over."""
+        for mon in party:
+            self.note_faint(mon, context)
+        self.wiped = self.wiped or reason
+
     def freeze_encounter(self, area: str, species: str, outcome: str) -> None:
         self.encounter_ledger.setdefault(area, {"species": species, "outcome": outcome})
 
@@ -61,3 +69,10 @@ class NuzlockeReferee:
         """Update a previously-frozen encounter's outcome (caught/fainted/fled)."""
         if area in self.encounter_ledger:
             self.encounter_ledger[area]["outcome"] = outcome
+
+
+def is_fainted(mon: dict[str, Any]) -> bool:
+    """HP 0. pokemon-agent reports a fainted POKéMON's status as "OK", never "FNT"."""
+    if (mon.get("status") or "").lower() in FAINT_STATUSES:
+        return True
+    return mon.get("hp") == 0 and bool(mon.get("max_hp"))

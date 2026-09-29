@@ -146,6 +146,11 @@ class PlanCard(BaseModel):
     # A map tile stays right while the player walks; a cell does not.
     target_cell: str | None = None
     target: dict[str, Any] | None = None
+    # What System 1's goal menu marks as the objective (``agents.goals``), and when it is done.
+    goal_target: dict[str, Any] | None = None
+    done_when: dict[str, Any] = Field(default_factory=dict)
+    # System 2's plan for the current trainer battle: moves in order, and when to switch.
+    battle_plan: dict[str, Any] = Field(default_factory=dict)
     # The plan's single button was pressed, or its steps ran out.
     spent: bool = False
     created_at: float = 0.0
@@ -200,6 +205,17 @@ class PlayerObservation(BaseModel):
     warps: list[dict[str, Any]] = Field(default_factory=list)
     signs: list[dict[str, Any]] = Field(default_factory=list)
     npcs: list[dict[str, Any]] = Field(default_factory=list)
+    # The 18 tilemap rows as text (``environment.screen_text`` parses them). Letters also appear
+    # outside boxes, so they count only when the pixel check sees a text box or menu.
+    screen_rows: list[str] = Field(default_factory=list)
+    # Map size in tiles and the sides that join another map (Pallet -> Route 1 is "up").
+    map_size: dict[str, int] | None = None
+    connections: list[str] = Field(default_factory=list)
+    # The game is ignoring the D-pad (wJoyIgnore high nibble) or walking the player by script
+    # (wStatusFlags5 bit 7). Measured through Oak's escort on Red Star; see AGENTS pitfall #22.
+    cutscene: bool = False
+    # pokemon-agent's story flags from /state (``has_pokedex``, ...).
+    flags: dict[str, Any] = Field(default_factory=dict)
     frame_count: int | None = None
     raw_player: dict[str, Any] = Field(default_factory=dict)
 

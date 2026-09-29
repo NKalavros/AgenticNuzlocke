@@ -241,13 +241,6 @@ def test_a_planned_path_is_one_burst_without_a_look():
     assert replan_reason(turn.plan, _obs(), _signals(), now=NOW, plan_every_s=45) == "plan spent"
 
 
-def test_a_path_step_already_blocked_here_is_not_pressed():
-    plan = _plan(steps=[GameAction.WALK_UP, GameAction.PRESS_A], plan="walk_right")
-    turn = _turn(plan, _signals(), blocked_on_tile=["walk_up"])
-    assert turn.actions == [GameAction.WALK_RIGHT]
-    assert turn.plan.steps == []
-
-
 def test_a_text_box_under_a_walking_path_is_paged_not_walked():
     plan = _plan(steps=[GameAction.WALK_UP, GameAction.WALK_UP])
     turn = _turn(plan, _signals(text_box=True))

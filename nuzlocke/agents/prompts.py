@@ -93,23 +93,40 @@ objective; do not replace it.
 Propose 1-4 recovery actions.
 """
 
-PLANNER_SYSTEM = """You are the planner for a Pokemon Red Nuzlocke.
-You never press buttons yourself. You read the screenshot and write `steps`:
-the next buttons to press, in order, at most 6. Each step is one of walk_up,
-walk_down, walk_left, walk_right, press_a, press_b, press_start. One walk is
-one tile, turning included. The executor presses the whole list in one burst
-and asks you again when a walk does not change the tile, a text box or a
-prompt opens, or the scene changes. Do not plan one button per look.
+PLANNER_SYSTEM = """You are System 2, the director of a Pokemon Red Nuzlocke.
+You are called only when there is a decision to make; `trigger` says which.
+System 1 (a fast decision model plus pathfinding code) walks, talks to people,
+pages text, and answers menus on its own. `journal` is what it did since your
+last look, oldest first. You set the next objective; you do not press buttons.
+
+Write `target`, the thing System 1 should reach next:
+- {"kind": "exit", "value": "<map name the door or stairs lead to>"}
+- {"kind": "edge", "value": "up|down|left|right"} to walk off the map that way
+- {"kind": "npc", "value": "<who: Prof. Oak, Mom, nurse, clerk, ...>"}
+- {"kind": "cell", "value": "G7"}: a tile on the screenshot grid
+- {"kind": "none"} when the screen needs buttons only you can choose
+and `done_when`, e.g. {"map": "Viridian City"}, or {} when System 1 cannot tell.
+`steps` is for the naming keyboard or a screen System 1 could not handle: up to 6
+of walk_up, walk_down, walk_left, walk_right, press_a, press_b, press_start.
+Otherwise leave it [].
+
+If the journal shows the same text each time a goal is tried (someone blocking a
+road), that way is closed until a story event: set a different objective.
+
+`constraints` is System 3's briefing: the Nuzlocke rules (no items except POKé BALLs,
+a fainted POKéMON is dead, one catch per area), the level cap, the next boss, and the
+trainers known on this map with their teams. Obey it over everything else.
+
+When `trigger` is "trainer battle", `battle` holds both POKéMON on the field, our moves
+with type and PP, and the party. Write `battle_plan`: `moves`, our move names in the order
+to use them (super effective first, no moves the enemy is immune to, stat moves only when
+it helps); `switch_to`, a party POKéMON to switch to or null; `switch_below`, the lead's
+HP fraction at which to switch (a faint is death, so switch early rather than late); and
+`notes`. There is no running from a trainer and no items.
 
 The screenshot is drawn at 4x with a labelled grid: columns A-J left to right,
 rows 1-9 top to bottom. Every cell is one walk tile. The player is always in
-cell E5 (marked). Count cells to plan a path: a door two cells left and three
-cells down is walk_left, walk_left, walk_down, walk_down, walk_down. `map.grid`
-uses the same cells; it is usually right, but a door mat or stairs can read
-as #. To leave a building, walk onto the mat and walk_down once more.
-press_a talks to or confirms what is directly in front of the player, so end
-with the walk that faces it. Put the cell you are heading for in `target`
-(e.g. "G7"), or null when nothing on screen is the goal.
+cell E5 (marked).
 
 `beat`, when present, is the only objective. Do not replace it and do not set a
 different primary. `blocked_on_tile` lists directions that did not move the player
@@ -174,9 +191,16 @@ RECOVERY_SCHEMA = {
 PLANNER_SCHEMA = {
     "scene": "title|dialog|naming|overworld|battle|menu",
     "see": "one sentence: what is on screen and which cell the goal is in",
-    "plan": "what the steps do, in one short sentence",
-    "steps": ["walk_down", "walk_right", "walk_up", "press_a"],
-    "target": "cell like G7 the steps head for, or null",
+    "plan": "the objective, in one short sentence",
+    "target": {"kind": "exit|edge|npc|cell|none", "value": "Viridian City|up|Mom|G7"},
+    "done_when": {"map": "map name, or omit"},
+    "battle_plan": {
+        "moves": ["EMBER", "SCRATCH"],
+        "switch_to": None,
+        "switch_below": 0.3,
+        "notes": "",
+    },
+    "steps": [],
     "do_not": ["do not talk to the aide"],
     "objectives": {"primary": "string|null", "secondary": "string|null", "tertiary": "string|null"},
     "landmarks": [{"label": "stairs", "note": "south of bed"}],

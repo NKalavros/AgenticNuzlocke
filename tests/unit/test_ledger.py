@@ -6,6 +6,7 @@ RULES = {"level_caps": {"brock": 14}}
 
 
 def _obs(**kw):
+    kw.setdefault("bag", [{"item": "Poke Ball", "quantity": 5}])
     return PlayerObservation(**kw)
 
 
@@ -104,3 +105,16 @@ def test_faint_transition_notes_death_once():
     tracker.update(fainted, step=2)
     assert len(referee.death_ledger) == 1
     assert referee.death_ledger[0]["nickname"] == "SHELLY"
+
+
+def test_an_encounter_before_poke_balls_does_not_count():
+    referee = NuzlockeReferee(RULES)
+    tracker = LedgerTracker(referee)
+    wild = {"in_battle": True, "type": "wild", "enemy": {"species": "Rattata"}}
+    tracker.update(_obs(map_name="Route 1", in_battle=False, party=[], bag=[]), step=0)
+    tracker.update(_obs(map_name="Route 1", in_battle=True, battle=wild, party=[], bag=[]), step=1)
+    assert "Route 1" not in referee.encounter_ledger
+    assert tracker.first_encounter is False
+    tracker.update(_obs(map_name="Route 1", in_battle=False, party=[]), step=2)
+    tracker.update(_obs(map_name="Route 1", in_battle=True, battle=wild, party=[]), step=3)
+    assert tracker.first_encounter is True

@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
+from nuzlocke.agents.goals import RoomMap
 from nuzlocke.agents.roles import make_task, propose_plan
 from nuzlocke.llm.base import LLMProvider
+from nuzlocke.orchestration.journal import Journal
 from nuzlocke.orchestration.loop import RunLoop
 from nuzlocke.state.models import (
     ActionProposal,
@@ -178,6 +182,17 @@ def _fast_loop(plan: PlanCard | None, *, recent: list[dict]) -> RunLoop:
         vision_frame=lambda obs: obs, push_event=lambda *args, **kwargs: None
     )
     loop.store = SimpleNamespace(append=lambda *args, **kwargs: None)
+    loop.room = RoomMap()
+    loop.journal = Journal(Path(tempfile.mkdtemp()) / "journal.jsonl")
+    loop._goal_fails = {}
+    loop._goal_texts = {}
+    loop._s1 = None
+    loop._last_look = -99
+    loop._last_direction = None
+    loop.move_types = {}
+    loop.ledger = SimpleNamespace(first_encounter=False)
+    loop._beat_locked = False
+    loop.referee = SimpleNamespace(current_cap=None, death_ledger=[])
     return loop
 
 
@@ -243,10 +258,7 @@ def test_a_forced_look_names_its_reason():
     clear = FrameSignals("w", "d", False, False, False, False)
     boxed = FrameSignals("w", "d", False, False, True, False)
     assert loop._forced_look(clear, mash_stalled=False) is False
-    loop.stuck.immobile_streak = 1
-    assert loop._forced_look(clear, mash_stalled=False) == "a walk did not move"
     assert loop._forced_look(boxed, mash_stalled=True) == "skip_dialog left the box unchanged"
-    loop.stuck.immobile_streak = 0
     loop.stuck.press_counts = {"press_b": 8}
     assert loop._forced_look(boxed, mash_stalled=False) == "long text on one tile"
 
@@ -340,3 +352,30 @@ def test_recovery_advice_becomes_the_plan(monkeypatch):
     assert loop.plan is not None
     assert loop.plan.plan == "leave the lab north"
     assert loop._low_confidence_streak == 0
+
+
+def test_a_goal_that_ends_in_the_same_text_again_counts_as_failed():
+    from nuzlocke.agents.goals import Goal
+    from nuzlocke.agents.system1 import S1Turn
+
+    loop = _fast_loop(None, recent=[])
+    goal = Goal(key="edge_up", kind="edge", label="north edge", actions=[GameAction.WALK_UP])
+    before = PlayerObservation(map_name="Viridian City", map_id=1, x=19, y=10)
+    after = before.model_copy(
+        update={
+            "y": 9,
+            "screen_rows": [" " * 20] * 12
+            + ["┌" + "─" * 18 + "┐", "│" + " " * 18 + "│", "│You can't go".ljust(19) + "│"]
+            + ["│" + " " * 18 + "│"] * 2
+            + ["└" + "─" * 18 + "┘"],
+        }
+    )
+    walk = SimpleNamespace(
+        walks=[{"action": "walk_up", "x0": 19, "y0": 10, "x1": 19, "y1": 9, "map_id": 1}],
+        stopped_early_because="text_box",
+    )
+    for _ in range(2):
+        loop._s1 = S1Turn([GameAction.WALK_UP], "jev", "goal", goal=goal, choice="edge_up")
+        loop._after_system1(before, after, walk, ["walk_up"], True, 1)
+    assert loop._goal_fails == {"edge_up": 1}
+    assert loop._goal_texts["edge_up"]

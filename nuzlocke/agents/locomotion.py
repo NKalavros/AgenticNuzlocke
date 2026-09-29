@@ -22,7 +22,6 @@ _LATERAL = {
 }
 _OPPOSITE = {"up": "down", "down": "up", "left": "right", "right": "left"}
 _ACTION = {name: GameAction(f"walk_{name}") for name in _DELTA}
-_RUN_CAP = 5
 
 
 class TileStep(NamedTuple):
@@ -77,24 +76,6 @@ def tile_at(text: str | None, d_col: int, d_row: int) -> str | None:
 
 def _closed(name: str, blocked: set[str]) -> bool:
     return f"walk_{name}" in blocked
-
-
-def heading_run(heading: str | None, grid: str | None, blocked: set[str]) -> GameAction | None:
-    """Open tiles in ``heading`` as one walk, at most five.
-
-    A door mat reads ``#`` and is not included: the planner names that step.
-    """
-    if heading not in _ACTION or _closed(heading, blocked) or not grid:
-        return None
-    d_row, d_col = _DELTA[heading]
-    length = 0
-    for step in range(1, _RUN_CAP + 1):
-        if tile_at(grid, d_col * step, d_row * step) != ".":
-            break
-        length = step
-    if length == 0:
-        return None
-    return _ACTION[heading] if length == 1 else GameAction(f"walk_{heading}_{length}")
 
 
 def next_tile(*, heading: str | None, grid: str | None, blocked: set[str]) -> TileStep | None:

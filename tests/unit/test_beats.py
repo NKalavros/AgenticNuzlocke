@@ -48,7 +48,7 @@ def test_beats_advance_from_the_bedroom_to_route_1():
     assert north is not None
     assert north.id == "leave_pallet"
 
-    assert current_beat(_obs(map_name="Route 1", party=[{"name": "BULBASAUR"}])) is None
+    assert current_beat(_obs(map_name="Pewter City", party=[{"name": "BULBASAUR"}])) is None
     assert objective_window(_obs(map_name="Pallet Town", x=0, y=0, party=[])) is None
 
 
@@ -86,6 +86,16 @@ def test_sync_beats_replaces_planner_objectives_and_drops_a_stale_plan():
     )
     assert "water" in loop.objectives["primary"].lower()
 
-    loop._sync_beats(_obs(map_name="Route 1", party=[{"name": "BULBASAUR"}]), controllable=True)
+    loop._sync_beats(_obs(map_name="Pewter City", party=[{"name": "BULBASAUR"}]), controllable=True)
     assert loop._beat_locked is False
     assert loop.objectives == {"primary": "milestone tail"}
+
+
+def test_the_parcel_errand_comes_before_the_north_road():
+    mon = [{"name": "BULBASAUR"}]
+    parcel = [{"item": "Oak's Parcel"}]
+    assert current_beat(_obs(map_name="Viridian City", party=mon)).id == "get_parcel"
+    assert current_beat(_obs(map_name="Viridian City", party=mon, bag=parcel)).id == "parcel_south"
+    assert current_beat(_obs(map_name="Oak's Lab", party=mon, bag=parcel)).id == "deliver_parcel"
+    dex = _obs(map_name="Viridian City", map_id=1, party=mon, flags={"has_pokedex": True})
+    assert current_beat(dex).id == "to_route_2"

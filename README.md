@@ -14,14 +14,14 @@ Emulation, REST API, and the live **Field Log** dashboard come from [NousResearc
 Working:
 
 - Pokemon Red/Blue-style `.gb` via `pokemon-agent` + dashboard at `http://127.0.0.1:8765/dashboard`
-- Configurable LLM backends (`dual` default: Cursor vision planner + Jev button choices; `cursor` single model; `openai_compatible` stub for local models later)
+- Three systems (`dual` default): **System 1** is [Jev](https://docs.typesafe.ai/concepts/system-one.md) plus code. Every cycle it chooses a goal (a door, a map edge, a person, explore) or a menu row, and code walks the A* path or moves the cursor. **System 2** is a Cursor vision director that is called only on a decision (no objective, objective done or unreachable, Jev unsure, a goal that keeps failing); it reads System 1's journal and sets the next objective. **System 3**, the Nuzlocke controller (`nuzlocke/agents/system3.py`), is deterministic: no items except Poké Balls; it buys balls in Viridian after the Pokédex, catches the first wild encounter in each area, runs from wild battles below 25% HP, heals at a Pokémon Center (or Mom) below 50% or when poisoned, briefs System 1 and 2 with the rules, the level cap, the next boss, and known trainers (`nuzlocke/knowledge/trainers_red.yaml`), and ends the run on a wipe. System 2 also writes a plan for every trainer battle. `cursor` (one vision model per cycle) and an `openai_compatible` stub remain
 - Vision turns: planner / Overworld / Battle / Recovery attach the current frame as pokemon-agent's **4× grid overlay** (640×576, labelled A1..J9 walk cells, player boxed at E5); pixel checks use the native 160×144 frame
 - **No RAM-based readiness gating:** `joy_ignore`/`dialog_active` can be wrong on ROM hacks like Red Star, so nothing about *when to prompt* depends on them. The emulator is **not** real time — pokemon-agent only advances frames inside `/action` — so text is given time to print with wait frames sent in the action, not by sleeping. An open text box with no prompt is mashed with `skip_dialog` (B taps until the box closes or settles; never A) without another planner call; a YES/NO or name list above it always gets a planner look first, because B there answers NO.
 - **Short-term `recent`** (last ~8 actions/outcomes) in each prompt; **OptMem** for long-term landmarks/rollups only
 - **Walkthrough skill** (`.cursor/skills/pokemon-red-walkthrough/`) — excerpt injected when stuck; copied into agent workspace
 - **Vision-only is how we actually run this** (default **on**; `--with-ram` still exists in code but isn't part of the supported path — RAM state on ROM hacks like Red Star can be wrong, so nothing here should depend on it): prompts get screenshot + memory (+ walkthrough when stuck), no RAM JSON
 - One `walk_*` press is one tile from any facing (a press into a wall only turns the player)
-- Dual mode: the planner returns a short `steps` path (≤6 buttons), pressed as one overworld burst; the burst stops if a walk does not change the tile or a text box opens
+- System 1 reads RAM that describes what is drawn or placed: the tilemap text inside ┌─┐ frames (dialog and menus), and the warp, sign, sprite, size, and edge tables (`GET /map/objects`, served by `nuzlocke/environment/pa_serve.py`). It never gates input on RAM dialog flags
 - Walk grid withheld on a map once real walks contradict it (`GridTrust`)
 - Overworld: short bursts with optional multi-tile `walk_*_N` macros (max 12 logical); Battle: up to 4
 - Agent-owned objectives + landmark notes; OptMem text rollup every 25 steps
@@ -94,7 +94,7 @@ No RAM-based readiness polling: each cycle is **observe (screenshot) → decide 
 
 The emulator does **not** run between cycles. pokemon-agent runs PyBoy headless and only advances frames inside `/action` (`press_*` and `walk_*` are 20 frames, `wait_N` is N). The old 0.5s wait let nothing happen in the game, and a bare B press left the next line half-printed — the planner read "of POKEMON LEAGUE are rea". Text boxes are now paged with the button plus `wait_60`, so each press moves one whole box, and the wait between cycles only paces the run for a human watching.
 
-A menu box above an open text box — the starter's YES/NO, the NEW NAME / RED / ASH / JACK list — is detected from its double-line border (`screen.prompt_box_open`). Paging stops there by itself (checked on the emulator: a press or a held B stops at the prompt), but the next B answers NO and turns the starter down. So a prompt always gets a planner look before anything is pressed, and the unsure fallback there is A.
+A ▶ menu — NEW GAME, the NAME lists, the starter's YES/NO, START — is read from the decoded tilemap text, and Jev picks the row; code moves the highlight and presses A. Paging stops at a prompt by itself (checked on the emulator: a press or a held B stops at the prompt), but the next B answers NO and turns the starter down, so an unsure answer at a YES/NO goes to System 2 instead of being guessed.
 
 | Source | Default |
 |--------|---------|
@@ -200,7 +200,7 @@ Artifacts under `runs/<run-id>/`:
 
 ## LLM configuration (`config/agents.yaml`)
 
-Default is `dual`: a Cursor vision model reads the grid screenshot and returns `steps`, a path of up to 6 buttons (System 2). That path is pressed in one burst. The planner looks again when the burst finishes, when a walk does not change the tile (after any scripted scene has been waited out), when a prompt opens, when a text box closes, when the scene changes, when Jev says the plan is stale, on two low-confidence answers, and at least every `plan_every_s` (default 45). When a plan names no steps, a trusted walk grid turns the beat's heading into one run of the open tiles that way (up to five), with one sidestep when it is blocked (System 1). A sidestep is not held, so a plan of `walk_left` cannot walk the width of the map. An untrusted grid does not invent the run. [Jev](https://docs.typesafe.ai/concepts/system-one.md) is asked only when neither steps nor a single named button decide the press. Jev is text-only. Its state is cut to the scene, and each button option carries its own facts: whether the tile is open, which target (the planner's cell, a door from the warp table, an NPC) it is the first A* step toward, and whether it already failed on this tile. Every call is logged as a `jev_call` event (see AGENTS.md → Jev input). The early-game beat script owns the objective. An open text box without a prompt is `skip_dialog`. Stuck tiers 2 and 4 stay mechanical and drop the plan.
+Default is `dual`. **System 1** runs every cycle with no vision call: Jev picks one goal from a menu built in `nuzlocke/agents/goals.py` (`exit_N`, `edge_<dir>`, `talk_N`, `explore`, `heading_<dir>`, `wait`), each option carrying its facts (path length, CURRENT OBJECTIVE, went nowhere before), and code presses the A* path as one burst of up to 8 walks. Menus are answered the same way from the decoded screen text, text boxes are paged with `skip_dialog`, the title is START, and a cutscene (the game ignores the D-pad or walks the player, read from `wJoyIgnore` and `wStatusFlags5` bit 7) is waited out. **System 2** (the `planner` model) looks at the grid screenshot only on a trigger: no objective, objective not on this map, objective done, Jev unsure twice, a goal failed three times, an unsure YES/NO, or text that did not page. It reads `runs/<run-id>/journal.jsonl` since its last look and returns an objective (`target`: exit / edge / npc / cell, and `done_when`), not buttons. The early-game beat script owns the objective until Route 1, each beat with a machine target, so the intro needs no System 2 look. In battle Jev picks FIGHT / PKMN / ITEM / RUN and then the move, from options that carry HP, type matchup, and PP (`nuzlocke/agents/battle.py`). Before any decision the adapter runs frames until there is one to make (`settle()`): a step, a cutscene, or a battle animation is never decided on. The beat script owns the objective from the bedroom through Oak's Parcel and Viridian Forest to Brock. Paths use every screen seen on the map, and exploration heads for the edge of the known map. After a System 2 look, overworld triggers wait 8 cycles. pokemon-agent's enemy data, type ids, and map names are wrong in places; see AGENTS.md pitfalls #26–#28. A goal that ends in the same text twice (someone blocking a road) counts as failed. Only the naming keyboard still uses the older planner-card path. Stuck tiers 2 and 4 stay mechanical.
 
 ```yaml
 provider: dual
@@ -275,32 +275,31 @@ Note: the OpenAI-compatible path is text-only today (screenshot paths are noted 
 
 ---
 
-## Architecture (MVP loop)
+## Architecture
 
 ```text
 Dashboard START/PAUSE/STOP
         │
         ▼
- observe() — screenshot + RAM; the emulator is frozen until the next /action
+ observe() — screenshot (blank-LCD wait), then RAM: /state, walk grid, /map/objects
         │
         ▼
- RunLoop ──► recent + OptMem wake ──► beat hint every overworld look
-        │     referee.advance(badges) ──► ledger.update (encounter/death)
+ RunLoop ──► referee.advance(badges) ──► ledger.update (encounter/death)
+        │     beat script (early game) ──► objective with a machine target
+        │     stuck tiers 2/4: disengage · tiers 1/3: Recovery vision call
         ▼
- Director (deterministic) → stuck tiers, else the current beat:
-        │     dual: Planner vision call (grid frame) when the plan is stale, a walk
-        │           was immobile, or a new prompt appeared → `steps`, one burst;
-        │           text boxes mashed without a look; Jev when no step decides
-        │     cursor: Overworld / Battle vision call
-        │     Recovery on stuck tiers 1 and 3 (screenshot + nuzlocke facts)
+ System 1 (agents/system1.py, Jev + code, no vision)
+        │     menu row · skip_dialog · START · overworld goal → A* burst
+        │     battle / naming → older planner-card path
+        │     a decision it cannot make → trigger
         ▼
- announce → ActionArbiter → pokemon-agent /action
+ System 2 (vision director) ── only on a trigger: screenshot + journal → objective
         │
         ▼
- recent ring + optional landmark/rollup notes (+ Field Log)
+ ActionArbiter → pokemon-agent /action
         │
         ▼
- periodic continue savestate (outside battle, away from a fresh ledger commit)
+ room map · goal failures · journal line · (periodic) continue savestate
 ```
 
 Important behaviors:

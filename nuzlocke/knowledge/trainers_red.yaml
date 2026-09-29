@@ -1,0 +1,90 @@
+# Trainers and bosses on the way to Misty, from vanilla Pokemon Red (map ids are pokered's,
+# see nuzlocke/environment/maps.py). Red Star is a ROM hack and may change teams: in battle the
+# enemy read from RAM (wEnemyMon) is the truth, and a mismatch is worth correcting here.
+# `avoidable`: whether the path can go around the trainer's line of sight (false = must fight,
+# null = not confirmed). Levels are what the level cap in config/rules_red.yaml is built from.
+
+- map_id: 51
+  map: Viridian Forest
+  trainer: Bug Catcher
+  team: [[Weedle, 6], [Caterpie, 6]]
+  avoidable: null
+- map_id: 51
+  map: Viridian Forest
+  trainer: Bug Catcher
+  team: [[Weedle, 7], [Kakuna, 7], [Weedle, 7]]
+  avoidable: null
+- map_id: 51
+  map: Viridian Forest
+  trainer: Bug Catcher Sammy
+  team: [[Weedle, 9]]
+  avoidable: null
+  note: "Met on Red Star in the forest's west corridor (run 20260929-095253-004c14); his Weedle's POISON STING poisoned the lead."
+
+- map_id: 54
+  map: Pewter Gym
+  trainer: Jr. Trainer (M)
+  team: [[Diglett, 11], [Sandshrew, 11]]
+  avoidable: null
+- map_id: 54
+  map: Pewter Gym
+  trainer: Brock
+  boss: brock
+  team: [[Geodude, 12], [Onix, 14]]
+  avoidable: false
+  note: "Rock/Ground. Water, Grass, Fighting, Ground are strong; Fire, Normal, Flying are weak against them. Onix may use BIDE: the damage it takes over the next two or three turns comes back doubled, so a status move or a switch during it is safer than a big hit."
+
+- map_id: 14
+  map: Route 3
+  trainer: Lass
+  team: [[Pidgey, 9], [Pidgey, 9]]
+  avoidable: false
+- map_id: 14
+  map: Route 3
+  trainer: Bug Catcher
+  team: [[Caterpie, 10], [Weedle, 10], [Caterpie, 10]]
+  avoidable: false
+- map_id: 14
+  map: Route 3
+  trainer: Youngster
+  team: [[Rattata, 11], [Ekans, 11]]
+  avoidable: false
+- map_id: 14
+  map: Route 3
+  trainer: Bug Catcher
+  team: [[Weedle, 9], [Kakuna, 9], [Caterpie, 9], [Metapod, 9]]
+  avoidable: null
+- map_id: 14
+  map: Route 3
+  trainer: Lass
+  team: [[Rattata, 10], [Nidoran M, 10]]
+  avoidable: null
+- map_id: 14
+  map: Route 3
+  trainer: Youngster
+  team: [[Spearow, 14]]
+  avoidable: null
+- map_id: 14
+  map: Route 3
+  trainer: Bug Catcher
+  team: [[Caterpie, 11], [Metapod, 11]]
+  avoidable: null
+- map_id: 14
+  map: Route 3
+  trainer: Lass
+  team: [[Jigglypuff, 14]]
+  avoidable: null
+
+- map_id: 3
+  map: Cerulean City
+  trainer: Rival
+  team: [[Pidgeotto, 18], [Abra, 15], [Rattata, 15], [Squirtle, 17]]
+  avoidable: false
+  note: "His starter is the one strong against yours (Squirtle if you took Charmander)."
+- map_id: 65
+  map: Cerulean Gym
+  trainer: Misty
+  boss: misty
+  team: [[Staryu, 18], [Starmie, 21]]
+  avoidable: false
+  note: "Water/Psychic. Grass and Electric are strong. Starmie is fast and uses BUBBLEBEAM."

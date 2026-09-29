@@ -47,3 +47,39 @@ def test_objects_from_another_map_are_dropped():
     assert _objects_on_map(objects, 40) == {}
     assert _objects_on_map(objects, 0)["warps"] == [{"x": 5, "y": 5}]
     assert _objects_on_map(None, 0) == {}
+
+
+def test_a_map_change_waits_for_the_new_map_to_load(tmp_path):
+    from unittest.mock import MagicMock
+
+    from nuzlocke.environment.nous_red import NousRedEnvironment
+
+    env = NousRedEnvironment(base_url="http://127.0.0.1:1", run_dir=tmp_path, auto_start=False)
+    reads = iter(
+        [
+            {"map": {"map_id": 0}, "player": {"position": {"x": 5, "y": 6}}},
+            # Just through the door: the map id is new, x/y are still Pallet's.
+            {"map": {"map_id": 37}, "player": {"position": {"x": 5, "y": 5}}},
+            {"map": {"map_id": 37}, "player": {"position": {"x": 2, "y": 7}}},
+        ]
+    )
+    posted: list = []
+    env._get = lambda path, **kw: MagicMock(json=lambda: next(reads) if path == "/state" else {})
+    env._post_json = lambda path, payload: posted.append(payload)
+    env.screenshot = lambda path: None
+    env._collision_ascii = lambda: None
+    env._map_objects = lambda: None
+    first = env.observe()
+    assert (first.x, first.y) == (5, 6)
+    second = env.observe()
+    assert (second.map_id, second.x, second.y) == (37, 2, 7)
+    assert posted == [{"actions": ["wait_60"]}]
+
+
+def test_cutscene_flags_as_read_through_oaks_escort():
+    from nuzlocke.environment.nous_red import _cutscene
+
+    assert not _cutscene({"status5": 0, "joy_ignore": 0})
+    assert _cutscene({"status5": 0, "joy_ignore": 0xFC})  # Oak talking: only A/B work
+    assert _cutscene({"status5": 0x80, "joy_ignore": 0xFC})  # Oak walking you to the lab
+    assert not _cutscene(None)

@@ -1,7 +1,8 @@
-"""Legal menus and replan gates for the Jev fast actor.
+"""The fallback fast path: battle, the naming keyboard, and steps System 2 wrote.
 
-Jev picks one key from a menu this module builds. It never invents buttons,
-and it never sees the screenshot — the planner's text card is the perception.
+System 1 (``agents.system1``) handles the overworld, menus, and text. What it
+hands back comes here: page text, press the planner's steps, or ask Jev for one
+button from a fixed menu, with a replan gate for when the card is stale.
 """
 
 from __future__ import annotations
@@ -11,11 +12,8 @@ from dataclasses import dataclass, field
 from itertools import takewhile
 from typing import Any
 
-from nuzlocke.agents.locomotion import heading_run, neighbors_from_ascii, next_tile
-from nuzlocke.agents.targets import Target, build_targets, facing_target
 from nuzlocke.environment.joypad import is_naming_lock
 from nuzlocke.llm.jev import JevAnswers, JevDecisionError
-from nuzlocke.orchestration.stuck import _phrase_affirmed, perpendicular_sidestep
 from nuzlocke.referee.type_chart import matchup_hint, types_for_species
 from nuzlocke.state.models import (
     AgentRole,
@@ -35,8 +33,6 @@ _PAGED_SCENES = (PlanScene.DIALOG.value, PlanScene.TITLE.value, PlanScene.OVERWO
 # The emulator only advances inside /action. A menu confirm is one press; this
 # wait lets the next line finish printing before the following look.
 _PAGE_WAIT = GameAction.WAIT_60
-_TILE_LOOK_CYCLES = 6
-_TILE_LOOK_MIN_S = 8.0
 
 
 @dataclass(frozen=True)
@@ -113,7 +109,6 @@ def replan_reason(
     now: float,
     plan_every_s: float,
     force: bool | str = False,
-    same_tile_streak: int = 0,
 ) -> str | None:
     """Why the planner should look at this frame, or None. A string ``force`` is its reason."""
     if force:
@@ -128,12 +123,6 @@ def replan_reason(
     if scene_changed(plan, obs, signals):
         return "scene changed"
     age = now - plan.created_at
-    if (
-        plan.scene == PlanScene.OVERWORLD
-        and same_tile_streak >= _TILE_LOOK_CYCLES
-        and age >= _TILE_LOOK_MIN_S
-    ):
-        return "same tile"
     if plan_every_s > 0 and age >= plan_every_s:
         return "plan old"
     return None
@@ -161,48 +150,12 @@ def reconcile_plan(plan: PlanCard, obs: PlayerObservation) -> PlanCard:
     return plan
 
 
-def action_menu(
-    scene: str,
-    blocked_on_tile: list[str] | None = None,
-    *,
-    obs: PlayerObservation | None = None,
-    targets: list[Target] | None = None,
-    press_counts: dict[str, int] | None = None,
-    heading: str | None = None,
-) -> dict[str, str]:
-    """Choice criteria keyed by ``GameAction`` value, with this cycle's facts on each option.
-
-    Jev cannot combine a grid, a target list, and a press history across the
-    state, so each overworld option says what pressing it leads to. Only this
-    tile's ``blocked_on_tile`` is removed; a walk that failed elsewhere stays.
-    """
+def action_menu(scene: str, blocked_on_tile: list[str] | None = None) -> dict[str, str]:
+    """Choice criteria keyed by ``GameAction`` value. Walks that failed on this tile are left out."""
     menu = dict(_MENUS.get(scene, _MENUS[PlanScene.OVERWORLD.value]))
-    if scene != PlanScene.OVERWORLD.value:
-        return menu
-    for label in blocked_on_tile or []:
-        menu.pop(label, None)
-    if obs is None:
-        return menu
-    tiles = neighbors_from_ascii(obs.collision_ascii)
-    counts = press_counts or {}
-    for label in list(menu):
-        facts: list[str] = [menu[label]]
-        if label.startswith("walk_"):
-            direction = label.removeprefix("walk_")
-            if direction in tiles:
-                facts.append("open tile" if tiles[direction] else "grid shows a wall there")
-            toward = [t for t in targets or [] if t.first_step == direction]
-            for target in toward[:2]:
-                steps = target.path_len or target.distance
-                facts.append(f"first step toward {target.label} ({steps} tiles)")
-            if heading == direction:
-                facts.append("the story heading")
-        elif label == GameAction.PRESS_A.value and targets is not None:
-            front = facing_target(obs, targets)
-            facts.append(f"talks to the {front.label} in front" if front else "nothing in front")
-        if counts.get(label):
-            facts.append(f"already pressed {counts[label]}x on this tile with no move")
-        menu[label] = "; ".join(facts)
+    if scene == PlanScene.OVERWORLD.value:
+        for label in blocked_on_tile or []:
+            menu.pop(label, None)
     return menu
 
 
@@ -228,7 +181,7 @@ def _recent_lines(recent: list[dict[str, Any]] | None, keep: int) -> list[str]:
     return lines
 
 
-def _battle_facts(obs: PlayerObservation) -> dict[str, Any] | None:
+def battle_facts(obs: PlayerObservation) -> dict[str, Any] | None:
     """The two mons on the field, their HP, and the type matchup from the type chart."""
     enemy = (obs.battle or {}).get("enemy") or {}
     lead = obs.party[0] if obs.party else {}
@@ -247,7 +200,7 @@ def _battle_facts(obs: PlayerObservation) -> dict[str, Any] | None:
             "species": lead.get("species"),
             "level": lead.get("level"),
             "hp": f"{lead.get('hp')}/{lead.get('max_hp')}",
-            "types": list(lead.get("types") or []),
+            "types": list(types_for_species(str(lead.get("species") or ""))),
             "moves": [
                 f"{move.get('name')} (pp {move.get('pp')})"
                 for move in lead.get("moves") or []
@@ -256,7 +209,8 @@ def _battle_facts(obs: PlayerObservation) -> dict[str, Any] | None:
         }
     if enemy and lead:
         facts["our_types_vs_enemy"] = matchup_hint(
-            list(lead.get("types") or []), list(types_for_species(str(enemy.get("species") or "")))
+            list(types_for_species(str(lead.get("species") or ""))),
+            list(types_for_species(str(enemy.get("species") or ""))),
         )
     return facts
 
@@ -270,9 +224,7 @@ def build_jev_state(
     recent: list[dict[str, Any]] | None = None,
     objectives: dict[str, str] | None = None,
     no_progress: dict[str, Any] | None = None,
-    blocked_on_tile: list[str] | None = None,
     beat: str | None = None,
-    targets: list[Target] | None = None,
     **_planner_only: Any,
 ) -> dict[str, Any]:
     """Only what this scene's button choice needs. Memory and bookkeeping stay with the planner."""
@@ -298,19 +250,8 @@ def build_jev_state(
         "goal": goal if overworld else None,
         "recent": _recent_lines(recent, 4 if overworld or battle else 2),
     }
-    if overworld:
-        where: dict[str, Any] = {"map": obs.map_name, "x": obs.x, "y": obs.y}
-        if obs.facing:
-            where["facing"] = obs.facing
-        if (obs.collision_ascii or "").strip():
-            where["grid"] = obs.collision_ascii.strip()
-        optional["where"] = where
-        optional["targets"] = [target.as_state() for target in targets or []]
-        optional["blocked_on_tile"] = list(blocked_on_tile or [])
-        if no_progress and no_progress.get("streak"):
-            optional["no_progress"] = no_progress
     if battle:
-        optional["battle"] = _battle_facts(obs)
+        optional["battle"] = battle_facts(obs)
     state.update({key: value for key, value in optional.items() if value})
     if naming:
         state["hard_signal"] = (
@@ -327,14 +268,7 @@ def build_jev_state(
 
 
 _INSTRUCTIONS = {
-    PlanScene.OVERWORLD.value: (
-        "Pick the button that carries out `plan`. Each option lists what pressing it "
-        "leads to: the grid tile that way, the first step toward each target, and "
-        "presses already spent here. `where.grid` is the walk grid, @ the player, "
-        ". open, # blocked (a door mat or stairs also reads #). Prefer the first step "
-        "toward the planner target or the goal. Avoid an option already pressed here "
-        "with no move."
-    ),
+    PlanScene.OVERWORLD.value: "Pick the button that carries out `plan`.",
     PlanScene.BATTLE.value: (
         "Pick the button that carries out `plan` in this battle. walk_* move the cursor "
         "on FIGHT / PKMN / ITEM / RUN or the move list, press_a confirms the highlight, "
@@ -415,20 +349,14 @@ def choose_fast_action(
     confidence_floor: float,
     low_confidence_streak: int,
     force_replan: bool | str = False,
-    failed_approaches: list[list[str]] | None = None,
-    memory: str | None = None,
     recent: list[dict[str, Any]] | None = None,
     objectives: dict[str, str] | None = None,
-    nuzlocke: dict[str, Any] | None = None,
-    no_progress: dict[str, Any] | None = None,
-    same_tile_streak: int = 0,
     blocked_on_tile: list[str] | None = None,
     beat: str | None = None,
-    heading: str | None = None,
     mash_stalled: bool = False,
-    press_counts: dict[str, int] | None = None,
     jev_decide: Callable[[dict[str, Any], dict[str, Any]], JevAnswers],
     refresh_plan: Callable[[], PlanCard],
+    **_planner_only: Any,
 ) -> FastTurn:
     """One prompt cycle: maybe refresh the plan, then press a path or one button.
 
@@ -484,19 +412,7 @@ def choose_fast_action(
         return finish(GameAction.SKIP_DIALOG, "speech on screen; skip_dialog")
 
     def ask(current_scene: str) -> JevAnswers:
-        targets = (
-            build_targets(obs, plan_target=plan.target)
-            if current_scene == PlanScene.OVERWORLD.value
-            else []
-        )
-        menu = action_menu(
-            current_scene,
-            blocked_on_tile,
-            obs=obs,
-            targets=targets,
-            press_counts=press_counts,
-            heading=heading,
-        )
+        menu = action_menu(current_scene, blocked_on_tile)
         state = build_jev_state(
             plan=plan,
             scene=current_scene,
@@ -504,10 +420,7 @@ def choose_fast_action(
             signals=signals,
             recent=recent,
             objectives=objectives,
-            no_progress=no_progress,
-            blocked_on_tile=blocked_on_tile,
             beat=beat,
-            targets=targets,
         )
         try:
             return jev_decide(state, build_jev_questions(menu, current_scene))
@@ -515,59 +428,6 @@ def choose_fast_action(
             return JevAnswers(
                 action="", confidence=0.0, plan_stale=0.0, objective_done=0.0, model=""
             )
-
-    def overworld_press(current_scene: str) -> FastTurn | None:
-        """The plan's named button or the beat heading, pressed in code, never replaced with B.
-
-        The heading is held as a run of open tiles only when the plan does not
-        name a different walk. A named button or a sidestep is one press, then
-        another look: holding it walks off the map.
-        """
-        if current_scene != PlanScene.OVERWORLD.value:
-            return None
-        grid = obs.collision_ascii
-        named = named_overworld_action(plan.plan)
-        if named == GameAction.PRESS_A:
-            return finish(named, "plan named press_a", spent=True)
-        is_walk = named is not None and named.value.startswith("walk_")
-        if is_walk:
-            direction = named.value.removeprefix("walk_")
-            if named.value not in blocked:
-                if direction != heading:
-                    return finish(named, f"plan {named.value}", spent=True)
-                run = heading_run(heading, grid, blocked)
-                if run is not None:
-                    return finish(run, f"heading {run.value}")
-                # No grid: one tile, and keep holding. A grid that shows the
-                # heading shut falls through to the sidestep.
-                if not (grid or "").strip():
-                    return finish(named, f"plan {named.value}")
-            step = next_tile(heading=direction, grid=grid, blocked=blocked)
-            if step is not None and step.action is not None:
-                return finish(step.action, step.reason, spent=True)
-            if step is not None and step.choices:
-                return finish(step.choices[0], f"{direction} blocked; sidestep", spent=True)
-        if heading:
-            run = heading_run(heading, grid, blocked)
-            if run is not None:
-                return finish(run, f"heading {run.value}")
-            step = next_tile(heading=heading, grid=grid, blocked=blocked)
-            if step is None:
-                return None
-            if step.choices:
-                return finish(step.choices[0], f"{heading} blocked; sidestep", spent=True)
-            # A sidestep is one press. The heading itself is held.
-            return finish(step.action, step.reason, spent=step.action.value != f"walk_{heading}")
-        if named is None:
-            return None
-        if not is_walk:
-            return finish(named, f"plan named {named.value}", spent=True)
-        for alternate in (0, 1):
-            side = perpendicular_sidestep([named.value], alternate=alternate)
-            if side.value not in blocked:
-                reason = f"plan named {named.value}, blocked on this tile; sidestep {side.value}"
-                return finish(side, reason, spent=True)
-        return None
 
     if (
         plan is not None
@@ -577,15 +437,7 @@ def choose_fast_action(
     ):
         # A box that just opened is paged first; the look waits until it closes.
         return mash()
-    why = replan_reason(
-        plan,
-        obs,
-        signals,
-        now=now,
-        plan_every_s=plan_every_s,
-        force=force_replan,
-        same_tile_streak=same_tile_streak,
-    )
+    why = replan_reason(plan, obs, signals, now=now, plan_every_s=plan_every_s, force=force_replan)
     if why is not None:
         pull(why)
     assert plan is not None
@@ -623,14 +475,10 @@ def choose_fast_action(
         return finish(
             named, f"naming grid; {named.value} once", spent=True, agent=AgentRole.OVERWORLD
         )
-    if turn := overworld_press(scene):
-        return turn
     read = ask(scene)
     if not replanned and (read.plan_stale >= stale_noul or read.objective_done >= stale_noul):
         pull("jev: plan stale or done")
         scene = classify_scene(obs, plan, signals)
-        if turn := overworld_press(scene):
-            return turn
         read = ask(scene)
 
     streak = 0
@@ -650,28 +498,8 @@ def choose_fast_action(
     else:
         action = safe_action(scene)
         reason = f"{unsure} ({read.confidence:.2f}); safe action"
-    # B does not travel. An unsure answer must not cancel the planned step.
-    if action == GameAction.PRESS_B and not signals.text_box and (turn := overworld_press(scene)):
-        return turn
     agent = AgentRole.BATTLE if scene == PlanScene.BATTLE.value else AgentRole.OVERWORLD
     return finish(action, reason, spent=scene == PlanScene.NAMING.value, agent=agent, streak=streak)
-
-
-def named_overworld_action(text: str) -> GameAction | None:
-    """The single overworld button named in a plan, if it named exactly one."""
-    lowered = text.lower().replace("_", " ")
-    buttons = (
-        GameAction.WALK_UP,
-        GameAction.WALK_DOWN,
-        GameAction.WALK_LEFT,
-        GameAction.WALK_RIGHT,
-        GameAction.PRESS_A,
-        GameAction.PRESS_B,
-    )
-    found = [
-        button for button in buttons if _phrase_affirmed(lowered, button.value.replace("_", " "))
-    ]
-    return found[0] if len(found) == 1 else None
 
 
 def _named_press(plan: PlanCard) -> GameAction | None:
@@ -689,9 +517,18 @@ def _named_press(plan: PlanCard) -> GameAction | None:
     return next((action for label, action in presses if label in text), None)
 
 
-def accepts(read: JevAnswers, floor: float) -> bool:
-    """Whether this answer is pressed as Jev's choice rather than the scene's safe action."""
-    return read.confidence >= floor and read.action in GameAction
+# The top option leads the runner-up by this much. TypeSafe's confidence is the spread over
+# every option, so a clear 0.66 / 0.29 pick on a three-row menu scores only 0.48.
+MIN_MARGIN = 0.25
+
+
+def accepts(read: JevAnswers | None, floor: float) -> bool:
+    """Jev's pick is pressed: its confidence clears the floor, or it clearly leads."""
+    if read is None or not read.action:
+        return False
+    ranked = sorted(read.probabilities.values(), reverse=True)
+    margin = ranked[0] - ranked[1] if len(ranked) > 1 else 0.0
+    return read.confidence >= floor or margin >= MIN_MARGIN
 
 
 _PRESS_B = "cancel or back out; does not start a conversation"

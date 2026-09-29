@@ -19,6 +19,8 @@ from nuzlocke.environment import screen
 from nuzlocke.environment.base import ActionResult
 from nuzlocke.environment.joypad import agent_can_act, is_naming_lock
 from nuzlocke.environment.macros import drop_naming_confirm_if_walking, expand_actions
+from nuzlocke.environment.maps import map_name
+from nuzlocke.environment.screen_text import parse_screen
 from nuzlocke.state.models import ControlState, GameAction, PlayerObservation
 
 # /screenshot/grid scale for vision calls: labelled A1..J9 walk cells, player at E5.
@@ -84,6 +86,8 @@ class NousRedEnvironment:
         # trust_env=False: a dev HTTP(S)_PROXY would turn /health into a 503.
         self._client = httpx.Client(timeout=60.0, trust_env=False)
         self._proc: subprocess.Popen[str] | None = None
+        # The map the last observation was on; a change means a warp is still loading.
+        self._last_map_id: Any = None
         self._log: Any = None
         if auto_start:
             self._ensure_server()
@@ -178,9 +182,15 @@ class NousRedEnvironment:
         )
         map_id = map_info.get("map_id")
         joy_ignore = int(dialog.get("joy_ignore") or 0)
+        if in_battle and (objects or {}).get("enemy"):
+            # The POKéMON on the field (wEnemyMon), not pokemon-agent's stale enemy party.
+            battle = {**battle, "enemy": objects["enemy"]}
         return PlayerObservation(
             screenshot_path=screenshot_path,
-            map_name=map_info.get("map_name") or pos.get("map_name"),
+            map_name=map_name(
+                pos.get("map_id") if map_id is None else map_id,
+                map_info.get("map_name") or pos.get("map_name"),
+            ),
             map_id=pos.get("map_id") if map_id is None else map_id,
             x=pos.get("x"),
             y=pos.get("y"),
@@ -198,6 +208,11 @@ class NousRedEnvironment:
             money=player.get("money"),
             collision_ascii=collision_ascii,
             **_objects_on_map(objects, map_id if map_id is not None else pos.get("map_id")),
+            screen_rows=[str(row) for row in (objects or {}).get("screen") or []],
+            map_size=(objects or {}).get("size") or None,
+            connections=[str(side) for side in (objects or {}).get("connections") or []],
+            cutscene=_cutscene((objects or {}).get("input")),
+            flags=dict(state.get("flags") or {}),
             frame_count=(state.get("metadata") or {}).get("frame_count"),
             raw_player=player,
         )
@@ -226,10 +241,21 @@ class NousRedEnvironment:
             return None
         return body if isinstance(body, dict) else None
 
+    def settle(self) -> int:
+        """Run frames until there is something to decide: control, a text box, or a ▶ menu.
+
+        A step still animating, a cutscene, a battle animation between lines: a Jev call or a
+        vision look made then is spent on a frame that is about to change. Returns the rounds.
+        """
+        for rounds in range(SETTLE_ROUNDS):
+            objects = self._map_objects()
+            if not objects or not busy(objects):
+                return rounds
+            self._post_json("/action", {"actions": [SETTLE_ROUND]})
+        return SETTLE_ROUNDS
+
     def observe(self) -> PlayerObservation:
-        state = self._get("/state").json()
-        collision = self._collision_ascii()
-        objects = self._map_objects()
+        self.settle()
         shot: str | None = str(self.run_dir / "screenshots" / "latest.png")
         try:
             self.screenshot(shot)
@@ -244,6 +270,19 @@ class NousRedEnvironment:
                 if all(isinstance(ch, tuple) and ch[0] == ch[1] for ch in extrema[:3]):
                     self._post_json("/action", {"actions": ["wait_60"]})
                     self.screenshot(shot)
+        state = self._get("/state").json()
+        map_id = (state.get("map") or {}).get("map_id")
+        if self._last_map_id is not None and map_id != self._last_map_id:
+            # A warp: the map id changes first, x/y and the warp table 30-40 frames later
+            # (measured at Red's front door). Let the new map finish loading, then read again.
+            self._post_json("/action", {"actions": ["wait_60"]})
+            if shot is not None:
+                with contextlib.suppress(httpx.HTTPError):
+                    self.screenshot(shot)
+            state = self._get("/state").json()
+        self._last_map_id = map_id
+        collision = self._collision_ascii()
+        objects = self._map_objects()
         return self._observation_from_state(
             state, screenshot_path=shot, collision_ascii=collision, objects=objects
         )
@@ -383,6 +422,12 @@ class NousRedEnvironment:
         frame = self._live_frame("burst")
         return frame is not None and screen.text_box_open(frame[1])
 
+    def _menu_cursor_open(self) -> bool:
+        """A ▶ menu is drawn (NEW GAME, START, the battle menus, whose boxes overlap), or the
+        Mart's ×01 quantity box: walks there move a cursor, not the player."""
+        objects = self._map_objects() or {}
+        return any("▶" in row or "×" in row for row in objects.get("screen") or [])
+
     def _scene_frame(self) -> tuple[str | None, bool]:
         """World-region digest of the live frame, and whether a text box is up."""
         frame = self._live_frame("burst")
@@ -425,7 +470,7 @@ class NousRedEnvironment:
         before = self.peek_state()
         naming = is_naming_lock(before.joy_ignore)
         # Naming and an open menu move a cursor: an unchanged map tile there is not a failed walk.
-        cursor = naming or self._frame_blocks_walk()
+        cursor = naming or self._frame_blocks_walk() or self._menu_cursor_open()
         if naming:
             actions = drop_naming_confirm_if_walking(actions)
         actions = expand_actions(actions)
@@ -559,3 +604,24 @@ def _objects_on_map(objects: dict[str, Any] | None, map_id: Any) -> dict[str, li
         key: [item for item in objects.get(key) or [] if isinstance(item, dict)]
         for key in ("warps", "signs", "npcs")
     }
+
+
+# At most 300 frames (about five seconds of game time) before deciding anyway.
+SETTLE_ROUND = "wait_20"
+SETTLE_ROUNDS = 15
+
+
+def busy(objects: dict[str, Any]) -> bool:
+    """Nothing to decide yet: a step, a cutscene, or a battle animation with no text or menu up."""
+    rows = objects.get("screen") or []
+    if any("▶" in row for row in rows) or parse_screen(rows).text_lines:
+        return False
+    flags = objects.get("input") or {}
+    return bool(int(flags.get("walking") or 0) or int(flags.get("battle") or 0) or _cutscene(flags))
+
+
+def _cutscene(flags: dict[str, Any] | None) -> bool:
+    """The D-pad is ignored (0xF0 of wJoyIgnore) or a script is walking the player."""
+    if not flags:
+        return False
+    return bool(int(flags.get("joy_ignore") or 0) & 0xF0 or int(flags.get("status5") or 0) & 0x80)

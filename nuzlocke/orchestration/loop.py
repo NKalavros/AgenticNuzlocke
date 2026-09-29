@@ -13,9 +13,11 @@ from typing import Any
 
 from rich.console import Console
 
+from nuzlocke.agents.goals import DIRS, ObjectTrust, RoomMap, cell_to_tile
 from nuzlocke.agents.jev_policy import (
     FrameSignals,
     accepts,
+    battle_facts,
     choose_fast_action,
     classify_scene,
     plan_from_recovery,
@@ -33,7 +35,9 @@ from nuzlocke.agents.roles import (
     propose_plan,
     rollup_memory,
 )
-from nuzlocke.agents.targets import ObjectTrust, cell_to_tile
+from nuzlocke.agents.system1 import S1Turn, system1_turn
+from nuzlocke.agents.system3 import constraints as nuzlocke_constraints
+from nuzlocke.agents.system3 import current_beat, objective_window
 from nuzlocke.config import (
     ensure_relay_routing,
     load_agents_config,
@@ -45,7 +49,7 @@ from nuzlocke.config import (
 from nuzlocke.environment.joypad import is_naming_lock
 from nuzlocke.environment.nous_red import NousRedEnvironment
 from nuzlocke.environment.screen import digests_from_path, prompt_box_open, text_box_open
-from nuzlocke.knowledge.beats import current_beat, objective_window
+from nuzlocke.environment.screen_text import parse_screen
 from nuzlocke.knowledge.walkthrough import excerpt_for_context, skill_dir
 from nuzlocke.llm.factory import create_jev, create_provider
 from nuzlocke.memory import OptMem
@@ -56,6 +60,8 @@ from nuzlocke.orchestration.fallback import (
     is_bridge_down,
     llm_error_fallback_proposal,
 )
+from nuzlocke.orchestration.journal import Journal
+from nuzlocke.orchestration.journal import outcome as journal_outcome
 from nuzlocke.orchestration.ledger import LedgerTracker
 from nuzlocke.orchestration.stuck import StuckTracker
 from nuzlocke.referee.rules import NuzlockeReferee
@@ -112,6 +118,20 @@ def _first_streak(*streaks: tuple[str, int]) -> str | None:
     return next((f"{name}={count}" for name, count in streaks if count), None)
 
 
+# Overworld triggers that wait out a cooldown after a System 2 look: run
+# 20260929-030330-de1d51 asked System 2 1,393 times (5.5 of 6.1 hours), 1,200 of them for
+# "objective path blocked" or "objective not on this map", one after another.
+S2_COOLDOWN_CYCLES = 8
+_COOLDOWN_TRIGGERS = {
+    "no objective",
+    "objective not on this map",
+    "objective path blocked",
+    "jev unsure twice",
+    "goal keeps failing",
+}
+_EXPLORE = {"kind": "explore"}
+
+
 def _stamp(card: PlanCard, signals: FrameSignals, obs: PlayerObservation | None = None) -> PlanCard:
     """Record the frame a card was written on, so later cycles can tell what changed."""
     card.world_digest = signals.world_digest
@@ -120,6 +140,15 @@ def _stamp(card: PlanCard, signals: FrameSignals, obs: PlayerObservation | None 
     tile = cell_to_tile(card.target_cell, obs) if obs is not None else None
     if tile is not None and card.target is None:
         card.target = {"x": tile[0], "y": tile[1], "label": card.target_cell}
+    if tile is not None and (card.goal_target or {}).get("kind") == "cell":
+        # A cell is only right from where the player stood; a map tile stays right.
+        card.goal_target = {
+            "kind": "tile",
+            "x": tile[0],
+            "y": tile[1],
+            "label": card.target_cell,
+            "map_id": obs.map_id,
+        }
     return card
 
 
@@ -195,6 +224,17 @@ class RunLoop:
         self.stuck = StuckTracker()
         self.grid_trust = GridTrust()
         self.object_trust = ObjectTrust()
+        # System 1: the map it has walked, goals that went nowhere, and the log System 2 reads.
+        self.room = RoomMap()
+        self.journal = Journal(self.run_dir / "journal.jsonl")
+        self._goal_fails: dict[str, int] = {}
+        # The text each goal ended in last time on this map, shown on its option.
+        self._goal_texts: dict[str, str] = {}
+        self._s1: S1Turn | None = None
+        self._last_look = -S2_COOLDOWN_CYCLES
+        self._last_direction: str | None = None
+        # Move -> type, read from the battle TYPE/ box as each move is highlighted.
+        self.move_types: dict[str, str] = {}
         self.ledger = LedgerTracker(self.referee)
         # Short-term prompt context; OptMem keeps landmarks and rollups.
         self.recent_steps: list[dict[str, Any]] = []
@@ -336,12 +376,18 @@ class RunLoop:
                 else f"[dim]map={obs.map_name} battle={obs.in_battle}[/dim]"
             )
             self.store.append("observation", raw_obs.model_dump(mode="json"))
-            if self._cutscene_screen(obs):
+            if obs.cutscene or self._cutscene_screen(obs):
                 self.stuck.pause_for_cutscene()
             self.stuck.update_position(obs)
             self.referee.advance(len(obs.badges))
             if self.ledger.update(obs, step=steps):
                 self._last_ledger_change_step = steps
+            if self.referee.wiped:
+                # A Nuzlocke ends when the whole party is gone. Keep the savestate to look at.
+                self.store.append("nuzlocke_wipe", {"reason": self.referee.wiped, "step": steps})
+                self.env.push_event("alert", f"Nuzlocke lost: {self.referee.wiped}")
+                console.print(f"[red]Nuzlocke lost: {self.referee.wiped}. Stopping.[/red]")
+                break
             violations = self.referee.assert_party_legal(obs)
             if violations:
                 self.env.push_event("alert", "; ".join(violations))
@@ -409,6 +455,8 @@ class RunLoop:
             self._publish_objectives()
 
             used_recovery = pause = False
+            # Set again when System 1 proposes; a disengage or Recovery press is not its turn.
+            self._s1 = None
             try:
                 proposal, used_recovery, pause = self._select_proposal(
                     tier=stuck.escalation_tier(),
@@ -510,6 +558,7 @@ class RunLoop:
                     stuck.press_counts[label] = stuck.press_counts.get(label, 0) + 1
             else:
                 stuck.press_counts.clear()
+            self._after_system1(raw_obs, after, result, executed, after_box, steps)
             # Label honestly: a history of "ok" on every looping step reads as success.
             if stuck.last_immobile:
                 outcome = f"immobile x{stuck.immobile_streak}"
@@ -660,13 +709,17 @@ class RunLoop:
             and not signals.dialog_changed
         )
 
-        def refresh() -> PlanCard:
+        def refresh(trigger: str | None = None) -> PlanCard:
             started = time.monotonic()
             card = propose_plan(
                 self.llm,
                 obs=self.env.vision_frame(obs),
                 objective=task.objective,
                 buttons_on_this_tile=dict(self.stuck.press_counts) or None,
+                trigger=trigger,
+                journal=self.journal.since_last_look() or None,
+                battle=self._battle_brief(obs) if obs.in_battle else None,
+                constraints=self._constraints(obs),
                 **context,
             )
             _stamp(card, signals, obs)
@@ -703,6 +756,51 @@ class RunLoop:
             )
             return read
 
+        # System 1 first. System 2's steps are for screens System 1 cannot read (the naming
+        # keyboard); pressed ahead of it, they kept a battle bag from System 3's POKé BALL.
+        s1 = self._system1(obs, signals, mash_stalled=mash_stalled, jev_decide=jev_decide)
+        if s1 is not None and not s1.trigger and self.plan is not None:
+            self.plan.steps.clear()
+        if s1 is not None and s1.trigger and self.plan is not None and self.plan.steps:
+            # System 2 already answered with buttons for this screen: press them, no new look.
+            s1 = None
+        looked = False
+        if (
+            s1 is not None
+            and s1.trigger in _COOLDOWN_TRIGGERS
+            and len(self.journal.lines) - self._last_look < S2_COOLDOWN_CYCLES
+        ):
+            # System 2 looked moments ago. Asking again buys the same answer; explore instead.
+            s1 = self._system1(
+                obs, signals, mash_stalled=mash_stalled, jev_decide=jev_decide, explore=True
+            )
+        if s1 is not None and s1.trigger:
+            # A decision System 1 cannot make: System 2 looks once, then System 1 tries again.
+            self.plan = reconcile_plan(refresh(s1.trigger), obs)
+            self._last_look = len(self.journal.lines)
+            self.journal.looked()
+            self._goal_fails.clear()
+            self._low_confidence_streak = 0
+            looked = True
+            self.store.append("jev", {"actions": [], "reason": s1.reason, "looks": [s1.trigger]})
+            s1 = (
+                None
+                if self.plan.steps
+                else self._system1(obs, signals, mash_stalled=False, jev_decide=jev_decide)
+            )
+            if s1 is not None and s1.trigger:
+                # Still undecided right after a look: press the look's steps if it wrote
+                # any, else wait a moment. Never a second look in the same cycle.
+                s1 = (
+                    None
+                    if self.plan.steps
+                    else S1Turn(
+                        [GameAction.WAIT_60], f"System 2 looked ({s1.trigger}); waiting", "wait"
+                    )
+                )
+        if s1 is not None:
+            return self._system1_proposal(task, s1)
+        self._s1 = None
         turn = choose_fast_action(
             plan=self.plan,
             obs=obs,
@@ -712,11 +810,8 @@ class RunLoop:
             stale_noul=self.stale_noul,
             confidence_floor=self.confidence_floor,
             low_confidence_streak=self._low_confidence_streak,
-            same_tile_streak=self.stuck.same_tile_streak,
-            force_replan=self._forced_look(signals, mash_stalled=mash_stalled),
-            heading=self._beat_heading,
+            force_replan=False if looked else self._forced_look(signals, mash_stalled=mash_stalled),
             mash_stalled=mash_stalled,
-            press_counts=dict(self.stuck.press_counts),
             jev_decide=jev_decide,
             refresh_plan=refresh,
             **_without(context, VISION_ONLY),
@@ -742,14 +837,168 @@ class RunLoop:
             landmarks=turn.landmarks,
         )
 
+    def _objective(self, obs: PlayerObservation) -> tuple[dict[str, Any] | None, str | None, bool]:
+        """The target System 1 walks toward: the beat's, else System 2's card, else none."""
+        beat = current_beat(obs) if self._beat_locked else None
+        if beat is not None and beat.target:
+            return beat.target, beat.text, True
+        card = self.plan
+        if card is None or not card.goal_target:
+            return None, None, False
+        if card.goal_target.get("kind") == "tile" and card.goal_target.get("map_id") != obs.map_id:
+            # A tile on the screenshot belongs to the map it was read on.
+            return None, None, False
+        wanted = str(card.done_when.get("map") or "").casefold()
+        if wanted and wanted == (obs.map_name or "").casefold():
+            return None, None, False
+        return card.goal_target, card.plan, False
+
+    def _system1(
+        self,
+        obs: PlayerObservation,
+        signals: FrameSignals,
+        *,
+        mash_stalled: bool,
+        jev_decide: Any,
+        explore: bool = False,
+    ) -> S1Turn | None:
+        target, text, from_code = self._objective(obs)
+        if explore:
+            target, text, from_code = _EXPLORE, "explore until System 2 looks again", True
+        return system1_turn(
+            obs=obs,
+            screen=parse_screen(obs.screen_rows),
+            text_box=signals.text_box,
+            mash_stalled=mash_stalled,
+            room=self.room,
+            objective=target,
+            objective_text=text,
+            objective_from_code=from_code,
+            heading=self._beat_heading,
+            fails=self._goal_fails,
+            last_texts=self._goal_texts,
+            last_direction=self._last_direction,
+            low_confidence_streak=self._low_confidence_streak,
+            confidence_floor=self.confidence_floor,
+            stale_noul=self.stale_noul,
+            journal=self.journal.lines,
+            constraints=self._constraints(obs),
+            jev_decide=jev_decide,
+            move_types=self.move_types,
+            first_encounter=self.ledger.first_encounter,
+            battle_plan=self._battle_plan(obs),
+        )
+
+    def _battle_brief(self, obs: PlayerObservation) -> dict[str, Any]:
+        """What System 2 plans a battle from: the field, our moves with types, the party."""
+        brief = dict(battle_facts(obs) or {})
+        lead = obs.party[0] if obs.party else {}
+        brief["our_moves"] = [
+            f"{m.get('name')} ({self.move_types.get(str(m.get('name')).upper(), 'type unknown')},"
+            f" {m.get('pp')} PP)"
+            for m in lead.get("moves") or []
+            if isinstance(m, dict)
+        ]
+        brief["party"] = [
+            f"{m.get('species')} L{m.get('level')} {m.get('hp')}/{m.get('max_hp')}"
+            for m in obs.party
+        ]
+        return brief
+
+    def _battle_plan(self, obs: PlayerObservation) -> dict[str, Any] | None:
+        """System 2's plan for this trainer battle; dropped once the battle is over."""
+        if self.plan is None:
+            return None
+        if not obs.in_battle:
+            self.plan.battle_plan = {}
+        return self.plan.battle_plan or None
+
+    def _constraints(self, obs: PlayerObservation) -> list[str]:
+        """System 3's briefing: the rules, the cap, the next boss, the trainers on this map."""
+        dead = [str(entry.get("nickname")) for entry in self.referee.death_ledger]
+        return nuzlocke_constraints(obs, self.referee.current_cap, dead)
+
+    def _system1_proposal(self, task: Any, s1: S1Turn) -> ActionProposal:
+        self._s1 = s1
+        self._low_confidence_streak = s1.low_confidence_streak
+        self.store.append(
+            "jev",
+            {
+                "actions": [action.value for action in s1.actions],
+                "reason": s1.reason,
+                "looks": [],
+                "scene": f"s1:{s1.kind}",
+                "choice": s1.choice,
+            },
+        )
+        # The arbiter takes presses from the task's owner, which a stuck tier can make Recovery.
+        return ActionProposal(
+            task_id=task.task_id, agent=task.owner, reason=s1.reason, actions=s1.actions
+        )
+
+    def _after_system1(
+        self,
+        before: PlayerObservation,
+        after: PlayerObservation,
+        result: Any,
+        executed: list[str],
+        after_box: bool,
+        cycle: int,
+    ) -> None:
+        """Teach the room map, count goals that went nowhere, and write the journal line."""
+        self.room.record_walks(before, list(result.walks or []))
+        self.room.visit(after)
+        moved = sum(
+            1
+            for step in result.walks or []
+            if (step.get("x0"), step.get("y0")) != (step.get("x1"), step.get("y1"))
+        )
+        walks = [label.removeprefix("walk_") for label in executed if label.startswith("walk_")]
+        if walks and walks[-1] in DIRS:
+            self._last_direction = walks[-1]
+        map_changed = (after.map_id, after.map_name) != (before.map_id, before.map_name)
+        text = " ".join(parse_screen(after.screen_rows).text_lines) if after_box else None
+        s1 = self._s1
+        goal = s1.goal if s1 is not None and s1.goal is not None else None
+        if map_changed:
+            self._goal_fails.clear()
+            self._goal_texts.clear()
+        elif goal is not None and goal.kind != "wait":
+            # No move, or the same line as last time (the old man's "You can't go through
+            # here!" nudging the player back): either way the goal went nowhere.
+            repeated = bool(text) and self._goal_texts.get(goal.key) == text
+            if repeated or not (moved or text or after.in_battle):
+                self._goal_fails[goal.key] = self._goal_fails.get(goal.key, 0) + 1
+            if text:
+                self._goal_texts[goal.key] = text
+        self.journal.add(
+            {
+                "cycle": cycle,
+                "map": before.map_name,
+                "x": before.x,
+                "y": before.y,
+                "kind": s1.kind if s1 is not None else "planner",
+                "choice": s1.choice if s1 is not None else None,
+                "label": s1.goal.label if s1 is not None and s1.goal is not None else None,
+                "p": s1.probability if s1 is not None else None,
+                "actions": executed,
+                "outcome": journal_outcome(
+                    before,
+                    after,
+                    moved_tiles=moved,
+                    text=text,
+                    stopped=result.stopped_early_because,
+                ),
+                "text": text,
+            }
+        )
+
     def _pages(self) -> int:
         """B presses and ``skip_dialog`` mashes on this tile."""
         return sum(self.stuck.press_counts.get(label, 0) for label in PAGING)
 
     def _forced_look(self, signals: FrameSignals, *, mash_stalled: bool) -> str | bool:
         """Why this cycle must look before pressing anything, or False."""
-        if self.stuck.immobile_streak >= 1 and not signals.text_box:
-            return "a walk did not move"
         if mash_stalled:
             return "skip_dialog left the box unchanged"
         # Single B presses only: a mash already pages until the box closes or

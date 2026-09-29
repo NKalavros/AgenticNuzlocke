@@ -85,8 +85,20 @@ def _with_extras(
     beat: str | None = None,
     blocked_on_tile: list[str] | None = None,
     buttons_on_this_tile: dict[str, int] | None = None,
+    trigger: str | None = None,
+    journal: list[str] | None = None,
+    battle: dict[str, Any] | None = None,
+    constraints: list[str] | None = None,
 ) -> dict[str, Any]:
     memory = (memory or "").strip()
+    for key, value in (
+        ("trigger", trigger),
+        ("journal", journal),
+        ("battle", battle),
+        ("constraints", constraints),
+    ):
+        if value:
+            payload[key] = value
     walkthrough_hint = (walkthrough_hint or "").strip()
     if recent:
         payload["recent"] = recent
@@ -530,8 +542,12 @@ def propose_plan(
     beat: str | None = None,
     blocked_on_tile: list[str] | None = None,
     buttons_on_this_tile: dict[str, int] | None = None,
+    trigger: str | None = None,
+    journal: list[str] | None = None,
+    battle: dict[str, Any] | None = None,
+    constraints: list[str] | None = None,
 ) -> PlanCard:
-    """System 2: read the screenshot and write the card Jev will follow."""
+    """System 2: read the screenshot and the journal, and set the next objective."""
     data, _ = _ask(
         llm,
         obs,
@@ -549,6 +565,10 @@ def propose_plan(
         beat=beat,
         blocked_on_tile=blocked_on_tile,
         buttons_on_this_tile=buttons_on_this_tile,
+        trigger=trigger,
+        journal=journal,
+        battle=battle,
+        constraints=constraints,
     )
     try:
         scene = PlanScene(str(data.get("scene") or "").strip().lower())
@@ -561,7 +581,10 @@ def propose_plan(
         plan=plan or objective or "Continue the current objective.",
         do_not=_clean_lines(data.get("do_not") or [], 120),
         steps=parse_steps(data.get("steps")),
-        target_cell=parse_cell(data.get("target")),
+        target_cell=parse_cell(_target_value(data.get("target"), "cell")),
+        goal_target=parse_target(data.get("target")),
+        done_when=data.get("done_when") if isinstance(data.get("done_when"), dict) else {},
+        battle_plan=_battle_plan(data.get("battle_plan")),
         objectives=parse_objectives(data.get("objectives")),
         landmarks=parse_landmarks(data.get("landmarks")),
     )
@@ -586,6 +609,56 @@ def parse_steps(raw: Any) -> list[GameAction]:
         return []
     actions = _parse_actions(str(item).strip().lower() for item in raw)
     return [step for step in expand_actions(actions) if step in _STEP_BUTTONS][:MAX_PLAN_STEPS]
+
+
+def _battle_plan(raw: Any) -> dict[str, Any]:
+    """Move names in order, a switch target, and the HP fraction to switch at."""
+    if not isinstance(raw, dict):
+        return {}
+    moves = [str(m).strip().upper() for m in raw.get("moves") or [] if str(m).strip()]
+    try:
+        below = float(raw.get("switch_below") or 0.0)
+    except (TypeError, ValueError):
+        below = 0.0
+    plan = {"moves": moves[:4], "switch_below": min(max(below, 0.0), 1.0)}
+    if raw.get("switch_to"):
+        plan["switch_to"] = str(raw["switch_to"]).strip()
+    if raw.get("notes"):
+        plan["notes"] = str(raw["notes"])[:200]
+    return plan if moves or "switch_to" in plan else {}
+
+
+def _target_value(raw: Any, kind: str) -> Any:
+    """The value of a ``{"kind", "value"}`` target of this kind; a bare string is a cell."""
+    if isinstance(raw, dict):
+        return raw.get("value") if raw.get("kind") == kind else None
+    return raw if kind == "cell" else None
+
+
+def parse_target(raw: Any) -> dict[str, Any] | None:
+    """System 2's target in the form ``agents.goals`` matches options against."""
+    from nuzlocke.environment.maps import map_name
+
+    if not isinstance(raw, dict):
+        cell = parse_cell(raw)
+        return {"kind": "cell", "cell": cell} if cell else None
+    kind = str(raw.get("kind") or "").lower()
+    value = str(raw.get("value") or "").strip()
+    if kind == "exit" and value:
+        wanted = value.casefold()
+        dest = next(
+            (i for i in range(256) if (map_name(i) or "").casefold() == wanted and i != 255), None
+        )
+        if dest is None and wanted in {"outside", "back outside", "out"}:
+            dest = 255
+        return {"kind": "warp", "dest_map": dest} if dest is not None else None
+    if kind == "edge" and value in {"up", "down", "left", "right"}:
+        return {"kind": "edge", "dir": value}
+    if kind == "npc" and value:
+        return {"kind": "npc", "name": value}
+    if kind == "cell" and parse_cell(value):
+        return {"kind": "cell", "cell": parse_cell(value)}
+    return None
 
 
 def parse_cell(raw: Any) -> str | None:
