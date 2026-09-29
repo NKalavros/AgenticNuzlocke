@@ -29,7 +29,7 @@ On an open network leave `NUZLOCKE_RELAY` unset. Proxy routing is configured onl
 
 ### Watch the game
 
-Use the **Watch live** URL printed by the command. With the checked-in configuration it is [http://127.0.0.1:8766/dashboard](http://127.0.0.1:8766/dashboard), on the same port as the emulator API.
+Use the **Route monitor** URL printed by the command. With the checked-in configuration it is [the navigation dashboard](http://127.0.0.1:8766/navigation), on the same port as the emulator API. Normal runs open this page automatically. The printed **Watch live** URL opens the original [Field Log](http://127.0.0.1:8766/dashboard).
 
 - Normal runs wait for dashboard **START**. **PAUSE** and **STOP** control the loop.
 - Runs stop on a wipe, the configured Brock milestone, dashboard STOP, or a supplied `--max-steps` limit. The default `-1` removes the step limit.
@@ -77,10 +77,12 @@ System 3 determines rule constraints before decisions. Fixed preparation menus r
 - Code objectives cover the bedroom, verified Bulbasaur selection, Oak's Parcel, ball shopping, Viridian Forest, Pewter preparation, and Brock. Healing and dead-party storage can override the story.
 - Encounter searches cover Route 1, Route 2, and Viridian Forest. They favor less-visited reachable grass and have a persisted budget of 100 search cycles per area. Exhausting that budget resumes the story without consuming an encounter slot.
 - System 1 builds paths over the remembered map with Dijkstra paths (unit costs give shortest walks) and sends bursts of up to eight walks. Non-target warps and NPCs block paths; confirmed failed walks temporarily block a direction for six cycles. Indoor return-map destinations and separate doors to the same map are handled explicitly.
-- Safe routing penalizes observed grass; encounter searches and urgent poison healing use step distance. Unreachable or unobserved System 2 waypoints are rejected.
+- Safe routing charges four steps for entering observed grass and one for other walkable tiles; encounter searches and poison healing use step distance. This is a grass-avoidance heuristic; trainer risk and battle damage are not calculated. Unreachable or unobserved System 2 waypoints are rejected.
 - Grid and object data are checked against actual movement. Contradictions withhold them; corroborating movement can restore trust. Battle and scripted transitions are excluded from object-trust strikes.
 - System 2 sees journal entries since its last look and the whole learned map, with unknown terrain marked explicitly. It can return a typed `route_plan` with a matching map/objective, up to eight reachable waypoints, and a safe/shortest preference. Valid routes persist across cycles and checkpoints; subsequent verified segments execute without another Jev choice. Overworld refreshes have an eight-cycle cooldown; a usable code objective can continue despite Jev uncertainty. Failed paths still escalate.
 - Trainer plans carry `opening_moves`, ordered `moves`, `switch_to`, and `switch_below`. Plans refresh when the active Pokémon, opponent, status, critical HP, usable moves, or eligible roster changes. An opener is consumed when its PP actually decreases.
+
+The full map context contains terrain observed during this run, with unknown cells marked `?`. Routes from an entrance to an exit become complete as connected terrain is learned; there is no imported complete map or shared atlas across fresh runs. See [the navigation handoff](AGENTS.md#persistent-navigation-and-route-dashboard) for the System 2 contract and [validation evidence](docs/validation.md#navigation-and-display-update) for gate and Forest replays. Battle calculations remain deferred to a separate commit.
 
 ### Rules and preparation
 

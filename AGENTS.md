@@ -23,7 +23,7 @@ uv run pytest -q
 uv run nuzlocke run --rom ./red-star-2020-08-18.gb --vision-only
 ```
 
-Watch: http://127.0.0.1:8766/dashboard (the configured API port; use the printed URL) — press **START** / **PAUSE** / **STOP**.
+Watch: http://127.0.0.1:8766/navigation (the configured API port; use the printed **Route monitor** URL) — press **START** / **PAUSE** / **STOP**. The original Field Log is at `/dashboard`.
 Cursor SDK turns: Agents panel → Filter → Source → SDK.
 
 Default run length: **until Boulder Badge or dashboard STOP** (`--max-steps -1`, `stop_after: brock`). Vision-only is the default in `config/run.yaml`.
@@ -49,7 +49,7 @@ uv run nuzlocke sandbox --from <run-id> --steps 30
 uv run nuzlocke sandbox --script "wait_600 press_start wait_90 press_a wait_120 press_a wait_120 wait_240 press_a wait_180 skip_dialog*10"
 ```
 
-- Sandbox loops still honor dashboard PAUSE/STOP. Watch `http://127.0.0.1:<port>/dashboard`; each private server shuts down when its command finishes. Use distinct `--port` values to watch concurrent sandboxes.
+- Sandbox loops still honor dashboard PAUSE/STOP. Watch `http://127.0.0.1:<port>/navigation` (or `/dashboard` for the Field Log); each private server shuts down when its command finishes. Use distinct `--port` values to watch concurrent sandboxes.
 - Each call copies the source's `savestates/auto.state` (or `pokemon-agent-data/saves/auto.state`) into a new `runs/sandbox-<time>-<hex>/`, starts its own pokemon-agent on the first free port from 8791, and stops that server when it finishes. The source run's files and port are not touched
 - Script tokens are any `GameAction` (they go through `execute`, with burst stops and `skip_dialog`) or a raw opcode (`press_X`, `walk_X`, `hold_X_N`, `wait_N`), comma- or space-separated; `token*N` repeats. Each row prints map, tile, facing, `box=text|prompt|-`, and world- and text-region digests (a changed `world=` with an unchanged tile is something else moving); frames go to `frames/NNN_<token>.png` and rows to `probe.jsonl`
 - A script ends by saving its final state, so `--from sandbox-<id>` continues from the last row. Chain short scripts to reach a scene, then hand it to `--steps`
@@ -165,11 +165,13 @@ dashboard control
 
 `agents/navigation.py` keeps observed map metadata, grass, a typed System 2 `RoutePlan`, and the active route. Geometry remains in `RoomMap`; both restore with the paired checkpoint. System 2 receives the whole learned map (`?` for unknown), exits, directional blockers, and current route. Its optional map-coordinate waypoints must match the objective/map and be on observed reachable floor. It can request safe or shortest routes; code computes them.
 
-Safe routes penalize grass. Encounter searches and poison healing favor step distance. System 1 asks Jev on a new route, then continues verified segments without another choice. A changed destination/map, contradictory movement, or a new System 2 plan invalidates the cache. The destination remains subject to System 3 priorities. This uses learned geometry, not an assumed complete vanilla map.
+Safe routes charge four for entering observed grass and one for other walkable tiles. Encounter searches and poison healing favor step distance. System 1 asks Jev on a new route, then continues verified segments without another choice. A changed destination/map, contradictory movement, or a new System 2 plan invalidates the cache. The destination remains subject to System 3 priorities. Geometry is learned within the run and restored on resume; fresh runs start without a shared atlas. Trainer-risk estimates and battle damage calculations remain deferred.
+
+System 2's optional `route_plan` uses `map_id`, `objective_key` (copied from `navigation.route`), `waypoints` (at most eight `[x, y]` pairs in zero-based map coordinates), `preference` (`safe` or `shortest`, default `safe`), and a short `reason`. Coordinates are absolute map tiles, rather than the screenshot's A1–J9 labels. Code validates the map, objective, observed terrain, and reachability before using waypoints.
 
 Watch `http://127.0.0.1:<port>/navigation` for the live screen, party, map, route, next waypoint, blockers, and reuse/replan counts. The original `/dashboard` remains the Field Log. Telemetry writes require controller ownership; reads and dashboard control remain public on localhost.
 
-Gate-exit regression: the old loop could reuse cached observations without settling a map transition, then remember failed input as a wall. Now each cycle observes after settling; walks record whether a real obstruction was observed. Confirmed bumps block a direction for six cycles. See `docs/validation.md` for exact-state emulator probes. New servers also repair the shared upstream type decoder: Bug=7, Ghost=8, Psychic=24, Ice=25. This fixes party REST/WebSocket views as well as Beedrill's display.
+Gate-exit regression: the stuck checkpoint remembered open terrain as blocked. Inspection also found that cached observations could bypass settling; the exact cause of each original failed input was not reproduced. Now each cycle observes after settling, and only confirmed failed directions become temporary blockers, expiring after six cycles. See [validation evidence](docs/validation.md#navigation-and-display-update) for successful replays from inside and outside the gate. New servers also repair the shared upstream type decoder: Bug=7, Ghost=8, Psychic=24, Ice=25. This fixes party REST/WebSocket views as well as Beedrill's display.
 
 ### System 1: goals, menus, and the journal
 
