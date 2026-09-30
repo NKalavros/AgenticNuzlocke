@@ -10,7 +10,7 @@ Emulation, REST API, and the **Field Log** dashboard come from [NousResearch/pok
 
 ## Scope
 
-The current target is **fresh boot through the Boulder Badge**, using Bulbasaur, SET battle style, and audited Rare Candy preparation. `stop_after: brock` ends the loop when the badge is observed. Full-game completion is unverified; later milestones and level caps in configuration do not provide a complete route or team strategy.
+The current target is **the Cascade Badge (Misty)**, using Bulbasaur, SET battle style, and audited Rare Candy preparation. Brock completion is demonstrated; the continuation through Route 3, Mt. Moon, and Cerulean is under live validation. `stop_after: misty` ends the loop at Cascade; use `brock` for the earlier stop. Full-game completion remains unverified.
 
 ## Setup and run
 
@@ -32,9 +32,9 @@ On an open network leave `NUZLOCKE_RELAY` unset. Proxy routing is configured onl
 Use the **Route monitor** URL printed by the command. With the checked-in configuration it is [the navigation dashboard](http://127.0.0.1:8766/navigation), on the same port as the emulator API. Normal runs open this page automatically. The printed **Watch live** URL opens the original [Field Log](http://127.0.0.1:8766/dashboard).
 
 - Normal runs wait for dashboard **START**. **PAUSE** and **STOP** control the loop.
-- Runs stop on a wipe, the configured Brock milestone, dashboard STOP, or a supplied `--max-steps` limit. The default `-1` removes the step limit.
+- Runs stop on a wipe, the configured badge milestone, dashboard STOP, or a supplied `--max-steps` limit. The default `-1` removes the step limit.
 - Sandbox loops start automatically and still honor PAUSE/STOP. Each private server has its own dashboard and shuts down when its command finishes.
-- Cursor planner turns appear under **Agents → Filter → Source → SDK**.
+- Cursor planner turns appear under **Agents → Filter → Source → SDK**. Dual mode starts that session only on the first required look. Model errors pause play and preserve a checkpoint; restore connectivity and press START to retry.
 
 The route dashboard is at **`http://127.0.0.1:<port>/navigation`** on the same server. It shows the live game, party types/HP, whole learned map, route, next waypoint, temporary blocked directions, and route reuse/replan counts. START/PAUSE/STOP and a link to the original Field Log are included. New servers correct the upstream Bug/Ghost and Psychic/Ice type-ID mappings, including Beedrill’s Bug/Poison display.
 
@@ -74,40 +74,63 @@ System 3 determines rule constraints before decisions. Fixed preparation menus r
 
 ### Navigation and planning
 
-- Code objectives cover the bedroom, verified Bulbasaur selection, Oak's Parcel, ball shopping, Viridian Forest, Pewter preparation, and Brock. Healing and dead-party storage can override the story.
-- Encounter searches cover Route 1, Route 2, and Viridian Forest. They favor less-visited reachable grass and have a persisted budget of 100 search cycles per area. Exhausting that budget resumes the story without consuming an encounter slot.
+- Code objectives cover the bedroom, verified Bulbasaur selection, Oak's Parcel, ball shopping, Viridian Forest, Brock, Route 3, Mt. Moon, and Cerulean/Misty. Healing and dead-party storage can override the story.
+- Encounter searches cover Routes 1, 22, 2, and Viridian Forest, then Routes 3/4, Mt. Moon, and Routes 24/25. Unfinished early slots trigger backtracking before leaving Pewter east. Searches favor less-visited reachable terrain and have no abandonment timeout. Search counts, learned encounter tables, and outcomes persist on resume. The dashboard shows encounter coverage.
 - System 1 builds paths over the remembered map with Dijkstra paths (unit costs give shortest walks) and sends bursts of up to eight walks. Non-target warps and NPCs block paths; confirmed failed walks temporarily block a direction for six cycles. Indoor return-map destinations and separate doors to the same map are handled explicitly.
 - Safe routing charges four steps for entering observed grass and one for other walkable tiles; encounter searches and poison healing use step distance. This is a grass-avoidance heuristic; trainer risk and battle damage are not calculated. Unreachable or unobserved System 2 waypoints are rejected.
 - Grid and object data are checked against actual movement. Contradictions withhold them; corroborating movement can restore trust. Battle and scripted transitions are excluded from object-trust strikes.
 - System 2 sees journal entries since its last look and the whole learned map, with unknown terrain marked explicitly. It can return a typed `route_plan` with a matching map/objective, up to eight reachable waypoints, and a safe/shortest preference. Valid routes persist across cycles and checkpoints; subsequent verified segments execute without another Jev choice. Overworld refreshes have an eight-cycle cooldown; a usable code objective can continue despite Jev uncertainty. Failed paths still escalate.
 - Trainer plans carry `opening_moves`, ordered `moves`, `switch_to`, and `switch_below`. Plans refresh when the active Pokémon, opponent, status, critical HP, usable moves, or eligible roster changes. An opener is consumed when its PP actually decreases.
 
-The full map context contains terrain observed during this run, with unknown cells marked `?`. Routes from an entrance to an exit become complete as connected terrain is learned; there is no imported complete map or shared atlas across fresh runs. See [the navigation handoff](AGENTS.md#persistent-navigation-and-route-dashboard) for the System 2 contract and [validation evidence](docs/validation.md#navigation-and-display-update) for gate and Forest replays. Battle calculations remain deferred to a separate commit.
+System 2 receives both the observed map (`?` for unseen cells) and a bundled **31-map vanilla Red reference atlas** covering the early route through Misty. The reference supplies full walking layouts, named connections, door/ladder coordinates, the desired exit, and a suggested shortest walking route from the current position. For example, Route 3's exit to Route 4 is north at `(57..61, 0)`. System 1 uses this geometry to choose reachable intermediate targets toward the known exit; live evidence determines the actual button path. Map dimensions and live connection directions check reference applicability. Red Star changes, dynamic NPCs, trainer sight, story gates and differences in ledges still need observations; the reference is not a guarantee that a route is currently traversable.
+
+The route monitor shows the desired exit, dim reference terrain and a dashed suggested route alongside the observed map and current walking segment. See [the navigation handoff](AGENTS.md#persistent-navigation-and-route-dashboard) and [validation evidence](docs/validation.md#route-3-navigation-and-known-map-context). Battle calculations remain deferred to a separate commit.
+
+Navigation also checks **transitions between floor tiles**. Mt. Moon's elevation boundaries can block crossing even when both tiles individually appear walkable. Live tile IDs and Gen-1 tile-pair rules feed the actor, cached-route validation and reference planner; those boundaries persist, while temporary NPC bumps expire. Verified crossings override a reference mismatch and restore with the checkpoint. When several ladders lead to the same map, the runner chooses a reachable ladder in its current connected area. The actor, reference planner and cached-route checks also model directed two-tile ledge jumps. A drop adds only launch → landing; the ledge stays blocked and the return path must find another route. Execution releases input for 60 frames and stops the burst to check the actual landing. Blue arrows on the route monitor show permitted drops.
+
+Map context also carries named live objects, sprite slots, coordinates, visibility, and interaction instructions. Jev can approach an explicit object target before it enters the screen; off-screen table entries may also be hidden objects, so presence must be checked on arrival. In Mt. Moon, collecting one fossil is an explicit story step before the northwest ladder. The controller waits for the fossil YES/NO, accepts it, and confirms the bag receipt before resuming the exit route. The route monitor marks fossils in gold and provides object names on hover.
 
 ### Rules and preparation
 
 | Rule | Current behavior |
 |---|---|
 | Starter and style | Check the displayed species before accepting Bulbasaur; configure SET through the restricted preparation endpoint. |
-| Encounters | First eligible wild encounter per numeric map ID after balls have ever been acquired. That activation stays latched even if the bag later runs out. Outcomes become caught or forfeited and cannot be replaced. |
+| Encounters | First eligible wild encounter per area after balls have ever been acquired (numeric map IDs, with Mt. Moon floors 59–61 sharing one slot). That activation stays latched even if the bag later runs out. Outcomes become caught or forfeited and cannot be replaced. |
 | Duplicates | Reroll any ever-owned evolution family, including families whose Pokémon have died. |
 | Nicknames | Optional; the automated prompt answer is NO. |
 | Death | HP zero creates a permanent death attached to a capture identity. Healing, evolution, and party reordering do not revive it. Dead Pokémon are excluded from battle choices and deposited using Center PC menus. |
-| Level cap | Freeze eligible party members at battle entry. Levels earned during that battle are allowed; over-cap Pokémon cannot be selected for later battles until eligible again. Brock's cap is 14. |
-| Items | Poké Balls for legal wild captures; no trainer battle items. Audited Rare Candies are allowed outside battle. Other healing is at Centers or Mom. |
+| Level cap | Freeze eligible party members at battle entry. Levels earned during that battle are allowed; over-cap Pokémon cannot be selected for later battles until eligible again. Brock's cap is 14; Misty's is 21. |
+| XP buffer | `level_cap_buffer: 1` reserves levels cap−1 and above for necessity. Prefer healthy, suitable teammates and rotate the overworld lead before encounters. The hard cap still applies. |
+| Items | Poké, Great, or Ultra Balls for legal wild captures; no trainer battle items. Audited Rare Candies are allowed outside battle. Other healing is at Centers or Mom. |
 | Wild battles | Flee duplicates, non-capture encounters when candy preparation is enabled, or when the active Pokémon is below 25% HP. Catching uses the ball row without asking Jev. |
 | Healing | Seek healing for any living member below half HP, status problems, or all moves exhausted. Restore full HP, status, and observed PP before Brock, including after the gym's junior trainer. |
 | Wipe | Detect all party members dead/fainted, a battle-loss signal, or the healed blackout warp; stop further play. |
 
 Preparation targets are configured under `rare_candy` in `config/run.yaml`:
 
-| Location | Target | Conditions |
+| Location | Configured maximum → effective target | Conditions |
 |---|---|---|
 | Oak's Lab | 8 | Lone Bulbasaur before the rival; full HP and healthy status. |
 | Viridian Center | 12 | Healthy party, no permanently dead members. |
-| Pewter Center | 14 | Healthy party, no permanently dead members. |
+| Pewter Center, before Brock | 14 → 12 | Healthy party, no permanently dead members. |
+| Supported Centers after Brock | 18 | Healthy party; Boulder Badge required. |
+| Cerulean Center | 21 → 19 | Healthy party; Boulder Badge required. |
 
-The restricted endpoint grants the exact missing candy quantity, accounting for candies already held. The runner consumes them through the normal bag and party menus; it never writes levels directly. Grants and observed uses enter the rule-event chain. Targets are limited by the current cap and endpoint limits (8 in the lab, 14 at the supported Centers).
+The restricted endpoint grants the exact missing candy quantity, accounting for candies already held. The runner consumes them through the normal bag and party menus; it never writes levels directly. Grants and observed uses enter the rule-event chain. Routine targets stop below the reserve band: `cap − level_cap_buffer − 1` (12 before Brock, 19 before Misty with the default buffer), and also respect endpoint limits (8 in the lab; 14 before Boulder and 21 after Boulder at supported Centers).
+
+**Final gym preparation:** before interacting with Brock or Misty, stop at the leader's approach tile and use Rare Candies to bring every living under-cap party member to the current cap (14 / 21). Ordinary travel and gym trainers retain the reserve buffer. The leader route omits its A press until the top-up finishes, and the arbiter blocks an early challenge. Full-party healing is required before the grant; move learning and evolution keep their existing protected flows. The restricted grant endpoint additionally accepts the unbeaten leader's exact approach position. Over-cap members remain ineligible; candies cannot lower their levels. This final gate currently covers Brock and Misty.
+
+**Mart purchases:** the shop controller reads the full live stock list, including off-screen rows, and selects the best affordable capture ball: **Ultra → Great → Poké Ball**. It buys the shortfall to ten total balls, bounded by money, checks the visible unit price and final total, then verifies the bag increase and money decrease before exiting. The × quantity picker is handled before inactive-menu paging, fixing the repeated A/B cancellation loop. Pending purchases survive checkpoints; unexpected prices/results or 60 cycles without completion pause the run. City supply routes currently cover Viridian, Pewter, and Cerulean.
+
+Lead rotation uses START → POKéMON → SWITCH, verifies the new lead by capture identity, and closes the menus before walking. Its pending transaction survives checkpoints. In battle, System 3 and the arbiter prefer a replacement below the reserve threshold with at least 60% HP, healthy status, usable damage, sufficient level and no weakness to the enemy’s species types. Legal capture/flee choices take priority over optional switches. If no suitable alternative exists, a still-legal reserved Pokémon may fight; over-cap Pokémon remain ineligible. This is a matchup heuristic, not a damage calculation or a guarantee against crossing the cap in one battle. Switching after battle entry can still share XP, hence the overworld rotation.
+
+Evolution protection applies inside the dialog macro and at the final arbiter: battle narration sends one A page and released wait frames, then re-observes. Overworld speech retains B paging to avoid reopening NPC conversations. Every macro round checks evolution text; evolution waits without B and its result uses A. The shared detector distinguishes partial species announcements (such as “What? BULBASAUR”) from ordinary “What? I’m waiting…” NPC speech. More than 30 consecutive evolution wait cycles pauses for inspection; lead rotation also pauses after 40 cycles without completion. A canceled evolution is retried naturally on a later level, without rolling back the run.
+
+Move learning has a dedicated controller (`agents/move_learning.py`) before candy and battle menus. Jev chooses once whether to keep the moveset or replace a legal slot, using move types, power, accuracy, PP and effects from a vanilla Red baseline. Code handles the delete prompt, forget list, stop-learning confirmation and result text one button at a time, with the same choice enforced by the arbiter. HMs and the sole damaging move (when learning a status move) are protected. The choice survives checkpoints; observed move IDs verify the result, recorded as `move_learned` or `move_declined`. Unexpected results pause the run. These facts and fallback preferences are not damage calculations.
+
+Encounter searches first route to observed grass or a reference grass patch, including permitted ledge drops. Only pacing on encounter terrain suppresses loop recovery; approaching an unreachable patch does not. Route 4’s eastern region begins at its actual Mt. Moon exit (x=24), shared by story, encounter and healing objectives.
+
+Encounter completion means caught or legitimately forfeited, never merely a search timeout. A loaded ROM encounter table containing only owned evolution families is marked duplicate-only without consuming its slot. Western Route 4 waits until reachable from Mt. Moon’s east exit. Marts in Viridian, Pewter, and Cerulean restock when fewer than ten balls remain and money allows. Fishing, inaccessible areas, and gifts are not yet comprehensively scheduled.
 
 Active battle Pokémon and PP come from the battle structure. Move options include observed types, Gen-1 effectiveness, and PP; this is not a damage calculator. Battle damage calculations are deferred to a later commit. Known trainer teams are vanilla Red data through Misty and may differ in Red Star.
 
@@ -131,7 +154,7 @@ Pixel checks use native **160×144** frames. Vision calls use the **640×576** g
 uv run nuzlocke run --resume <run-id>
 ```
 
-Each completed cycle writes an immutable savestate and controller record, then atomically publishes `checkpoints/current.json`. Controller state includes the encounter/death ledgers, battle eligibility and plans, navigation memory/trust, and preparation/search state. Mid-battle commits are supported. `savestates/auto.state` is a convenience copy for diagnostics.
+Each completed cycle writes an immutable savestate and controller record, then atomically publishes `checkpoints/current.json`. Controller state includes the encounter/death ledgers, battle eligibility and plans, navigation memory/trust, preparation/search state, pending move-learning and shop transactions, and lead rotation. Mid-battle commits are supported. `savestates/auto.state` is a convenience copy for diagnostics.
 
 Resume validates ROM/rules identity, savestate checksum, and the chained rule-event history against its stored head. A pending-action marker, missing paired history, changed identity, corrupted history, or a terminal wipe refuses legal continuation. A crash during an action therefore may require diagnostic inspection instead of automatic resume.
 

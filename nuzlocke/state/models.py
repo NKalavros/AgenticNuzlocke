@@ -213,6 +213,7 @@ class PlayerObservation(BaseModel):
     badges: list[str] = Field(default_factory=list)
     money: int | None = None
     collision_ascii: str | None = None
+    terrain_tiles: list[dict[str, int]] = Field(default_factory=list)
     # The map's objects from WRAM (``GET /map/objects``), in map tiles like ``x``/``y``.
     # Empty on a server without that route, or when ``ObjectTrust`` has withheld them.
     warps: list[dict[str, Any]] = Field(default_factory=list)
@@ -239,7 +240,11 @@ class PlayerObservation(BaseModel):
     battle_style: str | None = None
     menu_index: int | None = None
     menu_scroll: int = 0
+    shop_stock: list[dict[str, Any]] = Field(default_factory=list)
+    learning_party_slot: int | None = None
+    learning_move_id: int | None = None
     grass_tiles: list[dict[str, int]] = Field(default_factory=list)
+    wild_species: list[str] = Field(default_factory=list)
     policy: dict[str, Any] = Field(default_factory=dict)
 
 

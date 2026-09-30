@@ -19,6 +19,14 @@ def preparation_turn(loop, obs):
         if "HT" in text and "WT" in text:
             return [A.PRESS_A, A.WAIT_60], "caught Pokémon's Pokédex page"
         return [], ""
+    from nuzlocke.knowledge.objects import fossil_question, has_fossil
+
+    if fossil_question(obs.map_id, obs.screen_rows) and not has_fossil(obs):
+        if rows == ["YES", "NO"] and cursor is not None:
+            return menu_actions("choose_0", cursor), "accept one Mt. Moon fossil"
+        return [A.WAIT_60], "wait for the fossil YES/NO; B would decline it"
+    if obs.map_id == 61 and has_fossil(obs) and "GOT THE" in text and "FOSSIL" in text:
+        return [A.PRESS_A, A.WAIT_60], "acknowledge fossil receipt"
     if not obs.party and "WT" in text and "HT" in text:
         loop._starter_seen = next(
             (s for s in ("BULBASAUR", "CHARMANDER", "SQUIRTLE") if s in text), None
@@ -55,22 +63,8 @@ def preparation_turn(loop, obs):
         return menu_actions(f"choose_{rows.index('HEAL')}", cursor), "accept healing"
     if rows == ["YES", "NO"] and beat and beat.id.startswith("heal"):
         return menu_actions("choose_0", cursor), "accept healing"
-    balls = any("ball" in str(i.get("item", "")).lower() for i in obs.bag)
-    if obs.map_id == 42 and "▷" in text and "▶" not in text and screen.text_lines:
-        return [A.PRESS_B, A.WAIT_60], "page the shop's question before its menu activates"
-    if obs.map_id == 42 and obs.flags.get("has_pokedex") and rows and cursor is not None:
-        if balls:
-            choice = next((i for i, r in enumerate(rows) if r == "QUIT"), None)
-            return (
-                menu_actions(f"choose_{choice}", cursor) if choice is not None else [A.PRESS_B]
-            ), "leave shop"
-        wanted = next(
-            (i for i, r in enumerate(rows) if r == "BUY" or "BALL" in r or r == "YES"), None
-        )
-        if wanted is not None:
-            return menu_actions(f"choose_{wanted}", cursor), "buy balls"
     dead = [m for m in obs.party if m.get("dead")]
-    if dead and obs.map_id in {41, 58}:
+    if dead and obs.map_id in {41, 58, 64, 68}:
         if rows and cursor is not None:
             for label in ("SOMEONE", "BILL", "DEPOSIT"):
                 index = next((i for i, row in enumerate(rows) if label in row), None)
@@ -96,20 +90,38 @@ def preparation_turn(loop, obs):
             slot = next(i for i, m in enumerate(obs.party) if m.get("dead"))
             return menu_actions(f"choose_{slot}", obs.menu_index), "select dead Pokémon for deposit"
         return [], ""
-    if obs.map_id not in {40, 41, 58} or any(m.get("dead") for m in obs.party):
+    from nuzlocke.agents.gym_preparation import at_leader
+
+    gym_top_up = at_leader(obs)
+    if (obs.map_id not in {40, 41, 58, 64, 68} and not gym_top_up) or any(
+        m.get("dead") for m in obs.party
+    ):
         return [], ""
     if obs.map_id == 40 and (len(obs.party) != 1 or obs.party[0].get("species") != "Bulbasaur"):
         return [], ""
     settings = loop.run_cfg.get("rare_candy") or {}
-    target = min(
-        loop.referee.current_cap,
-        int(
-            settings.get(
-                {40: "rival_level", 41: "first_center_level", 58: "brock_level"}[obs.map_id],
-                {40: 8, 41: 12, 58: 14}[obs.map_id],
-            )
-        ),
+    setting = (
+        ("misty_level" if obs.map_id == 64 else "post_brock_level")
+        if "Boulder" in obs.badges
+        else {40: "rival_level", 41: "first_center_level", 58: "brock_level"}.get(
+            obs.map_id, "brock_level"
+        )
     )
+    default = (
+        (21 if obs.map_id == 64 else 18)
+        if "Boulder" in obs.badges
+        else {40: 8, 41: 12, 58: 14}.get(obs.map_id, 14)
+    )
+    from nuzlocke.agents.level_buffer import preparation_limit
+
+    target = min(
+        preparation_limit(loop.referee.current_cap, int(loop.run_cfg.get("level_cap_buffer", 1))),
+        int(settings.get(setting, default)),
+    )
+    if gym_top_up:
+        target = loop.referee.current_cap
+    if loop._preparing_target:
+        target = loop._preparing_target
     candidates = [(i, m) for i, m in enumerate(obs.party) if (m.get("level") or target) < target]
     if not candidates:
         if loop._preparing_target:
@@ -124,6 +136,10 @@ def preparation_turn(loop, obs):
         if not healthy or screen.text_lines or rows:
             return [], ""
         if not (loop.run_cfg.get("rare_candy") or {}).get("enabled"):
+            if gym_top_up:
+                raise RuntimeError(
+                    "Gym leader requires party at the cap; enable Rare Candy preparation"
+                )
             return [], ""
         result = loop.env._post_json("/nuzlocke/prepare", {"target": target})
         loop.store.append("candy_grant", result)
@@ -156,8 +172,6 @@ def preparation_turn(loop, obs):
         slot = candidates[0][0]
         cursor = obs.menu_index or 0
         return menu_actions(f"choose_{slot}", cursor), f"candy for party slot {slot}"
-    if "TRYING TO LEARN" in text or "DELETE" in text or "FORGET" in text:
-        return [], ""  # The verified move-learning handler owns these decisions.
     if screen.text_lines:
         return [A.PRESS_A, A.WAIT_60], "finish candy result"
     if not rows:

@@ -67,8 +67,10 @@ def new_sandbox(
         shutil.copy2(src, dest)
         meta["savestate"] = str(src)
         source_dir = runs / source
-        record_path = source_dir / "checkpoints" / (
-            "current.json" if state == CHECKPOINT_NAME else f"{state}.json"
+        record_path = (
+            source_dir
+            / "checkpoints"
+            / ("current.json" if state == CHECKPOINT_NAME else f"{state}.json")
         )
         if record_path.exists():
             record = json.loads(record_path.read_text())
@@ -230,6 +232,10 @@ def summarize(run_dir: Path) -> dict[str, Any]:
             e["kind"] == "milestone_complete" and e["payload"].get("milestone") == "brock"
             for e in session
         ),
+        "completed_misty": any(
+            e["kind"] == "milestone_complete" and e["payload"].get("milestone") == "misty"
+            for e in session
+        ),
         "wiped": any(e["kind"] == "nuzlocke_wipe" for e in session),
         "rule_alerts": rule_alerts,
         "eligibility_alerts": eligibility_alerts,
@@ -289,6 +295,7 @@ def benchmark(*, trials: int = 5, steps: int = 1500, rom: Path | None = None) ->
         error = None
         try:
             loop = RunLoop(rom_path=rom, run_id=run_id, port=free_port(), headless=True)
+            loop.run_cfg["stop_after"] = "brock"  # This benchmark still measures the first badge.
             loop.run(max_steps=steps)
         except Exception as exc:  # noqa: BLE001 — retain failed trials of every kind
             error = f"{type(exc).__name__}: {exc}"

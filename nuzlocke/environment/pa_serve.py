@@ -151,9 +151,55 @@ def read_map_objects(emu: Any) -> dict[str, Any]:
         "battle_style": "SET" if emu.read_u8(W_OPTIONS) & 0x40 else "SHIFT",
         "menu_index": emu.read_u8(0xCC26),
         "menu_scroll": emu.read_u8(0xCC36),
+        "shop_stock": read_shop_stock(emu),
+        # LearnMove uses wWhichPokemon, not the active battle slot or party menu cursor.
+        # These scratch values are meaningful only on a verified move-learning screen.
+        "learning_party_slot": emu.read_u8(0xCF92),
+        "learning_move_id": emu.read_u8(0xD0E0),
         "screen": read_screen_rows(emu),
         "grass_tiles": read_grass(emu),
+        "wild_species": read_wild_species(emu),
     }
+
+
+def read_shop_stock(emu: Any) -> list[dict]:
+    """Loaded Mart list, gated by its visible BUY menu; includes off-screen rows.
+
+    pokered LoadItemList copies count, item IDs, FF to wItemList (CF7B).
+    Never interpret this scratch buffer outside a verified shop UI.
+    """
+    import re
+
+    from pokemon_agent.memory.red import ITEM_NAMES
+
+    rows = read_screen_rows(emu)
+    if not any(re.search(r"[│▶▷]\s*BUY\b", row) for row in rows):
+        return []
+    count = emu.read_u8(0xCF7B)
+    if not 1 <= count <= 14 or emu.read_u8(0xCF7C + count) != 0xFF:
+        return []
+    ids = list(emu.read_range(0xCF7C, count))
+    if any(i not in ITEM_NAMES for i in ids):
+        return []
+    return [{"slot": slot, "id": item, "item": ITEM_NAMES[item]} for slot, item in enumerate(ids)]
+
+
+def read_wild_species(emu: Any) -> list[str]:
+    """The loaded land encounter table; use the ROM's species, not vanilla guesses.
+
+    pret/pokered symbols: wGrassRate=D887, wGrassMons=D888 (ten level/species pairs).
+    """
+    from pokemon_agent.memory.red import species_name_from_index
+
+    if emu.read_u8(W_IS_IN_BATTLE) or not emu.read_u8(0xD887):
+        return []
+    slots = list(emu.read_range(0xD888, 20))
+    names = [species_name_from_index(slots[i]) for i in range(1, 20, 2)]
+    if any(not 1 <= slots[i] <= 100 for i in range(0, 20, 2)) or any(
+        not n or "?" in n or n.lower() == "unknown" for n in names
+    ):
+        return []
+    return sorted(set(names))
 
 
 def read_grass(emu: Any) -> list[dict[str, int]]:
@@ -304,7 +350,7 @@ def _mount() -> None:
 
 
 def prepare_items(reader: Any, request: dict) -> dict:
-    """Narrow audited exception: SET configuration, or exact candy deficit at a Center."""
+    """Audited SET configuration or exact healthy-party candy deficit at approved locations."""
     emu = reader.emu
     memory = emu._pyboy.memory
     if emu.read_u8(W_IS_IN_BATTLE):
@@ -313,12 +359,20 @@ def prepare_items(reader: Any, request: dict) -> dict:
         memory[W_OPTIONS] = emu.read_u8(W_OPTIONS) | 0x40
         return {"battle_style": "SET"}
     target = request.get("target")
+    cap = 21 if emu.read_u8(0xD356) & 1 else 14
+    from nuzlocke.agents.gym_preparation import leader_position
+
+    badges = [name for bit, name in ((1, "Boulder"), (2, "Cascade")) if emu.read_u8(0xD356) & bit]
+    leader = leader_position(emu.read_u8(W_CUR_MAP), badges)
+    at_leader = leader is not None and (emu.read_u8(W_X_COORD), emu.read_u8(W_Y_COORD)) == leader
     if (
         not isinstance(target, int)
-        or not 1 <= target <= 14
-        or emu.read_u8(W_CUR_MAP) not in {40, 41, 58}
+        or not 1 <= target <= cap
+        or (emu.read_u8(W_CUR_MAP) not in {40, 41, 58, 64, 68} and not at_leader)
     ):
-        raise ValueError("candy grants require a Center and a target at or below 14")
+        raise ValueError(
+            f"candy grants require a Center or unbeaten leader position and a target at or below {cap}"
+        )
     party = reader.read_party()
     if emu.read_u8(W_CUR_MAP) == 40 and (
         target > 8 or len(party) != 1 or party[0].get("species") != "Bulbasaur"

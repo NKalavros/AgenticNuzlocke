@@ -18,7 +18,7 @@ Use the injected walkthrough excerpt when one is present; do not read skill file
 - Naming / dialog is done but story progress is unclear
 - Recovery or high stuck score is active
 
-Do **not** load the whole guide every step. Open `reference.md` and read **only** the section for the current screen (title, house, Pallet, lab, Route 1, Viridian, Pewter/Brock).
+Do **not** load the whole guide every step. Open `reference.md` and read **only** the section for the current screen (title, house, Pallet, lab, Route 1, Viridian, Pewter/Brock, Route 3/Mt. Moon, Cerulean/Misty).
 
 ## How to apply
 
@@ -33,7 +33,7 @@ Do **not** load the whole guide every step. Open `reference.md` and read **only*
 - Screenshot is ground truth.
 - Furniture / TV / plants are not outdoors and usually not stairs.
 - Naming keyboard → `press_start` finishes the name; do not walk as overworld. Identify the letter grid, not the instant-text RAM flag alone.
-- Ordinary dialog → `skip_dialog` (B taps with released wait frames). Never append A after the box closes; it can reopen the NPC. Stop at YES/NO and menus. Evolution waits without B; level-up stat boxes use A.
+- Ordinary dialog → `skip_dialog` (B taps with released wait frames). Never append A after the box closes; it can reopen the NPC. Stop at YES/NO and menus. Battle narration uses one A page at a time. Evolution waits without B; completion text and level-up stat boxes use A.
 - Follow the controller's legal choices and preparation targets. Verify Bulbasaur before accepting the starter; do not override SET, encounter, death, or battle-entry cap rules.
-- The default route ends when the Boulder Badge is observed. Later areas require a separate extension of the runner.
+- The default target is now Misty (Cascade Badge). Complete pending accessible encounters before advancing; never abandon a legal slot just because a search has taken many cycles.
 - If a walk already nooped, do not repeat it — one tile perpendicular, then retry.

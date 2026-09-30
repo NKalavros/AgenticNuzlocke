@@ -18,7 +18,8 @@ _RULES: tuple[tuple[tuple[str, ...], str], ...] = (
     (("pallet", "fence", "post"), "pallet"),
     (("parcel", "pokedex", "pokédex", "mart", "aide"), "after starter"),
     (("route 1", "viridian forest", "forest", "ledge", "viridian"), "route 1"),
-    (("pewter", "brock", "gym"), "pewter"),
+    (("pewter", "brock"), "pewter"),
+    (("route 3", "route 4", "moon", "cerulean", "misty", "route 24", "route 25"), "route 3 / mt. moon"),
     (("stuck", "noop", "oscillat", "bounce", "loop"), "stuck"),
 )
 

@@ -8,7 +8,6 @@ from typing import Any
 from pydantic import BaseModel, Field, ValidationError
 
 from nuzlocke.agents.goals import (
-    DIRS,
     MAX_BURST,
     Goal,
     RoomMap,
@@ -17,6 +16,7 @@ from nuzlocke.agents.goals import (
     collision_map,
     map_key,
 )
+from nuzlocke.environment.terrain import step_delta
 from nuzlocke.state.models import GameAction, PlayerObservation
 
 
@@ -38,7 +38,7 @@ def parse_route_plan(raw: Any) -> dict:
 def path_tiles(start: tuple[int, int], path: list[str]) -> list[tuple[int, int]]:
     tiles = [start]
     for direction in path:
-        dx, dy = DIRS[direction]
+        dx, dy = step_delta(direction)
         tiles.append((tiles[-1][0] + dx, tiles[-1][1] + dy))
     return tiles
 
@@ -46,8 +46,8 @@ def path_tiles(start: tuple[int, int], path: list[str]) -> list[tuple[int, int]]
 class Navigator:
     """Keep a route until completion, changed objective, or contradictory movement.
 
-    Map geometry comes only from observed screens and verified walks. Unknown cells
-    remain unknown in the director's whole-map view; no vanilla layout is assumed.
+    Observed geometry and the vanilla map reference are both supplied to the director.
+    Button paths use observed floor, guided toward known destinations in the reference.
     """
 
     def __init__(self) -> None:
@@ -101,7 +101,12 @@ class Navigator:
             self.route = {}
             self.brief = {}
             return None
-        signature = [obs.map_id, goal.key, objective_text]
+        if not goal.actions and not goal.path:
+            self.route = {}
+            self.brief = {}
+            self.reason = "Objective has no legal route; director must replan"
+            return None
+        signature = [obs.map_id, goal.key, objective_text, goal.finish]
         if self.route.get("signature") != signature:
             self.route = {}
             self.plan = {}
@@ -116,6 +121,9 @@ class Navigator:
         self.observe(obs, room)
         start = (obs.x, obs.y)
         walkable = collision_map(obs, room) or {}
+        from nuzlocke.knowledge.map_reference import ledge_jumps
+
+        jumps = ledge_jumps(obs, room)
         remaining = None
         suffix: list[str] = []
         if self.route and not failed:
@@ -130,7 +138,9 @@ class Navigator:
                 edges = room.blocked_edges(obs)
                 traversed = list(zip(path_tiles(start, candidate), candidate))
                 if all(walkable.get(t, False) for t in checked) and not any(
-                    (tile[0], tile[1], d) in edges for tile, d in traversed
+                    (tile[0], tile[1], d.removeprefix("jump_")) in edges
+                    or (d.startswith("jump_") and (*tile, d.removeprefix("jump_")) not in jumps)
+                    for tile, d in traversed
                 ):
                     remaining = candidate
                     self.reused += 1
@@ -150,7 +160,13 @@ class Navigator:
             if waypoints:
                 waypoint = tuple(waypoints[0])
                 routes = Routes(
-                    start, walkable, costs=room.costs, blocked_edges=room.blocked_edges(obs)
+                    start,
+                    walkable,
+                    costs=room.costs,
+                    blocked_edges=room.blocked_edges(obs),
+                    crossed_edges=room.crossed_edges.get(map_key(obs), set()),
+                    terrain_edges=room.terrain_edges(obs),
+                    jumps=jumps,
                 )
                 observed = {**room.known.get(map_key(obs), {}), **_grid_tiles(obs)}
                 path = (
@@ -181,7 +197,7 @@ class Navigator:
                 "reason": "No reachable route; awaiting replan",
             }
             return None
-        actions = [GameAction(f"walk_{d}") for d in remaining[:MAX_BURST]]
+        actions = [GameAction(f"walk_{d.removeprefix('jump_')}") for d in remaining[:MAX_BURST]]
         if len(remaining) <= MAX_BURST:
             actions += [GameAction(a) for a in suffix]
         self.brief = {
@@ -208,7 +224,10 @@ class Navigator:
             objective=True,
         )
 
-    def context(self, obs: PlayerObservation, room: RoomMap) -> dict:
+    def context(self, obs: PlayerObservation, room: RoomMap, objective: dict | None = None) -> dict:
+        from nuzlocke.knowledge.map_reference import briefing
+        from nuzlocke.knowledge.objects import object_facts
+
         data = self.maps.get(str(obs.map_id), {})
         known = room.known.get(map_key(obs), {})
         seen = room.seen(obs)
@@ -235,8 +254,15 @@ class Navigator:
             "source": "observed grid and verified walks; unknown terrain is ?",
             "legend": "x=column, y=row (zero based); @ player, . open, # wall, ? unknown, , grass",
             "rows": rows,
+            "reference_map": briefing(obs, objective, room),
             "warps": obs.warps or data.get("warps", []),
-            "temporary_blocked_edges": [list(e) for e in room.blocked_edges(obs)],
+            "objects": [object_facts(obs, npc) for npc in obs.npcs],
+            "signs": obs.signs,
+            "interaction_target": objective
+            if objective and objective.get("kind") in {"npc", "face"}
+            else None,
+            "temporary_blocked_edges": [list(e) for e in room.temporary_edges(obs)],
+            "terrain_blocked_edges": [list(e) for e in sorted(room.terrain_edges(obs))],
             "route": self.brief,
             "path": self.route.get("tiles", [])
             if self.route.get("signature", [None])[0] == obs.map_id

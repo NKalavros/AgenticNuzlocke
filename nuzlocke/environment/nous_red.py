@@ -24,6 +24,7 @@ from nuzlocke.environment.joypad import agent_can_act, is_naming_lock
 from nuzlocke.environment.macros import drop_naming_confirm_if_walking, expand_actions
 from nuzlocke.environment.maps import map_name
 from nuzlocke.environment.screen_text import parse_screen
+from nuzlocke.environment.terrain import terrain_tiles
 from nuzlocke.state.models import ControlState, GameAction, PlayerObservation
 
 # /screenshot/grid scale for vision calls: labelled A1..J9 walk cells, player at E5.
@@ -233,6 +234,7 @@ class NousRedEnvironment:
             badges=list(player.get("badges") or player.get("badges_list") or []),
             money=player.get("money"),
             collision_ascii=collision_ascii,
+            terrain_tiles=terrain_tiles(state.get("collision"), pos.get("x"), pos.get("y")),
             **_objects_on_map(objects, map_id if map_id is not None else pos.get("map_id")),
             screen_rows=[str(row) for row in (objects or {}).get("screen") or []],
             map_size=(objects or {}).get("size") or None,
@@ -249,7 +251,11 @@ class NousRedEnvironment:
             battle_style=(objects or {}).get("battle_style"),
             menu_index=(objects or {}).get("menu_index"),
             menu_scroll=(objects or {}).get("menu_scroll", 0),
+            shop_stock=(objects or {}).get("shop_stock", []),
             grass_tiles=(objects or {}).get("grass_tiles", []),
+            wild_species=(objects or {}).get("wild_species", []),
+            learning_party_slot=(objects or {}).get("learning_party_slot"),
+            learning_move_id=(objects or {}).get("learning_move_id"),
         )
 
     def peek_state(self) -> PlayerObservation:
@@ -461,9 +467,9 @@ class NousRedEnvironment:
         return frame is not None and screen.prompt_box_open(frame[1])
 
     def execute_skip_dialog(self, *, max_rounds: int = SKIP_DIALOG_MAX_ROUNDS) -> PlayerObservation:
-        """Page narrative text with B until the text box closes or stops changing.
+        """Page overworld text with B; battle text gets one A page and re-observation.
 
-        B advances Gen 1 text like A but starts nothing in the overworld, so a mash cannot
+        B starts nothing in the overworld, so ordinary speech paging cannot
         re-open the NPC it just finished. The naming keyboard and a prompt end it before a press.
         """
         stable = 0
@@ -473,6 +479,20 @@ class NousRedEnvironment:
                 break
             if is_naming_lock(self._joy_ignore()) or self._prompt_up():
                 break
+            objects = self._map_objects() or {}
+            from nuzlocke.environment.evolution import evolution_phase
+
+            # A battle's final text can start evolution inside this macro. Never hold B
+            # through that transition, and inspect freshly decoded text before every round.
+            if evolution_phase(objects.get("screen", [])):
+                break
+            from nuzlocke.knowledge.objects import fossil_question
+
+            if fossil_question(objects.get("map_id"), objects.get("screen", [])):
+                break  # The YES/NO can appear during a held B, which would decline it.
+            if objects.get("input", {}).get("battle") in (1, 2):
+                self._post_json("/action", {"actions": ["press_a", "wait_30"]})
+                break  # The next screen may be a battle menu or an evolution.
             self._post_json("/action", {"actions": list(MASH_ROUND)})
             if self.press_interval_s > 0:
                 time.sleep(min(self.press_interval_s, 0.05))
@@ -572,6 +592,23 @@ class NousRedEnvironment:
                     executed=executed, stopped_early_because=stopped, observation=after, walks=walks
                 )
             opcodes = [action.value]
+            jump_landing = None
+            if action.value.startswith("walk_") and not cursor:
+                from nuzlocke.environment.terrain import ledge_pair
+
+                direction = action.value.removeprefix("walk_")
+                dx, dy = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}[
+                    direction
+                ]
+                tiles = {(t["x"], t["y"]): (t["tileset"], t["id"]) for t in before.terrain_tiles}
+                here = (before.x, before.y)
+                if (
+                    here in tiles
+                    and (before.x + dx, before.y + dy) in tiles
+                    and ledge_pair(tiles[here], tiles[before.x + dx, before.y + dy], direction)
+                ):
+                    jump_landing = (before.x + 2 * dx, before.y + 2 * dy)
+                    opcodes.append("wait_60")  # Release input and finish the two-tile animation.
             if action.value.startswith("hold_"):
                 opcodes.append(HOLD_RELEASE)
             elif action is GameAction.PRESS_A and last:
@@ -617,6 +654,11 @@ class NousRedEnvironment:
             if scene_stop:
                 stopped = scene_stop
                 break
+            if jump_landing is not None:
+                stopped = _transition(before, after) or (
+                    "ledge_jump" if (after.x, after.y) == jump_landing else "ledge_not_crossed"
+                )
+                break  # Replan from the actual landing; never continue a stale burst.
             if walk and _same_tile(before, after):
                 next_is_a = not last and actions[i + 1] is GameAction.PRESS_A
                 if next_is_a and str(after.facing).lower() == action.value.removeprefix("walk_"):

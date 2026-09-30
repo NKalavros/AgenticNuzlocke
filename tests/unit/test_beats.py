@@ -99,3 +99,10 @@ def test_the_parcel_errand_comes_before_the_north_road():
     assert current_beat(_obs(map_name="Oak's Lab", party=mon, bag=parcel)).id == "deliver_parcel"
     dex = _obs(map_name="Viridian City", map_id=1, party=mon, flags={"has_pokedex": True})
     assert current_beat(dex).id == "to_route_2"
+
+
+def test_route3_uses_its_north_connection_to_route4():
+    obs = _obs(map_id=14, map_name="Route 3", badges=["Boulder"], connections=["up", "left"])
+    beat = current_beat(obs)
+    assert beat.target == {"kind": "edge", "dir": "up"}
+    assert beat.target["dir"] in obs.connections

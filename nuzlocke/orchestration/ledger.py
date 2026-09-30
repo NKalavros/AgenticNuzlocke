@@ -41,6 +41,7 @@ class LedgerTracker:
         return self._ledger_snapshot() != before
 
     def _track_encounter(self, obs: PlayerObservation) -> None:
+        from nuzlocke.knowledge.encounters import area_key, resolved
         from nuzlocke.referee.families import family
 
         battle = obs.battle or {}
@@ -61,7 +62,7 @@ class LedgerTracker:
             self._battle_party_size = len(obs.party)
             self._battle_owned = obs.flags.get("pokedex_owned", 0)
         if obs.in_battle and not self._encounter_classified:
-            area = str(obs.map_id) if obs.map_id is not None else obs.map_name
+            area = area_key(obs.map_id, obs.map_name)
             species = str((battle.get("enemy") or {}).get("species") or "unknown")
             # Battle flags change before the enemy structure finishes loading.
             if battle.get("type") == "wild" and (species == "unknown" or "?" in species):
@@ -82,7 +83,11 @@ class LedgerTracker:
                 and self.referee.balls_acquired
                 and not duplicate
             ):
-                self.first_encounter = area not in self.referee.encounter_ledger
+                self.first_encounter = (
+                    not resolved(self.referee.encounter_ledger, obs.map_id)
+                    if obs.map_id is not None
+                    else area not in self.referee.encounter_ledger
+                )
                 if self.first_encounter:
                     self.referee.freeze_encounter(area=area, species=species, outcome="engaged")
                     self._battle_area = area

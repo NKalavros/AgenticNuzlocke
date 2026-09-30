@@ -20,7 +20,7 @@ from nuzlocke.knowledge.beats import Beat
 from nuzlocke.state.models import PlayerObservation
 
 _RULES = (
-    "Nuzlocke: only POKé BALLs in battle; audited Rare Candies for preparation outside battle; "
+    "Nuzlocke: only capture balls (Poké, Great, Ultra) in battle; audited Rare Candies for preparation outside battle; "
     "SET battle style; a fainted POKéMON is permanently dead; the first eligible wild encounter "
     "in each area is the only one that may be caught; never let the party wipe."
 )
@@ -102,11 +102,13 @@ def heal_beat(obs: PlayerObservation) -> Beat | None:
     preparing = any((m.get("level") or 14) < target for m in living)
     # The grant requires the whole party healthy, including members already at target.
     preparation_heal = (
-        obs.map_id in {41, 58}
+        obs.map_id in POKECENTERS
         and preparing
         and any(m.get("hp") != m.get("max_hp") or m.get("status", "OK") != "OK" for m in living)
     )
-    if obs.map_id in {2, 54, 58} and "Boulder" not in obs.badges:
+    if (obs.map_id in {2, 54, 58} and "Boulder" not in obs.badges) or (
+        obs.map_id in {3, 64, 65} and "Boulder" in obs.badges and "Cascade" not in obs.badges
+    ):
         preparation_heal |= any(
             m.get("hp") != m.get("max_hp")
             or m.get("status", "OK") != "OK"
@@ -134,9 +136,47 @@ def heal_beat(obs: PlayerObservation) -> Beat | None:
             "leave the forest by the nearer gate.",
             {"kind": "warp", "dest_map": gate},
         )
-    if obs.map_id in {38, 39, 40, 42, 54}:
+    if obs.map_id in {38, 39, 40, 42, 54, 56, 65, 67}:
         return _toward(
             "heal_exit", "leave this building for healing.", {"kind": "warp", "dest_map": 255}
+        )
+    if obs.map_id == 33:
+        return _toward("heal_route22", "return east to Viridian.", {"kind": "edge", "dir": "right"})
+    if obs.map_id == 14:
+        return _toward("heal_route3", "return west to Pewter.", {"kind": "edge", "dir": "left"})
+    if obs.map_id == 15:
+        from nuzlocke.knowledge.map_reference import route4_east
+
+        target = (
+            {"kind": "warp", "dest_map": 68}
+            if not route4_east(obs)
+            else {"kind": "edge", "dir": "right"}
+        )
+        return _toward("heal_route4", "reach the nearest Center.", target)
+    if obs.map_id == 59:
+        return _toward(
+            "heal_moon1", "leave Mt. Moon for its Center.", {"kind": "warp", "dest_map": 255}
+        )
+    if obs.map_id == 60:
+        target = (
+            {"kind": "warp", "dest_map": 255}
+            if (obs.y or 0) < 6 and (obs.x or 0) > 20
+            else {"kind": "warp", "dest_map": 59}
+        )
+        return _toward("heal_moon_b1", "return to a Center via the nearest surface exit.", target)
+    if obs.map_id == 61:
+        return _toward(
+            "heal_moon_b2", "return upstairs for healing.", {"kind": "warp", "dest_map": 60}
+        )
+    if obs.map_id == 3:
+        return _toward(
+            "heal_cerulean", "enter Cerulean's Center.", {"kind": "warp", "dest_map": 64}
+        )
+    if obs.map_id in {35, 36}:
+        return _toward(
+            "heal_north",
+            "return to Cerulean's Center.",
+            {"kind": "edge", "dir": "down" if obs.map_id == 35 else "left"},
         )
     return _ROUTE.get(obs.map_id)
 
@@ -156,11 +196,29 @@ def current_beat(obs: PlayerObservation) -> Beat | None:
             update={"party": [{**m, "hp": 1} for m in obs.party if not m.get("dead")]}
         )
         return heal_beat(hurt)
-    return heal_beat(obs) or beats.current_beat(obs)
+    return heal_beat(obs) or supply_beat(obs) or beats.current_beat(obs)
+
+
+def supply_beat(obs: PlayerObservation) -> Beat | None:
+    if obs.in_battle or not obs.flags.get("has_pokedex") or (obs.money or 0) < 200:
+        return None
+    count = sum(i.get("quantity", 0) for i in obs.bag if "ball" in str(i.get("item", "")).lower())
+    if count >= 10:
+        return None
+    if obs.map_id in {1, 2, 3}:
+        return Beat(
+            "buy_balls_city",
+            "Restock Poké Balls before the next encounters.",
+            "Enter the Mart.",
+            target={"kind": "warp", "dest_map": {1: 42, 2: 56, 3: 67}[obs.map_id]},
+        )
+    if obs.map_id in {42, 56, 67}:
+        return beats.BUY_BALLS
+    return None
 
 
 def objective_window(obs: PlayerObservation) -> dict[str, str] | None:
-    heal = heal_beat(obs)
+    heal = heal_beat(obs) or supply_beat(obs)
     story = beats.objective_window(obs)
     if heal is None:
         return story
@@ -180,6 +238,14 @@ def forced_battle_choice(obs: PlayerObservation, first_encounter: bool = False) 
     """
     fraction = lead_fraction(obs)
     wild = (obs.battle or {}).get("type") == "wild"
+    from nuzlocke.agents.battle import active_mon
+    from nuzlocke.agents.level_buffer import eligible, switch_target
+
+    active = active_mon(obs)
+    if active.get("dead") or active.get("ineligible"):
+        if any(i != (obs.active_party_slot or 0) and eligible(m) for i, m in enumerate(obs.party)):
+            return "pkmn"
+        return "run" if wild else None
     if wild and obs.policy.get("duplicate_encounter"):
         return "run"
     if wild and obs.policy.get("avoid_wild_grinding") and not first_encounter:
@@ -188,6 +254,8 @@ def forced_battle_choice(obs: PlayerObservation, first_encounter: bool = False) 
         return "run"
     if wild and first_encounter and has_balls(obs):
         return "item"
+    if switch_target(obs) is not None:
+        return "pkmn"
     return None
 
 
@@ -195,9 +263,14 @@ def constraints(obs: PlayerObservation, cap: int | None, dead: list[str]) -> lis
     """What System 1 and 2 must obey and know: the rules, the cap, the next boss, trainers here."""
     lines = [_RULES]
     if cap:
-        over = [m.get("species") for m in obs.party if (m.get("level") or 0) >= cap]
+        buffer = int(obs.policy.get("level_cap_buffer", 1))
+        over = [m.get("species") for m in obs.party if (m.get("level") or 0) >= cap - buffer]
         lines.append(
-            f"level cap {cap}" + (f"; at the cap, avoid extra fights: {over}" if over else "")
+            f"level cap {cap}; reserve level {cap - buffer}+ Pokémon from routine XP when a healthy suitable alternative exists"
+            + (f"; reserve: {over}" if over else "")
+        )
+        lines.append(
+            "Use a reserved but legal Pokémon only when alternatives are unsafe or unavailable; over-cap Pokémon remain ineligible for new battles. Switch before fights when possible, as switching after entry can still share XP."
         )
     if dead:
         lines.append("dead, never use: " + ", ".join(str(name) for name in dead))

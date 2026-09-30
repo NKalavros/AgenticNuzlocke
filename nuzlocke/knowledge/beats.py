@@ -215,7 +215,7 @@ BUY_BALLS_CITY = Beat(
 )
 BUY_BALLS = Beat(
     id="buy_balls",
-    text="Buy POKé BALLs only: talk to the clerk, BUY, POKé BALL, then YES. Nothing else.",
+    text="Top up to ten capture balls: buy the best affordable stocked ball, Ultra then Great then Poké Ball.",
     hint="The clerk stands behind the counter on the left. Face him across it and press A.",
     target={"kind": "face", "x": 2, "y": 5, "dir": "left"},
 )
@@ -284,8 +284,10 @@ def is_intro_boot(obs: PlayerObservation) -> bool:
 
 def script(obs: PlayerObservation) -> list[Beat]:
     """Remaining early-game beats, current first. Empty once the script is done."""
-    if is_intro_boot(obs) or obs.in_battle or "Boulder" in obs.badges:
+    if is_intro_boot(obs) or obs.in_battle:
         return []
+    if "Boulder" in obs.badges:
+        return _after_brock(obs)
     name = (obs.map_name or "").casefold()
     party = bool(obs.party)
     if obs.map_id == 38:
@@ -299,6 +301,125 @@ def script(obs: PlayerObservation) -> list[Beat]:
             return [ROUTE_OAK, LAB_STARTER, LEAVE_LAB]
         return [PALLET_TO_OAK, LAB_STARTER, LEAVE_LAB] if "pallet" in name else []
     return _parcel_errand(obs, name)
+
+
+def _after_brock(obs: PlayerObservation) -> list[Beat]:
+    if "Cascade" in obs.badges:
+        return []
+    mid = obs.map_id
+    if mid == 61:
+        from nuzlocke.knowledge.objects import has_fossil
+
+        fossils = [n for n in obs.npcs if n.get("picture") == 75]
+        if fossils and not has_fossil(obs):
+            fossil = min(fossils, key=lambda n: (n.get("x") != 13, n.get("slot", 0)))
+            return [
+                Beat(
+                    "moon_choose_fossil",
+                    "Choose one Mt. Moon fossil before taking the northwest exit ladder.",
+                    "Approach the fossil from below, defeat the blocking Super Nerd if challenged, "
+                    "face up and press A; answer YES. Verify a fossil in the bag, let the scientist "
+                    "take the other, then continue to the northwest ladder. Do not bypass this story gate.",
+                    target={"kind": "npc", "slot": fossil["slot"], "picture": 75},
+                )
+            ]
+    if mid in {1, 2, 3}:
+        target = obs.policy.get("preparation_target", 18 if mid != 3 else 21)
+        if any(m.get("level", target) < target and not m.get("dead") for m in obs.party):
+            return [
+                Beat(
+                    "prepare_center",
+                    "Heal and prepare the team for the next leg.",
+                    "Enter the Pokémon Center.",
+                    target={"kind": "warp", "dest_map": {1: 41, 2: 58, 3: 64}[mid]},
+                )
+            ]
+    if mid in {40, 41, 42, 54, 56, 58, 64, 67, 68}:
+        return [
+            Beat(
+                "leave_interior",
+                "Leave the building and continue toward Cerulean.",
+                "Use the exit mat.",
+                target={"kind": "warp", "dest_map": 255},
+            )
+        ]
+    if mid in {0, 12, 1, 13, 33, 47, 50, 51}:
+        if mid == 13:
+            return [TO_PEWTER if (obs.y or 0) < 12 else TO_FOREST]
+        if mid == 33:
+            return [
+                Beat(
+                    "leave_route22",
+                    "Return east to Viridian after the encounter.",
+                    "Walk east.",
+                    target={"kind": "edge", "dir": "right"},
+                )
+            ]
+        return [_BROCK_ROUTE[mid]]
+    routes = {
+        2: ("route3", "Leave Pewter east onto Route 3.", {"kind": "edge", "dir": "right"}),
+        14: (
+            "cross_route3",
+            "Cross Route 3 and leave north for Route 4 and Mt. Moon, resolving its encounter.",
+            {"kind": "edge", "dir": "up"},
+        ),
+        15: (
+            "enter_moon",
+            "Enter Mt. Moon from western Route 4.",
+            {"kind": "warp", "dest_map": 59},
+        ),
+        59: (
+            "moon_main_ladder",
+            "Cross Mt. Moon 1F to the northwest main-route ladder.",
+            {"kind": "warp", "dest_map": 60, "x": 5, "y": 5},
+        ),
+        60: (
+            "moon_lower",
+            "Follow the main passage down to Mt. Moon B2F.",
+            {"kind": "warp", "dest_map": 61, "x": 17, "y": 11},
+        ),
+        61: (
+            "moon_exit_ladder",
+            "Cross Mt. Moon B2F, defeat the blocking trainers, choose a fossil, and take the northwest ladder.",
+            {"kind": "warp", "dest_map": 60, "x": 5, "y": 7},
+        ),
+        3: (
+            "misty",
+            "Enter Cerulean Gym and challenge Misty after healing and preparation.",
+            {"kind": "warp", "dest_map": 65},
+        ),
+        65: (
+            "face_misty",
+            "Challenge Misty at the north end of the pool.",
+            {"kind": "face", "x": 4, "y": 3, "dir": "up"},
+        ),
+    }
+    # The disconnected exit passage has a separate B1F ladder and Route 4 door.
+    if mid == 60 and (obs.y or 0) < 6 and (obs.x or 0) > 20:
+        routes[60] = (
+            "moon_exit",
+            "Leave Mt. Moon for eastern Route 4.",
+            {"kind": "warp", "dest_map": 255},
+        )
+    from nuzlocke.knowledge.map_reference import route4_east
+
+    if mid == 15 and route4_east(obs):
+        routes[15] = (
+            "cerulean",
+            "Resolve Route 4's encounter, then continue east to Cerulean.",
+            {"kind": "edge", "dir": "right"},
+        )
+    if mid not in routes:
+        return []
+    key, text, target = routes[mid]
+    return [
+        Beat(
+            key,
+            text,
+            text + " Trust visible terrain if the ROM differs from this route.",
+            target=target,
+        )
+    ]
 
 
 # The errand's legs in order, keyed by a piece of the map name. A map can appear twice

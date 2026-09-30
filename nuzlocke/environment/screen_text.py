@@ -83,6 +83,20 @@ def parse_screen(rows: list[str] | None) -> ScreenText:
         else:
             menus.append(box)
 
+    # The forget-move list overwrites the top-right border of the speech box.
+    # Its full-width sides and bottom still verify the text region (rows 12–17).
+    if (
+        not text_lines
+        and len(rows) == 18
+        and rows[12].startswith("┌")
+        and rows[17].startswith("└")
+        and rows[17].endswith("┘")
+        and all(len(row) == 20 and row.startswith("│") and row.endswith("│") for row in rows[13:17])
+    ):
+        text_lines = [
+            row[1:-1].replace("▼", " ").strip() for row in rows[13:17] if row[1:-1].strip()
+        ]
+
     # ▶ starting a row is the active menu; ▷ marks the one behind it (BUY under the Mart's
     # item list). A box that only overlaps another box's cursor mid-line is not it.
     def leads(box: Box, glyph: str) -> bool:

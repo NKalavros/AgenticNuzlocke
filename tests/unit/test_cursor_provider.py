@@ -110,3 +110,13 @@ def test_bridge_auth_token_cannot_start_with_a_dash():
     token = tool_cb._new_auth_token()
     assert token
     assert not token.startswith("-")
+
+
+def test_lazy_planner_starts_only_when_called(tmp_path, monkeypatch):
+    monkeypatch.setenv("CURSOR_API_KEY", "test-key")
+    with _fake_agents(lambda *_a, **_k: _FakeRun()) as agents:
+        provider = CursorProvider(workspace=tmp_path, lazy_start=True)
+        assert agents == []
+        provider.complete(role=AgentRole.OVERWORLD, system="test", user="test")
+        assert len(agents) == 1
+        provider.close()

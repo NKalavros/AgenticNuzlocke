@@ -201,7 +201,9 @@ def _fast_loop(plan: PlanCard | None, *, recent: list[dict]) -> RunLoop:
     loop.move_types = {}
     loop.ledger = SimpleNamespace(first_encounter=False)
     loop._beat_locked = False
-    loop.referee = SimpleNamespace(current_cap=None, death_ledger=[])
+    loop.referee = SimpleNamespace(
+        current_cap=None, death_ledger=[], encounter_ledger={}, rules={}, owned_families=set()
+    )
     return loop
 
 

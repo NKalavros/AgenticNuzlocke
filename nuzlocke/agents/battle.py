@@ -70,6 +70,8 @@ def parse_battle(rows: list[str]) -> BattleScreen:
 def menu_questions(obs: PlayerObservation, plan: dict[str, Any] | None = None) -> dict[str, Any]:
     enemy = (obs.battle or {}).get("enemy") or {}
     lead = active_mon(obs)
+    from nuzlocke.agents.level_buffer import reserved, threshold
+
     trainer = (obs.battle or {}).get("type") == "trainer"
     criteria = {
         "fight": (
@@ -87,8 +89,16 @@ def menu_questions(obs: PlayerObservation, plan: dict[str, Any] | None = None) -
         and not mon.get("ineligible")
     ]
     if others:
-        names = ", ".join(f"{m.get('species')} {m.get('hp')}/{m.get('max_hp')}" for m in others)
+        names = ", ".join(
+            f"{m.get('species')} lv{m.get('level', '?')} {m.get('hp')}/{m.get('max_hp')}"
+            + (" (reserve XP)" if reserved(obs, m) else "")
+            for m in others
+        )
         criteria["pkmn"] = f"switch POKéMON: {names}"
+    if reserved(obs, lead):
+        criteria["fight"] += (
+            f"; reserve XP at level {threshold(obs)}+: switch to a healthy suitable alternative unless needed"
+        )
     # No ITEM: this Nuzlocke allows no items; System 3 throws Poké Balls itself.
     if not trainer:
         criteria["run"] = "run from this wild POKéMON"

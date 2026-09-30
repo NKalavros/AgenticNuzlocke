@@ -17,7 +17,6 @@ objective done. In battle it answers the FIGHT / PKMN / ITEM / RUN menu and the 
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -112,9 +111,6 @@ def system1_turn(
         )
     intro = is_intro_boot(obs)
     goal_text = objective_text or (INTRO_GOAL if intro else None)
-    quantity = _quantity_turn(obs)
-    if quantity is not None:
-        return quantity
     if screen.menu_rows and screen.cursor_row is not None:
         return _menu_turn(
             screen, goal_text, journal, low_confidence_streak, confidence_floor, jev_decide
@@ -227,25 +223,20 @@ def _battle_turn(
     battle_plan: dict[str, Any] | None = None,
 ) -> S1Turn | None:
     screen = battle.parse_battle(obs.screen_rows)
+    if screen.kind == "moves" and (
+        battle.active_mon(obs).get("dead")
+        or battle.active_mon(obs).get("ineligible")
+        or forced_battle_choice(obs, first_encounter) is not None
+    ):
+        return S1Turn(
+            [GameAction.PRESS_B], "System 3: return to battle menu for required action", "battle"
+        )
     party_cursor = battle.party_cursor(obs)
     if party_cursor is not None:
         desired = str((battle_plan or {}).get("switch_to") or "").upper()
-        eligible = [
-            (i, m)
-            for i, m in enumerate(obs.party)
-            if m.get("hp")
-            and not m.get("dead")
-            and not m.get("ineligible")
-            and i != (obs.active_party_slot or 0)
-        ]
-        eligible.sort(
-            key=lambda pair: (
-                not any(
-                    desired == str(pair[1].get(k, "")).upper()
-                    for k in ("species", "nickname", "capture_id")
-                )
-            )
-        )
+        from nuzlocke.agents.level_buffer import switch_order
+
+        eligible = switch_order(obs, desired)
         if eligible:
             slot, _ = eligible[0]
             return S1Turn(
@@ -264,13 +255,13 @@ def _battle_turn(
             return _battle_menu(
                 other, first_encounter, journal, confidence_floor, jev_decide, obs, battle_plan
             )
-        # In battle B only pages: a line that did not move yet is an animation still running.
+        # Battle paging uses a single A pulse; a still line may be an animation in progress.
         if text_box:
             special = _special_page(obs.screen_rows)
             if special is not None:
                 return special
             if mash_stalled:
-                # In battle A only advances text; a line B left alone is waiting for A.
+                # In battle A advances text; allow released frames for a stalled line.
                 return S1Turn(
                     [GameAction.PRESS_A, GameAction.WAIT_60], "battle text held; A", "page"
                 )
@@ -295,10 +286,17 @@ def _battle_turn(
             choice="item",
         )
     if forced in criteria:
-        # System 3: the lead is about to faint in a wild battle. Not a question for Jev.
+        if forced == "pkmn":
+            reason = "reserve experience headroom; use a suitable alternative"
+        elif obs.policy.get("duplicate_encounter"):
+            reason = "duplicate encounter"
+        elif obs.policy.get("avoid_wild_grinding") and not first_encounter:
+            reason = "not an eligible catch; avoid wild grinding"
+        else:
+            reason = "active Pokémon HP below a quarter"
         return S1Turn(
             battle.actions_for(screen, forced),
-            f"System 3: {criteria[forced]} (lead HP below a quarter)",
+            f"System 3: {criteria[forced]} ({reason})",
             "battle",
             choice=forced,
         )
@@ -360,22 +358,9 @@ def _battle_menu(
         )
     if obs:
         desired = str((plan or {}).get("switch_to") or "").upper()
-        eligible = [
-            (i, m)
-            for i, m in enumerate(obs.party)
-            if m.get("hp")
-            and not m.get("dead")
-            and not m.get("ineligible")
-            and i != (obs.active_party_slot or 0)
-        ]
-        eligible.sort(
-            key=lambda pair: (
-                not any(
-                    desired == str(pair[1].get(k, "")).upper()
-                    for k in ("species", "nickname", "capture_id")
-                )
-            )
-        )
+        from nuzlocke.agents.level_buffer import switch_order
+
+        eligible = switch_order(obs, desired)
         for slot, mon in eligible:
             index = next(
                 (
@@ -409,20 +394,6 @@ def _battle_menu(
     return _menu_turn(screen, goal, journal, 0, confidence_floor, jev_decide)
 
 
-def _quantity_turn(obs: PlayerObservation) -> S1Turn | None:
-    """The Mart's quantity box (×01): set how many POKé BALLs to buy, then A."""
-    text = " ".join(obs.screen_rows)
-    match = re.search(r"×\s*(\d+)", text)
-    if match is None or "▶" in text:
-        return None
-    want = max(1, min(10, (obs.money or 0) // 200))
-    have = int(match.group(1))
-    step = GameAction.WALK_UP if want > have else GameAction.WALK_DOWN
-    return S1Turn(
-        [step] * abs(want - have) + [GameAction.PRESS_A], f"quantity {want} POKé BALLs", "menu"
-    )
-
-
 def _special_page(rows: list[str]) -> S1Turn | None:
     """Text boxes that B does not page: the level-up stats box, and an evolution."""
     text = " ".join(rows)
@@ -430,7 +401,12 @@ def _special_page(rows: list[str]) -> S1Turn | None:
         # "grew to level N!" puts a stats box over the text; B left it up for 70 cycles in
         # run 20260929-095253-004c14 until the stuck ladder took over. A closes it.
         return S1Turn([GameAction.PRESS_A, GameAction.WAIT_60], "level-up stats; A", "page")
-    if "evolving" in text.lower():
+    from nuzlocke.environment.evolution import evolution_phase
+
+    phase = evolution_phase(rows)
+    if phase == "result":
+        return S1Turn([GameAction.PRESS_A, GameAction.WAIT_60], "evolution result; A", "page")
+    if phase == "animation":
         # B cancels an evolution (pitfall #17). It needs no input; let it play.
         return S1Turn([GameAction.WAIT_60, GameAction.WAIT_60], "evolving; wait, never B", "page")
     return None

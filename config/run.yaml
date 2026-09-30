@@ -5,6 +5,10 @@ observation_mode: human_assist  # strict_visual | human_assist | debug
 # Override: --with-ram / NUZLOCKE_VISION_ONLY=0
 vision_only: true
 
+# Reserve Pokémon at cap-1 and above for necessity; routine candy prep stops below it.
+# Final Brock/Misty preparation tops every living under-cap party member up to the cap.
+level_cap_buffer: 1
+
 # Absolute path to a legally obtained Pokemon Red/Blue ROM (.gb).
 # Override with --rom or NUZLOCKE_ROM.
 rom_path: /Users/nikolas/Desktop/Projects/260727_AgenticNuzlocke/red-star-2020-08-18.gb
@@ -90,5 +94,7 @@ rare_candy:
   rival_level: 8
   first_center_level: 12
   brock_level: 14
+  post_brock_level: 18
+  misty_level: 21
 
-stop_after: brock
+stop_after: misty

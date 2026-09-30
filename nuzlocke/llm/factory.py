@@ -35,6 +35,7 @@ def create_provider(
             on_stream=on_stream,
             max_retries=int(cur.get("max_retries", 5)),
             compact_at_tokens=int(cur.get("compact_at_tokens", 250_000)),
+            lazy_start=provider == "dual",
         )
     if provider == "openai_compatible":
         oai = agents_cfg.get("openai_compatible") or {}

@@ -31,7 +31,51 @@ def env(tmp_path: Path) -> NousRedEnvironment:
     e.observe = MagicMock(return_value=None)  # type: ignore[method-assign]
     e._joy_ignore = MagicMock(return_value=0)  # type: ignore[method-assign]
     e._prompt_up = MagicMock(return_value=False)  # type: ignore[method-assign]
+    e._map_objects = MagicMock(return_value={})
     return e
+
+
+def test_final_battle_page_cannot_hold_b_into_evolution(env):
+    env._map_objects.return_value = {"input": {"battle": 2}, "screen": ["RED defeated BROCK!"]}
+    _frames(env, ("battle", True), ("evolving", True))
+    env.execute_skip_dialog()
+    assert _posted(env._client.post) == [["press_a", "wait_30"]]
+
+
+def test_macro_rechecks_evolution_before_each_b_press(env):
+    env._map_objects.side_effect = [{"screen": ["Some text"]}, {"screen": ["│What? BULBASAUR │"]}]
+    _frames(env, ("text", True), ("partial-evolution", True))
+    env.execute_skip_dialog()
+    assert _posted(env._client.post) == [list(MASH_ROUND)]
+
+
+def test_evolution_result_pages_with_a_but_rival_what_does_not_wait():
+    from nuzlocke.agents.system1 import _special_page
+
+    assert _special_page(["│What? BULBASAUR│"]).actions == [GameAction.WAIT_60] * 2
+    assert _special_page(["│BULBASAUR evolved│"]).actions[0] == GameAction.PRESS_A
+    assert _special_page(["│BLUE  WHAT?│", "│Unbelievable!│"]) is None
+
+
+def test_mt_moon_npc_what_is_not_an_evolution(env):
+    from nuzlocke.agents.system1 import _special_page
+
+    rows = ["│What? I'm waiting │", "│for my friends to │"]
+    assert _special_page(rows) is None
+    env._map_objects.return_value = {"screen": rows}
+    _frames(env, ("npc", True), ("closed", False))
+    env.execute_skip_dialog()
+    assert _posted(env._client.post) == [list(MASH_ROUND)]
+
+
+def test_fossil_question_cannot_hold_b_into_a_yes_no_before_menu_is_drawn(env):
+    env._map_objects.return_value = {
+        "map_id": 61,
+        "screen": ["│You want the      │", "│HELIX FOSSIL?     │"],
+    }
+    _frames(env, ("printing-question", True))
+    env.execute_skip_dialog()
+    assert _posted(env._client.post) == []
 
 
 def _posted(post: MagicMock) -> list[list[str]]:

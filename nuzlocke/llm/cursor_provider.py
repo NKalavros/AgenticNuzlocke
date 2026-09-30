@@ -97,6 +97,7 @@ class CursorProvider(LLMProvider):
         on_stream: Callable[[str], None] | None = None,
         max_retries: int = 5,
         compact_at_tokens: int = 250_000,
+        lazy_start: bool = False,
     ) -> None:
         self.model = model
         self.model_params = model_params or {}
@@ -115,7 +116,11 @@ class CursorProvider(LLMProvider):
         self._client: Client | None = None
         self._http: httpx.Client | None = None
         self._bridge_lines: list[str] = []
-        self._agent: Any = self._create_agent()
+        try:
+            self._agent: Any = None if lazy_start else self._create_agent()
+        except Exception:
+            self._shutdown_bridge()
+            raise
 
     def _emit(self, text: str) -> None:
         if self.on_stream:
@@ -213,6 +218,8 @@ User / observation:
     def _run_send(
         self, message: Any, *, role: AgentRole, force: bool = False
     ) -> tuple[Any, list[str]]:
+        if self._agent is None:
+            self._agent = self._create_agent()
         if force:
             run = self._agent.send(message, SendOptions(local={"force": True}))
         else:

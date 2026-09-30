@@ -235,6 +235,32 @@ def test_a_shut_objective_asks_system_2_instead_of_bumping():
     assert calls == []
 
 
+def test_nonexistent_edge_requests_director_even_with_cached_route():
+    from nuzlocke.agents.goals import Goal
+    from nuzlocke.agents.navigation import Navigator
+
+    obs = _obs(map_id=14, connections=["up", "left"], warps=[], npcs=[])
+    room = RoomMap()
+    nav = Navigator()
+    stale = Goal(
+        "edge_right", "edge", "East", [GameAction.WALK_RIGHT], path=["right"], objective=True
+    )
+    nav.select(obs, room, [stale], objective_text="Leave east")
+    decide, calls = _jev("edge_right")
+    turn = _turn(
+        obs,
+        room=room,
+        navigator=nav,
+        objective={"kind": "edge", "dir": "right"},
+        objective_text="Leave east",
+        jev_decide=decide,
+    )
+    assert turn.trigger == "objective path blocked"
+    assert not nav.route
+    assert not turn.actions
+    assert calls == []
+
+
 def test_a_grid_that_boxes_the_player_in_is_ignored():
     boxed = GRID.replace(" 5 . . . . @ . . . . .", " 5 . . . # @ # . . . .").replace(
         " 4 . . . . . . . . . .", " 4 . . . . # . . . . ."

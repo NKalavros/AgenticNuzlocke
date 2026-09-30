@@ -236,11 +236,16 @@ class RunLoop:
         self.arbiter = ActionArbiter(
             self.env, self.store, max_actions=int(control.get("max_actions_per_proposal", 12))
         )
-        self.llm = create_provider(
-            self.agents_cfg,
-            workspace=self.run_dir / "agent_workspace",
-            on_stream=lambda text: self.env.push_event("reasoning", text),
-        )
+        workspace = self.run_dir / "agent_workspace"
+        try:
+            self.llm = create_provider(
+                self.agents_cfg,
+                workspace=workspace,
+                on_stream=lambda text: self.env.push_event("reasoning", text),
+            )
+        except Exception:
+            self.env.shutdown()
+            raise
         self.jev = create_jev(self.agents_cfg)
         planner_cfg = self.agents_cfg.get("planner") or {}
         self.plan_every_s = float(planner_cfg.get("plan_every_s", 45))
@@ -250,7 +255,7 @@ class RunLoop:
         self._low_confidence_streak = 0
         self._prev_world: str | None = None
         self._prev_dialog: str | None = None
-        _install_walkthrough_skill(self.run_dir / "agent_workspace")
+        _install_walkthrough_skill(workspace)
         self.stuck = StuckTracker()
         self.grid_trust = GridTrust()
         self.object_trust = ObjectTrust()
@@ -305,9 +310,19 @@ class RunLoop:
         self._closing_preparation = False
         self._starter_seen = None
         self._pending_move = None
+        from nuzlocke.agents.move_learning import MoveLearner
+
+        self.move_learner = MoveLearner()
+        from nuzlocke.agents.lead_rotation import LeadRotation
+
+        self.lead_rotation = LeadRotation()
+        from nuzlocke.agents.shop import ShopController
+
+        self.shop = ShopController()
         self._rejected_starters = set()
         self._previous_party = []
         self._encounter_search_counts = {}
+        self._encounter_tables = {}
         self._grass_visits = {}
         self._last_search_cycle = None
         if restored:
@@ -321,6 +336,8 @@ class RunLoop:
     def _ingest(self, obs: PlayerObservation) -> None:
         """Observe irreversible outcomes at every actual emulator advancement."""
         self.referee.advance(len(obs.badges))
+        if obs.wild_species and not obs.in_battle and not obs.cutscene:
+            self._encounter_tables[str(obs.map_id)] = obs.wild_species
         if self._pending_move and self.plan:
             slot, name, old_pp = self._pending_move
             mon = obs.party[slot] if slot < len(obs.party) else {}
@@ -344,6 +361,15 @@ class RunLoop:
             self._last_ledger_change_step = self._cycle
             self.store.append("ledger_commit", self.referee.snapshot())
         self.referee.identify(obs)
+        if getattr(self, "move_learner", None) is not None:
+            self.move_learner.observe(obs, self.store.append)
+        if getattr(self, "lead_rotation", None) is not None:
+            self.lead_rotation.observe(obs, self.store.append)
+        if getattr(self, "shop", None) is not None:
+            try:
+                self.shop.observe(obs, self.store.append)
+            except RuntimeError as err:
+                self.shop.error = str(err)
         if self._preparing_target and not obs.in_battle:
             previous = {m.get("capture_id"): m for m in self._previous_party}
             for mon in obs.party:
@@ -362,18 +388,17 @@ class RunLoop:
                         raise RuntimeError("candy preparation violated its authorization")
         self._previous_party = [dict(m) for m in obs.party]
         preparation = self.run_cfg.get("rare_candy") or {}
-        target = (
-            int(
-                preparation.get(
-                    "brock_level" if obs.map_id in {2, 54, 58} else "first_center_level",
-                    14 if obs.map_id in {2, 54, 58} else 12,
-                )
-            )
-            if preparation.get("enabled")
-            else 0
-        )
+        if "Boulder" in obs.badges:
+            setting = "misty_level" if obs.map_id in {3, 64, 65, 35, 36} else "post_brock_level"
+            default = 21 if setting == "misty_level" else 18
+        else:
+            setting = "brock_level" if obs.map_id in {2, 54, 58} else "first_center_level"
+            default = 14 if setting == "brock_level" else 12
+        target = int(preparation.get(setting, default)) if preparation.get("enabled") else 0
         obs.policy.update(
-            preparation_target=min(target, self.referee.current_cap),
+            preparation_target=min(target, self._preparation_limit()),
+            level_cap=self.referee.current_cap,
+            level_cap_buffer=int(self.run_cfg.get("level_cap_buffer", 1)),
             first_encounter=self.ledger.first_encounter,
             duplicate_encounter=self.ledger.duplicate_encounter,
             avoid_wild_grinding=bool((self.run_cfg.get("rare_candy") or {}).get("enabled")),
@@ -388,7 +413,21 @@ class RunLoop:
         from nuzlocke.agents.policy import decision
 
         self.referee.identify(obs)
+        if getattr(self, "move_learner", None) is not None:
+            actions = self.move_learner.actions(obs)
+            if actions is not None:
+                obs.policy["learning_actions"] = [a.value for a in actions]
+        if getattr(self, "lead_rotation", None) is not None:
+            actions = self.lead_rotation.actions(obs)
+            if actions is not None:
+                obs.policy["rotation_actions"] = [a.value for a in actions]
+        if getattr(self, "shop", None) is not None:
+            actions = self.shop.actions(obs)
+            if actions is not None:
+                obs.policy["shop_actions"] = [a.value for a in actions]
         obs.policy.update(
+            level_cap=self.referee.current_cap,
+            level_cap_buffer=int(self.run_cfg.get("level_cap_buffer", 1)),
             first_encounter=self.ledger.first_encounter,
             duplicate_encounter=self.ledger.duplicate_encounter,
             avoid_wild_grinding=bool((self.run_cfg.get("rare_candy") or {}).get("enabled")),
@@ -396,6 +435,13 @@ class RunLoop:
             wiped=self.referee.wiped,
         )
         return decision(obs, first_encounter=self.ledger.first_encounter)
+
+    def _preparation_limit(self):
+        from nuzlocke.agents.level_buffer import preparation_limit
+
+        return preparation_limit(
+            self.referee.current_cap, int(self.run_cfg.get("level_cap_buffer", 1))
+        )
 
     def _controller_snapshot(self) -> dict:
         def tiles(data):
@@ -413,9 +459,16 @@ class RunLoop:
             "closing_preparation": self._closing_preparation,
             "starter_seen": self._starter_seen,
             "pending_move": self._pending_move,
+            "move_learning": self.move_learner.snapshot(),
+            "shop": self.shop.snapshot() if getattr(self, "shop", None) else None,
+            "evolution_waits": getattr(self, "_evolution_waits", 0),
+            "lead_rotation": self.lead_rotation.snapshot()
+            if getattr(self, "lead_rotation", None)
+            else None,
             "rejected_starters": list(self._rejected_starters),
             "previous_party": self._previous_party,
             "encounter_search_counts": self._encounter_search_counts,
+            "encounter_tables": self._encounter_tables,
             "grass_visits": self._grass_visits,
             "navigation": self.navigator.snapshot(),
             "room": {
@@ -427,6 +480,8 @@ class RunLoop:
                     str(k): [[*edge, at] for edge, at in v.items()]
                     for k, v in self.room.edge_blocks.items()
                 },
+                "crossed_edges": {str(k): list(v) for k, v in self.room.crossed_edges.items()},
+                "terrain_tiles": tiles(self.room.terrain_tiles),
             },
             "grid_trust": self.grid_trust._counts,
             "object_trust": self.object_trust._counts,
@@ -445,8 +500,15 @@ class RunLoop:
         self._closing_preparation = data.get("closing_preparation", False)
         self._starter_seen = data.get("starter_seen")
         self._pending_move = data.get("pending_move")
+        self.move_learner.restore(data.get("move_learning"))
+        self._evolution_waits = data.get("evolution_waits", 0)
+        if getattr(self, "shop", None) is not None:
+            self.shop.restore(data.get("shop"))
+        if getattr(self, "lead_rotation", None) is not None:
+            self.lead_rotation.restore(data.get("lead_rotation"))
         self._previous_party = data.get("previous_party", [])
         self._encounter_search_counts = data.get("encounter_search_counts", {})
+        self._encounter_tables = data.get("encounter_tables", {})
         self._grass_visits = data.get("grass_visits", {})
         self._rejected_starters = {tuple(t) for t in data.get("rejected_starters", [])}
 
@@ -468,6 +530,14 @@ class RunLoop:
             key(k): {(x, y, d): at for x, y, d, at in rows}
             for k, rows in room.get("edge_blocks", {}).items()
         }
+        self.room.crossed_edges = {
+            key(k): {tuple(edge) for edge in rows}
+            for k, rows in room.get("crossed_edges", {}).items()
+        }
+        self.room.terrain_tiles = {
+            key(k): {(x, y): tuple(value) for x, y, value in rows}
+            for k, rows in room.get("terrain_tiles", {}).items()
+        }
         self.navigator.restore(data.get("navigation", {}))
         self.grid_trust._counts = {key(k): v for k, v in data["grid_trust"].items()}
         self.object_trust._counts = {key(k): v for k, v in data["object_trust"].items()}
@@ -478,7 +548,48 @@ class RunLoop:
 
     def _intervention(self, obs, task):
         from nuzlocke.agents.preparation import preparation_turn
+        from nuzlocke.environment.evolution import evolution_phase
 
+        self._evolution_waits = (
+            getattr(self, "_evolution_waits", 0) + 1
+            if evolution_phase(obs.screen_rows) == "animation"
+            else 0
+        )
+        if self._evolution_waits > 30:
+            raise RuntimeError(
+                "Evolution screen did not finish after 30 wait cycles; paused for inspection"
+            )
+
+        if getattr(self, "move_learner", None) is not None:
+            actions, reason = self.move_learner.turn(
+                obs,
+                decide=self.jev.decide if self.jev else None,
+                record=self.store.append,
+                confidence_floor=self.confidence_floor,
+            )
+            if actions:
+                return ActionProposal(
+                    task_id=task.task_id, agent=task.owner, actions=actions, reason=reason
+                )
+        if getattr(self, "shop", None) is not None:
+            actions, reason = self.shop.turn(obs, record=self.store.append)
+            if actions:
+                return ActionProposal(
+                    task_id=task.task_id, agent=task.owner, actions=actions, reason=reason
+                )
+        from nuzlocke.agents.gym_preparation import at_leader, needs_top_up
+
+        if (
+            not (at_leader(obs) and needs_top_up(obs))
+            and getattr(self, "lead_rotation", None) is not None
+            and not self._preparing_target
+            and not self._closing_preparation
+        ):
+            actions, reason = self.lead_rotation.turn(obs, record=self.store.append)
+            if actions:
+                return ActionProposal(
+                    task_id=task.task_id, agent=task.owner, actions=actions, reason=reason
+                )
         actions, reason = preparation_turn(self, obs)
         if actions:
             return ActionProposal(
@@ -537,7 +648,9 @@ class RunLoop:
     def _publish_navigation(self, obs: PlayerObservation) -> None:
         from nuzlocke.referee.type_chart import types_for_species
 
-        payload = self.navigator.context(obs, self.room)
+        from nuzlocke.knowledge.encounters import coverage
+
+        payload = self.navigator.context(obs, self.room, self._objective(obs)[0])
         payload.update(
             run_id=self.run_id,
             cycle=self._cycle,
@@ -547,6 +660,7 @@ class RunLoop:
                 for m in obs.party
             ],
             badges=obs.badges,
+            encounters=coverage(self),
             updated_at=time.time(),
         )
         self.env.publish_navigation(payload)
@@ -629,8 +743,10 @@ class RunLoop:
                 self.env.push_event("alert", f"Nuzlocke lost: {self.referee.wiped}")
                 console.print(f"[red]Nuzlocke lost: {self.referee.wiped}. Stopping.[/red]")
                 break
-            if "Boulder" in obs.badges and self.run_cfg.get("stop_after", "brock") == "brock":
-                self.store.append("milestone_complete", {"milestone": "brock", "step": steps})
+            stop_after = self.run_cfg.get("stop_after", "brock")
+            stop_badge = {"brock": "Boulder", "misty": "Cascade"}.get(stop_after)
+            if stop_badge and stop_badge in obs.badges:
+                self.store.append("milestone_complete", {"milestone": stop_after, "step": steps})
                 self.integrity.commit(self.env, self._controller_snapshot())
                 break
             violations = self.referee.assert_party_legal(obs)
@@ -881,6 +997,21 @@ class RunLoop:
 
     def _fallback_proposal(self, task: Any, err: Exception) -> ActionProposal:
         self.store.append("llm_error", {"error": str(err), "owner": task.owner.value})
+        if getattr(self, "jev", None) is not None:
+            self.env.set_control(ControlState.PAUSED)
+            self.env.push_event(
+                "alert",
+                f"Planning unavailable; paused. Restore the connection and press START: {err}",
+            )
+            console.print(f"[yellow]Planning unavailable; paused:[/yellow] {err}")
+            proposal = ActionProposal(
+                task_id=task.task_id,
+                agent=task.owner,
+                actions=[GameAction.WAIT_60],
+                reason="planning unavailable; pause and preserve checkpoint",
+            )
+            self.arbiter.set_owner(proposal.agent)
+            return proposal
         if is_bridge_down(err):
             self.env.push_event(
                 "alert", f"Cursor bridge down — waiting (keep Cursor app open): {err}"
@@ -917,8 +1048,8 @@ class RunLoop:
             tier = 0  # Battle menus never receive an overworld disengage.
         elif getattr(self, "referee", None) is not None:
             self._objective(obs)
-            if obs.policy.get("encounter_search"):
-                tier = 0  # Intentional grass walking has its own finite search budget.
+            if obs.policy.get("encounter_phase") == "pacing" and self.stuck.immobile_streak < 3:
+                tier = 0  # Intentional grass pacing is progress; actual immobility still recovers.
         if tier in (2, 4):
             # Mechanical, no LLM: the screen looks the same every cycle, so a
             # vision call re-proposes what already failed. Tier 4 also tears
@@ -1003,7 +1134,9 @@ class RunLoop:
                 trigger=trigger,
                 journal=self.journal.since_last_look() or None,
                 battle=self._battle_brief(obs) if obs.in_battle else None,
-                navigation=self.navigator.context(obs, self.room) if not obs.in_battle else None,
+                navigation=self.navigator.context(obs, self.room, self._objective(obs)[0])
+                if not obs.in_battle
+                else None,
                 constraints=self._constraints(obs),
                 **context,
             )
@@ -1133,83 +1266,11 @@ class RunLoop:
     def _objective(self, obs: PlayerObservation) -> tuple[dict[str, Any] | None, str | None, bool]:
         """The target System 1 walks toward: the beat's, else System 2's card, else none."""
         beat = current_beat(obs) if self._beat_locked else None
-        searches = getattr(self, "_encounter_search_counts", {})
-        visits = getattr(self, "_grass_visits", {})
-        area = str(obs.map_id)
-        search_available = searches.get(area, 0) < 100
-        obs.policy["encounter_search"] = False
-        if (
-            beat is not None
-            and not beat.id.startswith(("heal", "box_dead", "prepare"))
-            and obs.flags.get("has_pokedex")
-        ):
-            from nuzlocke.agents.goals import Routes, collision_map
-            from nuzlocke.agents.system3 import has_balls
+        from nuzlocke.knowledge.encounters import encounter_objective
 
-            if (
-                has_balls(obs)
-                and obs.map_id == 1
-                and "12" not in self.referee.encounter_ledger
-                and searches.get("12", 0) < 100
-            ):
-                return (
-                    {"kind": "edge", "dir": "down"},
-                    "Return to Route 1 for its legal encounter.",
-                    True,
-                )
-            if (
-                has_balls(obs)
-                and obs.map_id in {12, 13, 51}
-                and str(obs.map_id) not in self.referee.encounter_ledger
-                and obs.grass_tiles
-                and search_available
-                and not obs.in_battle
-            ):
-                routes = Routes((obs.x, obs.y), collision_map(obs, self.room) or {})
-                candidates = [
-                    ((t["x"], t["y"]), routes.onto((t["x"], t["y"])))
-                    for t in obs.grass_tiles
-                    if (t["x"], t["y"]) != (obs.x, obs.y)
-                ]
-                candidates = [(tile, path) for tile, path in candidates if path]
-                if candidates:
-                    tile, _ = min(
-                        candidates,
-                        key=lambda pair: (
-                            visits.get(f"{area}:{pair[0][0]}:{pair[0][1]}", 0),
-                            len(pair[1]),
-                        ),
-                    )
-                    if getattr(self, "_last_search_cycle", None) != self._cycle:
-                        searches[area] = searches.get(area, 0) + 1
-                        key = f"{area}:{obs.x}:{obs.y}"
-                        visits[key] = visits.get(key, 0) + 1
-                        self._last_search_cycle = self._cycle
-                        self._encounter_search_counts, self._grass_visits = searches, visits
-                    obs.policy["encounter_search"] = True
-                    return (
-                        {"kind": "tile", "x": tile[0], "y": tile[1]},
-                        "Seek the first eligible encounter in this area's grass.",
-                        True,
-                    )
-        if (
-            beat is not None
-            and not beat.id.startswith(("heal", "box_dead", "prepare"))
-            and obs.flags.get("has_pokedex")
-        ):
-            from nuzlocke.agents.system3 import has_balls
-
-            if (
-                has_balls(obs)
-                and obs.map_id == 12
-                and "12" not in self.referee.encounter_ledger
-                and search_available
-            ):
-                return (
-                    {"kind": "edge", "dir": "down"},
-                    "Search south into Route 1's grass for its first eligible encounter.",
-                    True,
-                )
+        encounter = encounter_objective(self, obs, beat)
+        if encounter:
+            return encounter
         if beat is not None and beat.id == "heal_forest":
             from nuzlocke.agents.goals import Routes, collision_map
 

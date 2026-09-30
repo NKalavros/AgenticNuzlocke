@@ -225,11 +225,13 @@ def test_items_are_never_offered_to_jev():
     assert "item" not in battle.menu_questions(wild)["action"]["criteria"]
 
 
-def test_the_mart_quantity_box_is_set_from_the_money():
-    from nuzlocke.agents.system1 import _quantity_turn
+def test_mart_quantity_respects_money_and_existing_ball_supply():
+    from nuzlocke.agents.shop import best_ball, desired_quantity
 
-    turn = _quantity_turn(PlayerObservation(money=3000, screen_rows=["│ ×01   ¥200│"]))
-    assert turn.actions == [GameAction.WALK_UP] * 9 + [GameAction.PRESS_A]
+    obs = PlayerObservation(money=3000, shop_stock=[{"id": 3, "slot": 0}], bag=[])
+    assert desired_quantity(obs, best_ball(obs)) == 5
+    obs.bag = [{"item": "Poke Ball", "quantity": 9}]
+    assert desired_quantity(obs, best_ball(obs)) == 1
 
 
 def test_exhausted_move_menu_requires_return_to_fight():

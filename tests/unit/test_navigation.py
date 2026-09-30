@@ -2,7 +2,7 @@
 
 import json
 
-from nuzlocke.agents.goals import Goal, RoomMap, Routes
+from nuzlocke.agents.goals import Goal, RoomMap, Routes, _edge_goal
 from nuzlocke.agents.navigation import Navigator, parse_route_plan
 from nuzlocke.state.models import GameAction as A
 from nuzlocke.state.models import PlayerObservation
@@ -41,6 +41,27 @@ def test_safe_path_avoids_grass_but_shortest_takes_it():
     safe = Routes((0, 0), grid, costs={(x, 0): 5 for x in range(1, 4)}).paths[(4, 0)]
     assert len(direct) == 4
     assert len(safe) == 6 and safe[0] == "down"
+
+
+def test_exit_search_does_not_return_to_visited_northern_dead_end():
+    obs = PlayerObservation(x=2, y=3, map_size={"w": 7, "h": 5})
+    # West pocket is closest to north, but already explored; east reveals new terrain.
+    open_tiles = {(1, 1), (1, 2), (1, 3), (2, 3), (3, 3), (4, 3), (4, 2)}
+    seen = {(1, 1), (1, 2), (1, 3), (2, 3)}
+    grid = {t: True for t in open_tiles}
+    grid.update({(0, 1): False, (1, 0): False, (2, 1): False})
+    routes = Routes((2, 3), grid, seen=seen, size=(7, 5))
+    goal = _edge_goal(obs, "up", routes)
+    assert goal.path == ["right", "right", "up"]
+    # A partial exploration route must not add an unverified north press.
+    assert goal.actions == [A.WALK_RIGHT, A.WALK_RIGHT, A.WALK_UP]
+
+
+def test_exit_search_uses_known_boundary_and_crosses_it():
+    obs = PlayerObservation(x=2, y=2, map_size={"w": 5, "h": 5})
+    grid = {(2, y): True for y in range(3)}
+    routes = Routes((2, 2), grid, seen=set(grid), size=(5, 5))
+    assert _edge_goal(obs, "up", routes).actions == [A.WALK_UP] * 3
 
 
 def test_failed_direction_does_not_make_destination_tile_a_wall():
