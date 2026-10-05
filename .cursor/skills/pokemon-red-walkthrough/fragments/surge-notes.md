@@ -1,0 +1,7 @@
+Cerulean → Route 24 is a NORTH map edge: use `{"kind":"edge","dir":"up"}`, not a warp to map 35. Route 24 → Route 25 is an EAST edge: use `{"kind":"edge","dir":"right"}`. Doors use `kind: warp` with the observed destination map.
+
+Return one concrete current-map objective at a time: the Route 24 edge, Bill's house door/NPC, the robbed-house front/back warp, Underground Path entrance, captain, or gym. On a blocked route, reconsider the prerequisite or doorway instead of repeatedly reissuing a generic south-edge goal. Use explicit menu steps only where System 1 cannot execute the task itself.
+
+Useful vanilla landmarks (verify against current objects): Vermilion Center `(11,3)` → map 89; dock `(18/19,31)` → 94; gym `(12,19)` → 92. S.S. Anne 1F stairs `(2,6)` → 96, then 2F captain stairs `(36,4)` → 101. The rival blocks that corridor; heal before entering it. With Bulbasaur as the starter, expect Pidgeotto 19, Raticate 16, Kadabra 18 and Charmeleon 20, subject to live correction. The captain is at `(4,2)`. Do not confuse room doors with deck stairs.
+
+Surge's vanilla team is Voltorb 21, Pikachu 18, Raichu 24. Avoid exposing Flying/Water members to Electric attacks; a living legal Ground type is immune to Electric damage, but must still withstand other moves. Use observed moves and structured battle plans, not a type-only guarantee. The gym trainers include Pikachu 23, two Pikachu 21, and Voltorb/Magnemite/Voltorb 20. Finish the post-battle badge dialog and verify **Thunder** before switching to the Erika route.

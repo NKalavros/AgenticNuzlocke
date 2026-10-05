@@ -23,7 +23,7 @@ from typing import Any
 from nuzlocke.agents.locomotion import _parsed_grid
 from nuzlocke.environment.maps import map_name
 from nuzlocke.environment.terrain import step_delta
-from nuzlocke.knowledge.objects import object_facts
+from nuzlocke.knowledge.objects import field_item, interaction_sides, object_available, object_facts
 from nuzlocke.state.models import GameAction, PlayerObservation
 
 DIRS = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}
@@ -38,7 +38,6 @@ _FAILS_BEFORE_RUNNER_UP = 2
 
 Tile = tuple[int, int]
 
-_ITEM_BALL = 74
 _CELL = re.compile(r"^\s*([A-Ja-j])\s*([1-9])\s*$")
 
 
@@ -135,11 +134,7 @@ class RoomMap:
         return blocked - self.crossed_edges.get(map_key(obs), set())
 
     def temporary_edges(self, obs: PlayerObservation) -> set[tuple[int, int, str]]:
-        return {
-            edge
-            for edge, at in self.edge_blocks.get(map_key(obs), {}).items()
-            if self.cycle - at <= 6
-        }
+        return {edge for edge, at in self.edge_blocks.get(map_key(obs), {}).items() if self.cycle - at <= 6}
 
     def blocked(self, obs: PlayerObservation) -> set[Tile]:
         stamps = self._blocked.get(map_key(obs), {})
@@ -167,6 +162,7 @@ class Goal:
     name: str = ""
     finish: GameAction | None = None
     complete: bool = False  # True for an exit reached by a full observed path.
+    target: Tile | None = None  # Stable destination, distinct from this cycle's path.
 
     def criterion(self) -> str:
         return "; ".join([self.label, *self.facts])
@@ -225,7 +221,10 @@ def collision_map(obs: PlayerObservation, room: RoomMap) -> dict[Tile, bool] | N
     for tile in room.blocked(obs):
         walkable[tile] = False
     for npc in obs.npcs:
-        if npc.get("on_screen", True):
+        # The live object table retains NPC positions outside the viewport.
+        # Scrolling must not reopen a trainer-blocked passage (Route 25 TM19).
+        # Hidden objects disappear; moving NPCs use their latest coordinates.
+        if object_available(obs, npc):
             walkable[(int(npc["x"]), int(npc["y"]))] = False
     # A door on the way is a map change, not a tile to cross. It is walkable only as a goal.
     for warp in obs.warps:
@@ -233,11 +232,7 @@ def collision_map(obs: PlayerObservation, room: RoomMap) -> dict[Tile, bool] | N
     if obs.map_size:
         width, height = obs.map_size.get("w", 0), obs.map_size.get("h", 0)
         if width and height:
-            walkable = {
-                (x, y): open_
-                for (x, y), open_ in walkable.items()
-                if 0 <= x < width and 0 <= y < height
-            }
+            walkable = {(x, y): open_ for (x, y), open_ in walkable.items() if 0 <= x < width and 0 <= y < height}
     walkable[(obs.x, obs.y)] = True
     return walkable
 
@@ -291,8 +286,7 @@ class Routes:
         entries = [
             [*self.paths[(tile[0] - dx, tile[1] - dy)], name]
             for name, (dx, dy) in DIRS.items()
-            if (tile[0] - dx, tile[1] - dy) in self.paths
-            and (tile[0] - dx, tile[1] - dy, name) not in self.blocked_edges
+            if (tile[0] - dx, tile[1] - dy) in self.paths and (tile[0] - dx, tile[1] - dy, name) not in self.blocked_edges
         ]
         return min(entries, key=len) if entries else None
 
@@ -334,9 +328,7 @@ class Routes:
     def _borders_unknown(self, tile: Tile) -> bool:
         for dx, dy in DIRS.values():
             near = (tile[0] + dx, tile[1] + dy)
-            inside = self.size is None or (
-                0 <= near[0] < self.size[0] and 0 <= near[1] < self.size[1]
-            )
+            inside = self.size is None or (0 <= near[0] < self.size[0] and 0 <= near[1] < self.size[1])
             if inside and near not in self.walkable:
                 return True
         return False
@@ -374,9 +366,7 @@ def _boxed_in(rows: list[list[str]], at: tuple[int, int]) -> bool:
     """All four neighbours read #: the player walked here, so the grid is wrong (Oak's Lab)."""
     row, col = at
     around = [(row - 1, col), (row + 1, col), (row, col - 1), (row, col + 1)]
-    return all(
-        not (0 <= r < len(rows) and 0 <= c < len(rows[r])) or rows[r][c] == "#" for r, c in around
-    )
+    return all(not (0 <= r < len(rows) and 0 <= c < len(rows[r])) or rows[r][c] == "#" for r, c in around)
 
 
 def _straight(dx: int, dy: int) -> str | None:
@@ -425,14 +415,7 @@ def build_goals(
     clusters: list[tuple[int, list[Tile]]] = []
     for warp in obs.warps:
         dest, tile = int(warp.get("dest_map", -1)), (int(warp["x"]), int(warp["y"]))
-        group = next(
-            (
-                tiles
-                for d, tiles in clusters
-                if d == dest and any(_manhattan(t, tile) <= 1 for t in tiles)
-            ),
-            None,
-        )
+        group = next((tiles for d, tiles in clusters if d == dest and any(_manhattan(t, tile) <= 1 for t in tiles)), None)
         if group is None:
             clusters.append((dest, [tile]))
         else:
@@ -458,9 +441,7 @@ def build_goals(
             extra=[_exit_step(obs, tile, path)],
             fallback=toward(tile),
             distance=_manhattan(start, tile),
-            partial=None
-            if path is not None
-            else (guided_path(obs, routes, [tile]) or routes.closest(tile)),
+            partial=None if path is not None else (guided_path(obs, routes, [tile]) or routes.closest(tile)),
         )
         goal.dest_map, goal.raw_dest_map = resolved, dest
         goal.warp_tiles = tiles
@@ -469,8 +450,8 @@ def build_goals(
 
     goals.extend(_edge_goal(obs, side, routes) for side in obs.connections)
 
-    # People, balls, and signs. Signs and balls answer from below: a starter ball faced from
-    # the side in Oak's Lab ignored A (AGENTS pitfall #9).
+    # People, balls, and signs. Scripted starters/fossils and signs answer from below;
+    # ordinary field items accept any adjacent side (verified in the Forest).
     # Keys stay the same while the player moves: a sprite slot, or a sign's tile.
     def wanted(npc):
         if not objective or objective.get("kind") != "npc":
@@ -478,26 +459,23 @@ def build_goals(
         if objective.get("slot") is not None:
             return npc.get("slot") == objective["slot"]
         return objective.get("picture") == npc.get("picture") or bool(
-            objective.get("name")
-            and str(objective["name"]).casefold() in object_facts(obs, npc)["name"].casefold()
+            objective.get("name") and str(objective["name"]).casefold() in object_facts(obs, npc)["name"].casefold()
         )
 
-    wanted_keys = {f"talk_{npc.get('slot', 0)}" for npc in obs.npcs if wanted(npc)}
+    available_npcs = [npc for npc in obs.npcs if object_available(obs, npc)]
+    wanted_keys = {f"talk_{npc.get('slot', 0)}" for npc in available_npcs if wanted(npc)}
     talkers: list[tuple[str, str, Tile, tuple[str, ...], int | None]] = [
         (
             f"talk_{npc.get('slot', 0)}",
             object_facts(obs, npc)["name"],
             (int(npc["x"]), int(npc["y"])),
-            ("down",) if int(npc.get("picture", 0)) in {_ITEM_BALL, 75} else tuple(DIRS),
+            interaction_sides(npc),
             int(npc.get("picture", 0)),
         )
-        for npc in obs.npcs
+        for npc in available_npcs
         if npc.get("on_screen", True) or wanted(npc)
     ]
-    talkers += [
-        (f"sign_{s['x']}_{s['y']}", "sign", (int(s["x"]), int(s["y"])), ("down",), None)
-        for s in obs.signs
-    ]
+    talkers += [(f"sign_{s['x']}_{s['y']}", "sign", (int(s["x"]), int(s["y"])), ("down",), None) for s in obs.signs]
     talkers.sort(key=lambda item: (item[0] not in wanted_keys, _manhattan(start, item[2])))
     for key, label, tile, sides, picture in talkers[:6]:
         path = routes.facing(tile, sides)
@@ -506,28 +484,21 @@ def build_goals(
             "talk",
             f"talk to the {label}" if label != "sign" else "read the sign",
             path,
-            extra=[],
             fallback=toward(tile),
             distance=_manhattan(start, tile),
             finish=GameAction.PRESS_A,
             partial=None
             if path is not None
-            else (
-                guided_path(
-                    obs, routes, [(tile[0] + DIRS[s][0], tile[1] + DIRS[s][1]) for s in sides]
-                )
-                or routes.closest(tile)
-            ),
+            else (guided_path(obs, routes, [(tile[0] + DIRS[s][0], tile[1] + DIRS[s][1]) for s in sides]) or routes.closest(tile)),
         )
         goal.picture, goal.name = picture, label
+        goal.target = tile
+        if any(f"talk_{n.get('slot', 0)}" == key and field_item(n) for n in available_npcs):
+            goal.label = f"pick up {label}"
         goal.facts.append(f"Object at map tile ({tile[0]},{tile[1]}); face it and press A")
         if picture == 75:
-            goal.facts.append(
-                "Fossil: approach from below and confirm YES; bag receipt opens the exit"
-            )
-        if any(
-            f"talk_{n.get('slot', 0)}" == key and not n.get("on_screen", True) for n in obs.npcs
-        ):
+            goal.facts.append("Fossil: approach from below and confirm YES; bag receipt opens the exit")
+        if any(f"talk_{n.get('slot', 0)}" == key and not n.get("on_screen", True) for n in obs.npcs):
             goal.facts.append("Off screen or hidden; verify the object on arrival")
         goals.append(goal)
 
@@ -537,9 +508,6 @@ def build_goals(
             "explore",
             "explore: walk to the nearest tile not visited yet",
             routes.frontier(room.seen(obs)),
-            extra=[],
-            fallback=None,
-            distance=0,
             more=[f"{len(room.seen(obs))} tiles of this map visited"],
         )
     )
@@ -550,9 +518,6 @@ def build_goals(
                 "heading",
                 f"walk {_COMPASS[heading]} (the story direction)",
                 _heading_run(start, heading, routes.walkable),
-                extra=[],
-                fallback=None,
-                distance=0,
             )
         )
     goals.append(
@@ -587,9 +552,9 @@ def _goal(
     label: str,
     path: list[str] | None,
     *,
-    extra: list[str],
-    fallback: str | None,
-    distance: int,
+    extra: tuple[str, ...] | list[str] = (),
+    fallback: str | None = None,
+    distance: int = 0,
     finish: GameAction | None = None,
     more: list[str] | None = None,
     partial: list[str] | None = None,
@@ -601,9 +566,7 @@ def _goal(
         facts.insert(0, f"{len(path)} steps, path open")
     elif partial:
         walks = partial
-        facts.insert(
-            0, f"{distance} tiles away; walks {len(partial)} steps closer (no full path yet)"
-        )
+        facts.insert(0, f"{distance} tiles away; walks {len(partial)} steps closer (no full path yet)")
     elif fallback:
         walks = [fallback]
         facts.insert(0, f"{distance} tiles away, no known path (tries one step {fallback})")
@@ -615,9 +578,7 @@ def _goal(
     actions = [_WALK[step] for step in walks[:MAX_BURST]]
     if finish is not None and path is not None and len(walks) <= MAX_BURST:
         actions.append(finish)
-    return Goal(
-        key=key, kind=kind, label=label, actions=actions, facts=facts, path=walks, finish=finish
-    )
+    return Goal(key=key, kind=kind, label=label, actions=actions, facts=facts, path=walks, finish=finish)
 
 
 def _exit_step(obs: PlayerObservation, tile: Tile, path: list[str] | None) -> str:
@@ -646,23 +607,11 @@ def _edge_goal(obs: PlayerObservation, side: str, routes: Routes) -> Goal:
     height = (obs.map_size or {}).get("h", 0)
 
     def distance(tile: Tile) -> int:
-        return {
-            "up": tile[1],
-            "down": height - 1 - tile[1],
-            "left": tile[0],
-            "right": width - 1 - tile[0],
-        }[side]
+        return {"up": tile[1], "down": height - 1 - tile[1], "left": tile[0], "right": width - 1 - tile[0]}[side]
 
-    boundary = [
-        t
-        for t in routes.paths
-        if width and height and distance(t) == 0 and (t[0], t[1], side) not in routes.blocked_edges
-    ]
+    boundary = [t for t in routes.paths if width and height and distance(t) == 0 and (t[0], t[1], side) not in routes.blocked_edges]
     if guided:
-        end = (
-            obs.x + sum(step_delta(d)[0] for d in guided),
-            obs.y + sum(step_delta(d)[1] for d in guided),
-        )
+        end = (obs.x + sum(step_delta(d)[0] for d in guided), obs.y + sum(step_delta(d)[1] for d in guided))
         path, extra = guided, [side] if list(end) in connection["tiles"] else []
     elif boundary:
         end = min(boundary, key=lambda t: len(routes.paths[t]))
@@ -692,9 +641,7 @@ def _edge_goal(obs: PlayerObservation, side: str, routes: Routes) -> Goal:
         extra=extra,
         fallback=routes.step(side),
         distance=_edge_distance(obs, side),
-        more=[f"Known exit tiles: {connection['tiles']} (vanilla map reference)"]
-        if connection
-        else None,
+        more=[f"Known exit tiles: {connection['tiles']} (vanilla map reference)"] if connection else None,
     )
 
 
@@ -710,12 +657,7 @@ def _wider(obs: PlayerObservation, side: str) -> str:
 def _edge_distance(obs: PlayerObservation, side: str) -> int:
     width = (obs.map_size or {}).get("w", 0)
     height = (obs.map_size or {}).get("h", 0)
-    return {
-        "up": obs.y,
-        "down": max(height - 1 - obs.y, 0),
-        "left": obs.x,
-        "right": max(width - 1 - obs.x, 0),
-    }[side]
+    return {"up": obs.y, "down": max(height - 1 - obs.y, 0), "left": obs.x, "right": max(width - 1 - obs.x, 0)}[side]
 
 
 def _heading_run(start: Tile, heading: str, walkable: dict[Tile, bool]) -> list[str] | None:
@@ -731,11 +673,7 @@ def _heading_run(start: Tile, heading: str, walkable: dict[Tile, bool]) -> list[
 
 
 def _mark_objective(
-    goals: list[Goal],
-    obs: PlayerObservation,
-    objective: dict[str, Any] | None,
-    objective_text: str | None,
-    routes: Routes,
+    goals: list[Goal], obs: PlayerObservation, objective: dict[str, Any] | None, objective_text: str | None, routes: Routes
 ) -> None:
     """Flag the option that is the objective, or add one for a plain tile target."""
     from nuzlocke.knowledge.map_reference import guided_path
@@ -748,10 +686,7 @@ def _mark_objective(
         candidates = [
             g
             for g in goals
-            if (
-                g.dest_map == objective.get("dest_map")
-                or g.raw_dest_map == objective.get("dest_map")
-            )
+            if (g.dest_map == objective.get("dest_map") or g.raw_dest_map == objective.get("dest_map"))
             and ("x" not in objective or (objective["x"], objective["y"]) in g.warp_tiles)
         ]
         if candidates:
@@ -799,8 +734,7 @@ def _mark_objective(
                 and (
                     g.key == f"talk_{objective['slot']}"
                     if objective.get("slot") is not None
-                    else (picture is not None and g.picture == picture)
-                    or (name and name in g.name.casefold())
+                    else (picture is not None and g.picture == picture) or (name and name in g.name.casefold())
                 )
             ),
             None,
@@ -808,27 +742,22 @@ def _mark_objective(
     elif kind == "tile" and objective.get("x") is not None:
         tile = (int(objective["x"]), int(objective["y"]))
         start = (obs.x, obs.y)
-        path = routes.onto(tile)
+        path = routes.paths.get(tile)
         match = _goal(
             "objective",
             "objective",
             f"walk to the objective tile ({objective.get('label') or 'target'})",
             path,
-            extra=[],
             fallback=routes.step(_straight(tile[0] - start[0], tile[1] - start[1])),
             distance=_manhattan(start, tile),
-            partial=None
-            if path is not None
-            else (guided_path(obs, routes, [tile]) or routes.closest(tile)),
+            partial=None if path is not None else (guided_path(obs, routes, [tile]) or routes.closest(tile)),
         )
+        match.target = tile
         goals.append(match)
     elif kind == "face" and objective.get("x") is not None:
         from nuzlocke.agents.gym_preparation import leader_position, needs_top_up
 
-        prepare_first = needs_top_up(obs) and (
-            objective["x"],
-            objective.get("y"),
-        ) == leader_position(obs.map_id, obs.badges)
+        prepare_first = needs_top_up(obs) and (objective["x"], objective.get("y")) == leader_position(obs.map_id, obs.badges)
         # Stand on a tile, turn, and press A: the nurse is answered across her counter.
         tile = (int(objective["x"]), int(objective["y"]))
         path = routes.onto(tile)
@@ -838,16 +767,13 @@ def _mark_objective(
             f"stand at ({tile[0]},{tile[1]}), face {objective.get('dir')}, press A",
             path,
             extra=[] if prepare_first else [str(objective.get("dir") or "up")],
-            fallback=None,
             distance=_manhattan((obs.x, obs.y), tile),
             finish=None if prepare_first else GameAction.PRESS_A,
             partial=None if path is not None else routes.closest(tile),
         )
         goals.append(match)
     elif kind in ("wait", "explore"):
-        match = next((g for g in goals if g.key == kind), None) or next(
-            g for g in goals if g.key == "wait"
-        )
+        match = next((g for g in goals if g.key == kind), None) or next(g for g in goals if g.key == "wait")
     if match is not None:
         mark(match, objective_text)
 
@@ -858,9 +784,7 @@ def mark(goal: Goal, objective_text: str | None) -> None:
     goal.facts.insert(0, f"CURRENT OBJECTIVE: {objective_text or 'this'}")
 
 
-def pick(
-    goals: list[Goal], choice: str, probabilities: dict[str, float], fails: dict[str, int]
-) -> Goal | None:
+def pick(goals: list[Goal], choice: str, probabilities: dict[str, float], fails: dict[str, int]) -> Goal | None:
     """Jev's goal, or the runner-up when that goal already failed here twice."""
     by_key = {goal.key: goal for goal in goals}
     chosen = by_key.get(choice)
@@ -892,10 +816,7 @@ def goal_questions(goals: list[Goal], *, judged: bool = True) -> dict[str, Any]:
         questions["objective_done"] = {
             "type": "noul",
             "instructions": "The current objective is already complete.",
-            "criteria": {
-                "true": "The objective has been achieved",
-                "false": "The objective is still ahead",
-            },
+            "criteria": {"true": "The objective has been achieved", "false": "The objective is still ahead"},
         }
     return questions
 
@@ -922,12 +843,7 @@ class ObjectTrust:
             return obs
         return obs.model_copy(update={"warps": [], "signs": [], "npcs": []})
 
-    def record(
-        self,
-        before: PlayerObservation,
-        after: PlayerObservation,
-        walks: list[dict[str, Any]] | None = None,
-    ) -> bool:
+    def record(self, before: PlayerObservation, after: PlayerObservation, walks: list[dict[str, Any]] | None = None) -> bool:
         """Score one cycle's map change. True when it just made the map untrusted."""
         if not before.warps or map_key(before) == map_key(after):
             return False

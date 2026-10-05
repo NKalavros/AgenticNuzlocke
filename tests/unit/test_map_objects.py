@@ -17,6 +17,41 @@ class _Emu:
         return bytes(self.read_u8(addr + offset) for offset in range(size))
 
 
+def test_major_status_comes_from_both_active_battle_structures():
+    for value, status in [
+        (0, "OK"),
+        (1, "SLP"),
+        (7, "SLP"),
+        (8, "PSN"),
+        (16, "BRN"),
+        (32, "FRZ"),
+        (64, "PAR"),
+    ]:
+        memory = {
+            pa_serve.W_IS_IN_BATTLE: 2,
+            pa_serve.W_ENEMY_MON + 4: value,
+            pa_serve.W_BATTLE_MON + 4: value,
+        }
+        assert pa_serve.read_enemy(_Emu(memory))["status"] == status
+        assert pa_serve.read_active(_Emu(memory))["status"] == status
+
+
+def test_hidden_flags_distinguish_entrance_oak_from_real_offscreen_oak():
+    memory = {
+        pa_serve.W_TOGGLEABLE_OBJECT_LIST: 5,
+        pa_serve.W_TOGGLEABLE_OBJECT_LIST + 1: 9,
+        pa_serve.W_TOGGLEABLE_OBJECT_LIST + 2: 8,
+        pa_serve.W_TOGGLEABLE_OBJECT_LIST + 3: 10,
+        pa_serve.W_TOGGLEABLE_OBJECT_LIST + 4: 255,
+        pa_serve.W_TOGGLEABLE_OBJECT_FLAGS + 1: 4,
+    }
+    assert pa_serve.read_hidden_objects(_Emu(memory)) == {8}
+    memory[pa_serve.W_TOGGLEABLE_OBJECT_FLAGS + 1] = 2
+    assert pa_serve.read_hidden_objects(_Emu(memory)) == {5}
+    memory[pa_serve.W_TOGGLEABLE_OBJECT_LIST] = 0
+    assert pa_serve.read_hidden_objects(_Emu(memory)) is None
+
+
 def test_reads_oaks_lab_layout():
     # Oak's Lab on Red Star, as read from run 20260928-205856-f65040's savestate.
     memory = {pa_serve.W_CUR_MAP: 40, pa_serve.W_X_COORD: 5, pa_serve.W_Y_COORD: 3}

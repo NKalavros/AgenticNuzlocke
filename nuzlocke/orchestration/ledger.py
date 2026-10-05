@@ -46,14 +46,11 @@ class LedgerTracker:
 
         battle = obs.battle or {}
         self.referee.balls_acquired |= any(
-            "ball" in str(item.get("item") or "").casefold() and item.get("quantity", 1) > 0
-            for item in obs.bag
+            "ball" in str(item.get("item") or "").casefold() and item.get("quantity", 1) > 0 for item in obs.bag
         )
         if obs.in_battle and not self._prev_in_battle:
             self.referee.battle_eligible = {
-                m["capture_id"]
-                for m in obs.party
-                if not m.get("dead") and (m.get("level") or 0) <= self.referee.current_cap
+                m["capture_id"] for m in obs.party if not m.get("dead") and (m.get("level") or 0) <= self.referee.current_cap
             }
             self._battle_area = None
             self.first_encounter = False
@@ -73,16 +70,11 @@ class LedgerTracker:
                 return
             self._encounter_classified = True
             clauses = self.referee.rules.get("clauses", {})
-            duplicate = (
-                clauses.get("duplicates_clause", False) or clauses.get("species_clause", False)
-            ) and family(species) in self.referee.owned_families
+            duplicate = (clauses.get("duplicates_clause", False) or clauses.get("species_clause", False)) and family(
+                species
+            ) in self.referee.owned_families
             self.duplicate_encounter = duplicate
-            if (
-                battle.get("type") == "wild"
-                and area
-                and self.referee.balls_acquired
-                and not duplicate
-            ):
+            if battle.get("type") == "wild" and area and self.referee.balls_acquired and not duplicate:
                 self.first_encounter = (
                     not resolved(self.referee.encounter_ledger, obs.map_id)
                     if obs.map_id is not None
@@ -93,15 +85,10 @@ class LedgerTracker:
                     self._battle_area = area
         elif not obs.in_battle and self._prev_in_battle:
             if self._battle_area:
-                caught = (
-                    len(obs.party) > self._battle_party_size
-                    or obs.flags.get("pokedex_owned", 0) > self._battle_owned
-                )
+                caught = len(obs.party) > self._battle_party_size or obs.flags.get("pokedex_owned", 0) > self._battle_owned
                 outcome = "caught" if caught else "forfeited"
                 if caught:
-                    self.referee.owned_families.add(
-                        family(self.referee.encounter_ledger[self._battle_area]["species"])
-                    )
+                    self.referee.owned_families.add(family(self.referee.encounter_ledger[self._battle_area]["species"]))
                 self.referee.resolve_encounter(self._battle_area, outcome)
             self.first_encounter = False
             self.duplicate_encounter = False
@@ -145,7 +132,5 @@ class LedgerTracker:
                 and (was_map != obs.map_id)
                 and obs.map_id in {0, 37, 41, 58, 64, 68}
             ):
-                self.referee.note_wipe(
-                    f"blacked out; woke up healed in {obs.map_name}", party, context
-                )
+                self.referee.note_wipe(f"blacked out; woke up healed in {obs.map_name}", party, context)
         self._prev_state = (obs.in_battle, lowest, obs.map_id)

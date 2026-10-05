@@ -1,0 +1,58 @@
+{
+  "codex_restrictions": {
+    "features.shell_tool": false,
+    "features.multi_agent": false,
+    "features.hooks": false,
+    "features.code_mode.enabled": false,
+    "web_search": "disabled",
+    "apps._default.enabled": false,
+    "model_provider": "openai"
+  },
+  "claude_args": [
+    "-p",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--include-partial-messages",
+    "--tools",
+    "",
+    "--strict-mcp-config",
+    "--mcp-config",
+    "{\"mcpServers\":{}}",
+    "--permission-mode",
+    "dontAsk",
+    "--safe-mode"
+  ],
+  "gemini_settings": {
+    "security": {
+      "auth": {
+        "selectedType": "oauth-personal"
+      }
+    },
+    "admin": {
+      "mcp": {
+        "enabled": false
+      },
+      "extensions": {
+        "enabled": false
+      },
+      "skills": {
+        "enabled": false
+      }
+    },
+    "hooksConfig": {
+      "enabled": false
+    },
+    "general": {
+      "enableAutoUpdate": false
+    },
+    "context": {
+      "fileName": []
+    },
+    "tools": {
+      "core": []
+    }
+  }
+}

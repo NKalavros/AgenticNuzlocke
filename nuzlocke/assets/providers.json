@@ -1,0 +1,36 @@
+{
+  "jev": {
+    "model": "jev-latest",
+    "base_url": "https://api.typesafe.ai",
+    "api_key_env": "JEV_API_KEY",
+    "timeout_s": 8
+  },
+  "cursor": {
+    "model": "composer-2.5",
+    "api_key_env": "CURSOR_API_KEY",
+    "max_retries": 5
+  },
+  "codex": {
+    "binary": "codex"
+  },
+  "claude_code": {
+    "binary": "claude"
+  },
+  "gemini_cli": {
+    "binary": "gemini"
+  },
+  "antigravity": {
+    "binary": "agy",
+    "model": "gemini-3.8-flash-low"
+  },
+  "openai": {
+    "base_url": "https://api.openai.com/v1",
+    "api_key_env": "OPENAI_API_KEY"
+  },
+  "openai_compatible": {
+    "base_url": "http://127.0.0.1:8000/v1",
+    "api_key_env": "OPENAI_API_KEY",
+    "api_key_default": "not-needed",
+    "structured_output": "prompt"
+  }
+}

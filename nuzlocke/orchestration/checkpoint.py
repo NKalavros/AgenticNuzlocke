@@ -50,10 +50,7 @@ def stage_for_boot(run_dir: Path, name: str = CHECKPOINT_NAME) -> Path:
     boot = run_dir / "pokemon-agent-data" / "saves" / f"{name}.state"
     if not src.is_file():
         if not boot.is_file():
-            raise FileNotFoundError(
-                f"No savestate for this run ({src}). "
-                "Stop a run from the dashboard once so it can write one."
-            )
+            raise FileNotFoundError(f"No savestate for this run ({src}). Stop a run from the dashboard once so it can write one.")
         src = boot
     return _copy(src, boot)
 
@@ -71,23 +68,6 @@ def data_dir_from_ps(text: str, port: str) -> Path | None:
         if index + 1 < len(parts):
             return Path(parts[index + 1])
     return None
-
-
-def should_checkpoint(
-    *,
-    steps: int,
-    every_steps: int,
-    in_battle: bool,
-    last_ledger_change_step: int,
-    min_gap_after_ledger_event: int = 3,
-) -> bool:
-    return (
-        every_steps > 0
-        and steps > 0
-        and steps % every_steps == 0
-        and not in_battle
-        and steps - last_ledger_change_step >= min_gap_after_ledger_event
-    )
 
 
 class IntegrityError(RuntimeError):
@@ -159,9 +139,7 @@ class RunCheckpoint:
                 "An action was in flight at shutdown; automatic replay would risk rolling back an outcome. Inspect this run in sandbox."
             )
         if not self.pointer.exists():
-            raise IntegrityError(
-                "Legacy savestate has no matching controller history; use sandbox --from for diagnostics."
-            )
+            raise IntegrityError("Legacy savestate has no matching controller history; use sandbox --from for diagnostics.")
         data = json.loads(self.pointer.read_text())
         if data.get("version") != 1 or data["identity"] != self.identity:
             raise IntegrityError("Checkpoint ROM/rules do not match this run")

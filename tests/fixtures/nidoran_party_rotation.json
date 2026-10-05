@@ -1,0 +1,282 @@
+{
+  "screen_rows": [
+    "   BULBASAUR  13    ",
+    "              34/ 36",
+    "   RATTATA    12    ",
+    "              30/ 30",
+    "   PIDGEY     12    ",
+    "              34/ 34",
+    "   BEEDRILL   12    ",
+    "              41/ 41",
+    "   NIDORAN    12    ",
+    "\u25b6             33/ 33",
+    "                    ",
+    "                    ",
+    "\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510",
+    "\u2502                  \u2502",
+    "\u2502Choose a POK\u00e9MON. \u2502",
+    "\u2502                  \u2502",
+    "\u2502                  \u2502",
+    "\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518"
+  ],
+  "party": [
+    {
+      "species_id": 153,
+      "dex_number": 1,
+      "species": "Bulbasaur",
+      "nickname": "BULBASAUR",
+      "level": 13,
+      "hp": 34,
+      "max_hp": 36,
+      "status": "OK",
+      "types": [
+        "Grass",
+        "Poison"
+      ],
+      "moves": [
+        {
+          "id": 33,
+          "name": "Tackle",
+          "pp": 25,
+          "pp_up": 0,
+          "observed_max_pp": 35
+        },
+        {
+          "id": 45,
+          "name": "Growl",
+          "pp": 40,
+          "pp_up": 0,
+          "observed_max_pp": 40
+        },
+        {
+          "id": 73,
+          "name": "Leech Seed",
+          "pp": 9,
+          "pp_up": 0,
+          "observed_max_pp": 10
+        },
+        {
+          "id": 22,
+          "name": "Vine Whip",
+          "pp": 10,
+          "pp_up": 0,
+          "observed_max_pp": 10
+        }
+      ],
+      "stats": {
+        "attack": 20,
+        "defense": 21,
+        "speed": 19,
+        "special": 23
+      },
+      "ot_id": 40486,
+      "experience": 1281,
+      "capture_id": "capture-0001",
+      "dead": false,
+      "ineligible": false
+    },
+    {
+      "species_id": 165,
+      "dex_number": 19,
+      "species": "Rattata",
+      "nickname": "RATTATA",
+      "level": 12,
+      "hp": 30,
+      "max_hp": 30,
+      "status": "OK",
+      "types": [
+        "Normal"
+      ],
+      "moves": [
+        {
+          "id": 33,
+          "name": "Tackle",
+          "pp": 35,
+          "pp_up": 0,
+          "observed_max_pp": 35
+        },
+        {
+          "id": 39,
+          "name": "Tail Whip",
+          "pp": 30,
+          "pp_up": 0,
+          "observed_max_pp": 30
+        },
+        {
+          "id": 98,
+          "name": "Quick Attack",
+          "pp": 30,
+          "pp_up": 0,
+          "observed_max_pp": 30
+        }
+      ],
+      "stats": {
+        "attack": 21,
+        "defense": 17,
+        "speed": 23,
+        "special": 11
+      },
+      "ot_id": 40486,
+      "experience": 1728,
+      "capture_id": "capture-0002",
+      "dead": false,
+      "ineligible": false
+    },
+    {
+      "species_id": 36,
+      "dex_number": 16,
+      "species": "Pidgey",
+      "nickname": "PIDGEY",
+      "level": 12,
+      "hp": 34,
+      "max_hp": 34,
+      "status": "OK",
+      "types": [
+        "Normal",
+        "Flying"
+      ],
+      "moves": [
+        {
+          "id": 16,
+          "name": "Gust",
+          "pp": 35,
+          "pp_up": 0,
+          "observed_max_pp": 35
+        },
+        {
+          "id": 28,
+          "name": "Sand Attack",
+          "pp": 15,
+          "pp_up": 0,
+          "observed_max_pp": 15
+        },
+        {
+          "id": 98,
+          "name": "Quick Attack",
+          "pp": 30,
+          "pp_up": 0,
+          "observed_max_pp": 30
+        }
+      ],
+      "stats": {
+        "attack": 17,
+        "defense": 17,
+        "speed": 22,
+        "special": 15
+      },
+      "ot_id": 40486,
+      "experience": 973,
+      "capture_id": "capture-0003",
+      "dead": false,
+      "ineligible": false
+    },
+    {
+      "species_id": 114,
+      "dex_number": 15,
+      "species": "Beedrill",
+      "nickname": "BEEDRILL",
+      "level": 12,
+      "hp": 41,
+      "max_hp": 41,
+      "status": "OK",
+      "types": [
+        "Bug",
+        "Poison"
+      ],
+      "moves": [
+        {
+          "id": 40,
+          "name": "Poison Sting",
+          "pp": 35,
+          "pp_up": 0,
+          "observed_max_pp": 35
+        },
+        {
+          "id": 81,
+          "name": "String Shot",
+          "pp": 40,
+          "pp_up": 0,
+          "observed_max_pp": 40
+        },
+        {
+          "id": 31,
+          "name": "Fury Attack",
+          "pp": 20,
+          "pp_up": 0,
+          "observed_max_pp": 20
+        }
+      ],
+      "stats": {
+        "attack": 24,
+        "defense": 18,
+        "speed": 26,
+        "special": 18
+      },
+      "ot_id": 40486,
+      "experience": 1728,
+      "capture_id": "capture-0004",
+      "dead": false,
+      "ineligible": false
+    },
+    {
+      "species_id": 3,
+      "dex_number": 32,
+      "species": "Nidoran\u2642",
+      "nickname": "NIDORAN?",
+      "level": 12,
+      "hp": 33,
+      "max_hp": 33,
+      "status": "OK",
+      "types": [
+        "Poison"
+      ],
+      "moves": [
+        {
+          "id": 43,
+          "name": "Leer",
+          "pp": 30,
+          "pp_up": 0,
+          "observed_max_pp": 30
+        },
+        {
+          "id": 33,
+          "name": "Tackle",
+          "pp": 35,
+          "pp_up": 0,
+          "observed_max_pp": 35
+        },
+        {
+          "id": 30,
+          "name": "Horn Attack",
+          "pp": 25,
+          "pp_up": 0,
+          "observed_max_pp": 25
+        },
+        {
+          "id": 24,
+          "name": "Double Kick",
+          "pp": 30,
+          "pp_up": 0,
+          "observed_max_pp": 30
+        }
+      ],
+      "stats": {
+        "attack": 22,
+        "defense": 14,
+        "speed": 20,
+        "special": 17
+      },
+      "ot_id": 40486,
+      "experience": 973,
+      "capture_id": "capture-0005",
+      "dead": false,
+      "ineligible": false
+    }
+  ],
+  "map_id": 51,
+  "map_name": "Viridian Forest",
+  "x": 27,
+  "y": 19,
+  "in_battle": false,
+  "cutscene": false
+}

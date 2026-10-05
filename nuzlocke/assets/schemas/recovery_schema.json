@@ -1,0 +1,20 @@
+{
+  "diagnosis": "string",
+  "proposed_actions": [
+    "walk_down_3",
+    "press_a"
+  ],
+  "escalate_to_human": false,
+  "reason": "string",
+  "objectives": {
+    "primary": "string|null",
+    "secondary": "string|null",
+    "tertiary": "string|null"
+  },
+  "landmarks": [
+    {
+      "label": "door",
+      "note": "bottom of room"
+    }
+  ]
+}

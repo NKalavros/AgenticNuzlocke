@@ -1,0 +1,1 @@
+1. **Vermilion → Cerulean:** heal, leave north to Route 6, enter its Underground Path building (map 74), take the north-south tunnel (119) to Route 5's building (71), leave and go north to Cerulean. Saffron's guards still block the direct gates. Do not head east along Route 11 toward the sleeping Snorlax as the route to Lavender.

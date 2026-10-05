@@ -1,0 +1,397 @@
+{
+  "joy_ignore": 64,
+  "screen_rows": [
+    " MEOWTH             ",
+    "     12             ",
+    "    \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510",
+    "    \u2502              \u2502",
+    "    \u2502\u25b6POK\u00e9 BALL    \u2502",
+    "    \u2502         \u00d710  \u2502",
+    "    \u2502 TM34         \u2502",
+    "    \u2502         \u00d7 1  \u2502",
+    "    \u2502 HELIX FOSSIL \u2502",
+    "    \u2502              \u2502",
+    "    \u2502 NUGGET       \u2502",
+    "    \u2502         \u00d7 1 \u25bc\u2502",
+    "\u250c\u2500\u2500\u2500\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518",
+    "\u2502                  \u2502",
+    "\u2502                  \u2502",
+    "\u2502                  \u2502",
+    "\u2502                  \u2502",
+    "\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518"
+  ],
+  "in_battle": true,
+  "battle": {
+    "in_battle": true,
+    "type": "wild",
+    "enemy": {
+      "species": "Meowth",
+      "hp": 32,
+      "max_hp": 32,
+      "level": 12,
+      "status": "OK"
+    }
+  },
+  "party": [
+    {
+      "species_id": 150,
+      "dex_number": 17,
+      "species": "Pidgeotto",
+      "nickname": "PIDGEOTTO",
+      "level": 22,
+      "hp": 33,
+      "max_hp": 65,
+      "status": "OK",
+      "types": [
+        "Normal",
+        "Flying"
+      ],
+      "moves": [
+        {
+          "id": 16,
+          "name": "Gust",
+          "pp": 35,
+          "pp_up": 0
+        },
+        {
+          "id": 28,
+          "name": "Sand Attack",
+          "pp": 15,
+          "pp_up": 0
+        },
+        {
+          "id": 98,
+          "name": "Quick Attack",
+          "pp": 24,
+          "pp_up": 0
+        },
+        {
+          "id": 18,
+          "name": "Whirlwind",
+          "pp": 20,
+          "pp_up": 0
+        }
+      ],
+      "stats": {
+        "attack": 36,
+        "defense": 35,
+        "speed": 44,
+        "special": 31
+      },
+      "ot_id": 40486,
+      "experience": 8659
+    },
+    {
+      "species_id": 166,
+      "dex_number": 20,
+      "species": "Raticate",
+      "nickname": "RATICATE",
+      "level": 21,
+      "hp": 42,
+      "max_hp": 58,
+      "status": "OK",
+      "types": [
+        "Normal"
+      ],
+      "moves": [
+        {
+          "id": 33,
+          "name": "Tackle",
+          "pp": 35,
+          "pp_up": 0
+        },
+        {
+          "id": 39,
+          "name": "Tail Whip",
+          "pp": 30,
+          "pp_up": 0
+        },
+        {
+          "id": 98,
+          "name": "Quick Attack",
+          "pp": 28,
+          "pp_up": 0
+        },
+        {
+          "id": 158,
+          "name": "Hyper Fang",
+          "pp": 12,
+          "pp_up": 0
+        }
+      ],
+      "stats": {
+        "attack": 45,
+        "defense": 37,
+        "speed": 49,
+        "special": 28
+      },
+      "ot_id": 40486,
+      "experience": 10378
+    },
+    {
+      "species_id": 114,
+      "dex_number": 15,
+      "species": "Beedrill",
+      "nickname": "BEEDRILL",
+      "level": 21,
+      "hp": 52,
+      "max_hp": 65,
+      "status": "OK",
+      "types": [
+        "Bug",
+        "Poison"
+      ],
+      "moves": [
+        {
+          "id": 40,
+          "name": "Poison Sting",
+          "pp": 35,
+          "pp_up": 0
+        },
+        {
+          "id": 81,
+          "name": "String Shot",
+          "pp": 40,
+          "pp_up": 0
+        },
+        {
+          "id": 31,
+          "name": "Fury Attack",
+          "pp": 20,
+          "pp_up": 0
+        },
+        {
+          "id": 41,
+          "name": "Twineedle",
+          "pp": 16,
+          "pp_up": 0
+        }
+      ],
+      "stats": {
+        "attack": 40,
+        "defense": 28,
+        "speed": 43,
+        "special": 29
+      },
+      "ot_id": 40486,
+      "experience": 9738
+    },
+    {
+      "species_id": 125,
+      "dex_number": 12,
+      "species": "Butterfree",
+      "nickname": "BUTTERFREE",
+      "level": 21,
+      "hp": 38,
+      "max_hp": 57,
+      "status": "OK",
+      "types": [
+        "Bug",
+        "Flying"
+      ],
+      "moves": [
+        {
+          "id": 79,
+          "name": "Sleep Powder",
+          "pp": 15,
+          "pp_up": 0
+        },
+        {
+          "id": 93,
+          "name": "Confusion",
+          "pp": 23,
+          "pp_up": 0
+        },
+        {
+          "id": 77,
+          "name": "Poison Powder",
+          "pp": 35,
+          "pp_up": 0
+        },
+        {
+          "id": 78,
+          "name": "Stun Spore",
+          "pp": 30,
+          "pp_up": 0
+        }
+      ],
+      "stats": {
+        "attack": 26,
+        "defense": 31,
+        "speed": 40,
+        "special": 41
+      },
+      "ot_id": 40486,
+      "experience": 9604
+    },
+    {
+      "species_id": 9,
+      "dex_number": 2,
+      "species": "Ivysaur",
+      "nickname": "IVYSAUR",
+      "level": 22,
+      "hp": 61,
+      "max_hp": 61,
+      "status": "OK",
+      "types": [
+        "Grass",
+        "Poison"
+      ],
+      "moves": [
+        {
+          "id": 33,
+          "name": "Tackle",
+          "pp": 35,
+          "pp_up": 0
+        },
+        {
+          "id": 77,
+          "name": "Poison Powder",
+          "pp": 35,
+          "pp_up": 0
+        },
+        {
+          "id": 73,
+          "name": "Leech Seed",
+          "pp": 10,
+          "pp_up": 0
+        },
+        {
+          "id": 22,
+          "name": "Vine Whip",
+          "pp": 9,
+          "pp_up": 0
+        }
+      ],
+      "stats": {
+        "attack": 37,
+        "defense": 40,
+        "speed": 36,
+        "special": 43
+      },
+      "ot_id": 40486,
+      "experience": 8765
+    },
+    {
+      "species_id": 167,
+      "dex_number": 33,
+      "species": "Nidorino",
+      "nickname": "NIDORINO",
+      "level": 21,
+      "hp": 59,
+      "max_hp": 59,
+      "status": "OK",
+      "types": [
+        "Poison"
+      ],
+      "moves": [
+        {
+          "id": 40,
+          "name": "Poison Sting",
+          "pp": 35,
+          "pp_up": 0
+        },
+        {
+          "id": 33,
+          "name": "Tackle",
+          "pp": 35,
+          "pp_up": 0
+        },
+        {
+          "id": 30,
+          "name": "Horn Attack",
+          "pp": 25,
+          "pp_up": 0
+        },
+        {
+          "id": 24,
+          "name": "Double Kick",
+          "pp": 30,
+          "pp_up": 0
+        }
+      ],
+      "stats": {
+        "attack": 42,
+        "defense": 30,
+        "speed": 39,
+        "special": 34
+      },
+      "ot_id": 40486,
+      "experience": 6458
+    }
+  ],
+  "bag": [
+    {
+      "id": 4,
+      "item": "Poke Ball",
+      "quantity": 10
+    },
+    {
+      "id": 234,
+      "item": "TM34",
+      "quantity": 1
+    },
+    {
+      "id": 42,
+      "item": "Helix Fossil",
+      "quantity": 1
+    },
+    {
+      "id": 49,
+      "item": "Nugget",
+      "quantity": 1
+    },
+    {
+      "id": 211,
+      "item": "TM11",
+      "quantity": 1
+    },
+    {
+      "id": 245,
+      "item": "TM45",
+      "quantity": 1
+    },
+    {
+      "id": 63,
+      "item": "S.S. Ticket",
+      "quantity": 1
+    },
+    {
+      "id": 228,
+      "item": "TM28",
+      "quantity": 1
+    }
+  ],
+  "active_party_slot": 0,
+  "active_mon": {
+    "species": "Pidgeotto",
+    "hp": 33,
+    "max_hp": 65,
+    "level": 22,
+    "status": "OK",
+    "moves": [
+      {
+        "id": 16,
+        "name": "Gust",
+        "pp": 35
+      },
+      {
+        "id": 28,
+        "name": "Sand Attack",
+        "pp": 15
+      },
+      {
+        "id": 98,
+        "name": "Quick Attack",
+        "pp": 24
+      },
+      {
+        "id": 18,
+        "name": "Whirlwind",
+        "pp": 20
+      }
+    ]
+  },
+  "menu_index": 0,
+  "menu_scroll": 0
+}

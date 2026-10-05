@@ -51,14 +51,7 @@ def _same_tile(before: PlayerObservation, after: PlayerObservation) -> bool:
 # One walk_* press is one tile from any facing: Gen 1 has no turn-in-place, and a press into
 # a wall only turns the player.
 def _turned(before: PlayerObservation, after: PlayerObservation) -> bool:
-    return bool(before.facing and after.facing) and (
-        str(before.facing).lower() != str(after.facing).lower()
-    )
-
-
-def _turned_to(action: GameAction, before: PlayerObservation, after: PlayerObservation) -> bool:
-    direction = action.value.removeprefix("walk_")
-    return _turned(before, after) and str(after.facing).lower() == direction
+    return bool(before.facing and after.facing) and (str(before.facing).lower() != str(after.facing).lower())
 
 
 def _transition(before: PlayerObservation, after: PlayerObservation) -> str | None:
@@ -89,9 +82,7 @@ class NousRedEnvironment:
         self.load_state = load_state
         # trust_env=False: a dev HTTP(S)_PROXY would turn /health into a 503.
         self._writer_token = secrets.token_urlsafe(32)
-        self._client = httpx.Client(
-            timeout=60.0, trust_env=False, headers={"X-Nuzlocke-Writer": self._writer_token}
-        )
+        self._client = httpx.Client(timeout=60.0, trust_env=False, headers={"X-Nuzlocke-Writer": self._writer_token})
         self._proc: subprocess.Popen[str] | None = None
         # The map the last observation was on; a change means a warp is still loading.
         self._last_map_id: Any = None
@@ -108,8 +99,7 @@ class NousRedEnvironment:
             return
         if not self.rom_path or not self.rom_path.exists():
             raise FileNotFoundError(
-                "Pokemon Red/Blue ROM required to start pokemon-agent. "
-                "Pass --rom /path/to/pokemon_red.gb or set NUZLOCKE_ROM."
+                "Pokemon Red/Blue ROM required to start pokemon-agent. Pass --rom /path/to/pokemon_red.gb or set NUZLOCKE_ROM."
             )
         port = self.base_url.rsplit(":", 1)[-1]
         data_dir = self.run_dir / "pokemon-agent-data"
@@ -131,9 +121,7 @@ class NousRedEnvironment:
                 env={**os.environ, "NUZLOCKE_WRITER_TOKEN": self._writer_token},
             )
         except FileNotFoundError as err:
-            raise RuntimeError(
-                "pokemon-agent CLI not found. Install with: uv sync --extra emu"
-            ) from err
+            raise RuntimeError("pokemon-agent CLI not found. Install with: uv sync --extra emu") from err
         deadline = time.time() + 45
         while time.time() < deadline:
             if self.healthy():
@@ -196,11 +184,7 @@ class NousRedEnvironment:
         map_info = state.get("map") or {}
         dialog = state.get("dialog") or {}
         battle = state.get("battle")
-        in_battle = bool(
-            isinstance(battle, dict)
-            and battle.get("in_battle")
-            and battle.get("type") not in {None, "none", ""}
-        )
+        in_battle = bool(isinstance(battle, dict) and battle.get("in_battle") and battle.get("type") not in {None, "none", ""})
         map_id = map_info.get("map_id")
         joy_ignore = int(dialog.get("joy_ignore") or 0)
         if in_battle and (objects or {}).get("enemy"):
@@ -208,10 +192,7 @@ class NousRedEnvironment:
             battle = {**battle, "enemy": objects["enemy"]}
         return PlayerObservation(
             screenshot_path=screenshot_path,
-            map_name=map_name(
-                pos.get("map_id") if map_id is None else map_id,
-                map_info.get("map_name") or pos.get("map_name"),
-            ),
+            map_name=map_name(pos.get("map_id") if map_id is None else map_id, map_info.get("map_name") or pos.get("map_name")),
             map_id=pos.get("map_id") if map_id is None else map_id,
             x=pos.get("x"),
             y=pos.get("y"),
@@ -226,9 +207,7 @@ class NousRedEnvironment:
             party=[
                 m
                 for m in state.get("party") or []
-                if not str(m.get("species", "")).startswith("???")
-                and m.get("max_hp", 1) > 0
-                and 1 <= m.get("level", 1) <= 100
+                if not str(m.get("species", "")).startswith("???") and m.get("max_hp", 1) > 0 and 1 <= m.get("level", 1) <= 100
             ],
             bag=list(state.get("bag") or []),
             badges=list(player.get("badges") or player.get("badges_list") or []),
@@ -306,10 +285,7 @@ class NousRedEnvironment:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(base64.b64decode(payload["screenshot"]))
                 obs = self._observation_from_state(
-                    payload["state"],
-                    screenshot_path=str(path),
-                    collision_ascii=payload["collision"],
-                    objects=payload["objects"],
+                    payload["state"], screenshot_path=str(path), collision_ascii=payload["collision"], objects=payload["objects"]
                 )
                 self._last_snapshot = obs
                 return obs
@@ -357,9 +333,7 @@ class NousRedEnvironment:
         self._last_map_id = map_id
         collision = self._collision_ascii()
         objects = self._map_objects()
-        return self._observation_from_state(
-            state, screenshot_path=shot, collision_ascii=collision, objects=objects
-        )
+        return self._observation_from_state(state, screenshot_path=shot, collision_ascii=collision, objects=objects)
 
     def screenshot(self, path: str | None = None) -> bytes:
         data = self._get("/screenshot").content
@@ -558,17 +532,12 @@ class NousRedEnvironment:
 
     @staticmethod
     def _health_changed(before: PlayerObservation, after: PlayerObservation) -> bool:
-        return any(
-            a.get("hp", 0) < b.get("hp", 0) or a.get("status") != b.get("status")
-            for b, a in zip(before.party, after.party)
-        )
+        return any(a.get("hp", 0) < b.get("hp", 0) or a.get("status") != b.get("status") for b, a in zip(before.party, after.party))
 
     def execute(self, actions: list[GameAction]) -> ActionResult:
         before = self.snapshot() if getattr(self, "on_transition", None) else self.peek_state()
         rows = before.screen_rows or (self._map_objects() or {}).get("screen", [])
-        naming = is_naming_lock(before.joy_ignore) and any(
-            "A B C D E F G H I" in row for row in rows
-        )
+        naming = is_naming_lock(before.joy_ignore) and any("A B C D E F G H I" in row for row in rows)
         # Naming and an open menu move a cursor: an unchanged map tile there is not a failed walk.
         cursor = naming or self._frame_blocks_walk() or self._menu_cursor_open()
         if naming:
@@ -588,18 +557,14 @@ class NousRedEnvironment:
                 stopped = _transition(before, after) or "skip_dialog"
                 if is_naming_lock(after.joy_ignore):
                     stopped = "naming_screen"
-                return ActionResult(
-                    executed=executed, stopped_early_because=stopped, observation=after, walks=walks
-                )
+                return ActionResult(executed=executed, stopped_early_because=stopped, observation=after, walks=walks)
             opcodes = [action.value]
             jump_landing = None
             if action.value.startswith("walk_") and not cursor:
                 from nuzlocke.environment.terrain import ledge_pair
 
                 direction = action.value.removeprefix("walk_")
-                dx, dy = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}[
-                    direction
-                ]
+                dx, dy = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}[direction]
                 tiles = {(t["x"], t["y"]): (t["tileset"], t["id"]) for t in before.terrain_tiles}
                 here = (before.x, before.y)
                 if (
@@ -611,7 +576,7 @@ class NousRedEnvironment:
                     opcodes.append("wait_60")  # Release input and finish the two-tile animation.
             if action.value.startswith("hold_"):
                 opcodes.append(HOLD_RELEASE)
-            elif action is GameAction.PRESS_A and last:
+            elif action in (GameAction.PRESS_A, GameAction.PRESS_START) and last:
                 opcodes.append(A_SETTLE)
             self._post_json("/action", {"actions": opcodes})
             after = self.snapshot() if getattr(self, "on_transition", None) else self.peek_state()
@@ -660,8 +625,8 @@ class NousRedEnvironment:
                 )
                 break  # Replan from the actual landing; never continue a stale burst.
             if walk and _same_tile(before, after):
-                next_is_a = not last and actions[i + 1] is GameAction.PRESS_A
-                if next_is_a and str(after.facing).lower() == action.value.removeprefix("walk_"):
+                next_is_interaction = not last and actions[i + 1] in (GameAction.PRESS_A, GameAction.PRESS_START)
+                if next_is_interaction and str(after.facing).lower() == action.value.removeprefix("walk_"):
                     before = after
                     continue
                 # A wall only turns the player and a stuck press does not; either way the rest
@@ -676,12 +641,7 @@ class NousRedEnvironment:
             before = after
             if self.press_interval_s > 0 and not last:
                 time.sleep(self.press_interval_s)
-        return ActionResult(
-            executed=executed,
-            stopped_early_because=stopped,
-            observation=self.observe(),
-            walks=walks,
-        )
+        return ActionResult(executed=executed, stopped_early_because=stopped, observation=self.observe(), walks=walks)
 
     def get_control(self) -> ControlState:
         try:
@@ -742,10 +702,7 @@ def _objects_on_map(objects: dict[str, Any] | None, map_id: Any) -> dict[str, li
     """The object lists, only when they were read on the map ``/state`` reports."""
     if not objects or (map_id is not None and objects.get("map_id") not in (None, map_id)):
         return {}
-    return {
-        key: [item for item in objects.get(key) or [] if isinstance(item, dict)]
-        for key in ("warps", "signs", "npcs")
-    }
+    return {key: [item for item in objects.get(key) or [] if isinstance(item, dict)] for key in ("warps", "signs", "npcs")}
 
 
 # At most 300 frames (about five seconds of game time) before deciding anyway.

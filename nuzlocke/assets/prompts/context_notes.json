@@ -1,0 +1,8 @@
+{
+  "walkthrough_skill": "hint above is the relevant excerpt — do not browse skill files",
+  "failed_approaches_note": "Walk bursts that already nooped — sidestep; do not ban A/Start/skip_dialog",
+  "beat_note": "This is the only objective. Do not replace it. Name the one button that serves it.",
+  "blocked_on_tile_note": "These directions did not move the player on this tile. Do not choose them. Sidestep, then retry the beat's direction.",
+  "no_progress_note": "The game world has not changed for {streak} straight cycles — only text has. Whatever you have been repeating is not working. Either your current objective is already complete, or you are talking to the wrong thing. Do something structurally different: walk away from this tile, or pick a different objective.",
+  "buttons_note": "On this tile A was pressed {press_a} time(s) and B {press_b} time(s). A book, sign, or generic chatter is not the beat. Do not press A here again. If this is not a YES/NO or the starter itself, name a walk toward the beat."
+}

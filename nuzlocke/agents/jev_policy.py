@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from itertools import takewhile
 from typing import Any
 
+from nuzlocke.assets import data
 from nuzlocke.environment.joypad import is_naming_lock
 from nuzlocke.llm.jev import JevAnswers, JevDecisionError
 from nuzlocke.referee.type_chart import matchup_hint, types_for_species
@@ -185,34 +186,28 @@ def battle_facts(obs: PlayerObservation) -> dict[str, Any] | None:
     """The two mons on the field, their HP, and the type matchup from the type chart."""
     enemy = (obs.battle or {}).get("enemy") or {}
     from nuzlocke.agents.battle import active_mon
+    from nuzlocke.environment.status import normalize_status
 
     lead = active_mon(obs)
     if not enemy and not lead:
         return None
     facts: dict[str, Any] = {}
-    if enemy:
-        facts["enemy"] = {
-            "species": enemy.get("species"),
-            "level": enemy.get("level"),
-            "hp": f"{enemy.get('hp')}/{enemy.get('max_hp')}",
-            "types": list(types_for_species(str(enemy.get("species") or ""))),
-        }
+    for side, mon in (("enemy", enemy), ("ours", lead)):
+        if mon:
+            facts[side] = {
+                "species": mon.get("species"),
+                "level": mon.get("level"),
+                "hp": f"{mon.get('hp')}/{mon.get('max_hp')}",
+                "types": list(types_for_species(str(mon.get("species") or ""))),
+                "status": normalize_status(mon.get("status")),
+            }
     if lead:
-        facts["ours"] = {
-            "species": lead.get("species"),
-            "level": lead.get("level"),
-            "hp": f"{lead.get('hp')}/{lead.get('max_hp')}",
-            "types": list(types_for_species(str(lead.get("species") or ""))),
-            "moves": [
-                f"{move.get('name')} (pp {move.get('pp')})"
-                for move in lead.get("moves") or []
-                if isinstance(move, dict)
-            ],
-        }
+        facts["ours"]["moves"] = [
+            f"{move.get('name')} (pp {move.get('pp')})" for move in lead.get("moves") or [] if isinstance(move, dict)
+        ]
     if enemy and lead:
         facts["our_types_vs_enemy"] = matchup_hint(
-            list(types_for_species(str(lead.get("species") or ""))),
-            list(types_for_species(str(enemy.get("species") or ""))),
+            list(types_for_species(str(lead.get("species") or ""))), list(types_for_species(str(enemy.get("species") or "")))
         )
     return facts
 
@@ -232,12 +227,7 @@ def build_jev_state(
     """Only what this scene's button choice needs. Memory and bookkeeping stay with the planner."""
     naming = is_naming_lock(obs.joy_ignore)
     state: dict[str, Any] = {
-        "plan": {
-            "scene": plan.scene.value,
-            "see": plan.see,
-            "plan": plan.plan,
-            "do_not": list(plan.do_not),
-        },
+        "plan": {"scene": plan.scene.value, "see": plan.see, "plan": plan.plan, "do_not": list(plan.do_not)},
         "scene": scene,
         "signals": {
             "world_changed": signals.world_changed,
@@ -269,29 +259,12 @@ def build_jev_state(
     return state
 
 
-_INSTRUCTIONS = {
-    PlanScene.OVERWORLD.value: "Pick the button that carries out `plan`.",
-    PlanScene.BATTLE.value: (
-        "Pick the button that carries out `plan` in this battle. walk_* move the cursor "
-        "on FIGHT / PKMN / ITEM / RUN or the move list, press_a confirms the highlight, "
-        "skip_dialog pages battle text."
-    ),
-    PlanScene.MENU.value: (
-        "Move the highlight to the row `plan` names, then press_a. press_b backs out."
-    ),
-    PlanScene.NAMING.value: (
-        "Follow `plan` on the letter grid: walks move the cursor, press_a types the letter."
-    ),
-    PlanScene.DIALOG.value: "Page the text unless `plan` says to answer something.",
-    PlanScene.TITLE.value: "Get past the title and intro screens the way `plan` says.",
-}
+_INSTRUCTIONS = data("prompts/fast_instructions.json")
 # Scenes where the plan's goal can go stale or finish under Jev.
 _JUDGED_SCENES = (PlanScene.OVERWORLD.value, PlanScene.DIALOG.value)
 
 
-def build_jev_questions(
-    menu: dict[str, str], scene: str = PlanScene.OVERWORLD.value
-) -> dict[str, Any]:
+def build_jev_questions(menu: dict[str, str], scene: str = PlanScene.OVERWORLD.value) -> dict[str, Any]:
     questions: dict[str, Any] = {
         "action": {
             "type": "choice",
@@ -301,28 +274,11 @@ def build_jev_questions(
     }
     if scene not in _JUDGED_SCENES:
         return questions
-    questions["plan_stale"] = {
-        "type": "noul",
-        "instructions": "Recent outcomes show this plan is no longer the right thing to follow.",
-        "criteria": {
-            "true": "The plan no longer matches what is happening",
-            "false": "The plan still fits the recent outcomes",
-        },
-    }
-    questions["objective_done"] = {
-        "type": "noul",
-        "instructions": "The plan's objective is already complete.",
-        "criteria": {
-            "true": "The goal in the plan has already been achieved",
-            "false": "The goal is still ahead",
-        },
-    }
+    questions.update(data("prompts/fast_questions.json"))
     return questions
 
 
-def plan_from_recovery(
-    advice: RecoveryAdvice, *, scene: str, world_digest: str, now: float
-) -> PlanCard:
+def plan_from_recovery(advice: RecoveryAdvice, *, scene: str, world_digest: str, now: float) -> PlanCard:
     """Recovery still presses the buttons this cycle; Jev follows the text after that."""
     try:
         parsed = PlanScene(scene)
@@ -374,12 +330,7 @@ def choose_fast_action(
     blocked = set(blocked_on_tile or [])
 
     def finish(
-        actions: GameAction | list[GameAction],
-        reason: str,
-        *,
-        spent: bool = False,
-        agent: AgentRole | None = None,
-        streak: int = 0,
+        actions: GameAction | list[GameAction], reason: str, *, spent: bool = False, agent: AgentRole | None = None, streak: int = 0
     ) -> FastTurn:
         if spent:
             plan.spent = True
@@ -416,27 +367,14 @@ def choose_fast_action(
     def ask(current_scene: str) -> JevAnswers:
         menu = action_menu(current_scene, blocked_on_tile)
         state = build_jev_state(
-            plan=plan,
-            scene=current_scene,
-            obs=obs,
-            signals=signals,
-            recent=recent,
-            objectives=objectives,
-            beat=beat,
+            plan=plan, scene=current_scene, obs=obs, signals=signals, recent=recent, objectives=objectives, beat=beat
         )
         try:
             return jev_decide(state, build_jev_questions(menu, current_scene))
         except JevDecisionError:
-            return JevAnswers(
-                action="", confidence=0.0, plan_stale=0.0, objective_done=0.0, model=""
-            )
+            return JevAnswers(action="", confidence=0.0, plan_stale=0.0, objective_done=0.0, model="")
 
-    if (
-        plan is not None
-        and not force_replan
-        and not mash_stalled
-        and pages_without_a_look(plan, obs, signals)
-    ):
+    if plan is not None and not force_replan and not mash_stalled and pages_without_a_look(plan, obs, signals):
         # A box that just opened is paged first; the look waits until it closes.
         return mash()
     why = replan_reason(plan, obs, signals, now=now, plan_every_s=plan_every_s, force=force_replan)
@@ -474,9 +412,7 @@ def choose_fast_action(
 
     named = _named_press(plan) if scene == PlanScene.NAMING.value else None
     if named is not None:
-        return finish(
-            named, f"naming grid; {named.value} once", spent=True, agent=AgentRole.OVERWORLD
-        )
+        return finish(named, f"naming grid; {named.value} once", spent=True, agent=AgentRole.OVERWORLD)
     read = ask(scene)
     if not replanned and (read.plan_stale >= stale_noul or read.objective_done >= stale_noul):
         pull("jev: plan stale or done")
@@ -484,7 +420,6 @@ def choose_fast_action(
         read = ask(scene)
 
     streak = 0
-    unsure = "jev low confidence"
     if not accepts(read, confidence_floor):
         streak = low_confidence_streak + 1
         if streak >= 2 and not replanned:
@@ -492,14 +427,13 @@ def choose_fast_action(
             scene = classify_scene(obs, plan, signals)
             read = ask(scene)
             streak = 0
-            unsure = "jev still unsure after a new plan"
     if accepts(read, confidence_floor):
         action = GameAction(read.action)
         brief = " ".join(plan.plan.split())[:80]
-        reason = f"jev {read.action} (conf {read.confidence:.2f}) following: {brief}"
+        reason = f"{getattr(read, 'provider', 'jev')} {read.action}{confidence_note(read)} following: {brief}"
     else:
         action = safe_action(scene)
-        reason = f"{unsure} ({read.confidence:.2f}); safe action"
+        reason = f"actor unsure{confidence_note(read)}; safe action"
     agent = AgentRole.BATTLE if scene == PlanScene.BATTLE.value else AgentRole.OVERWORLD
     return finish(action, reason, spent=scene == PlanScene.NAMING.value, agent=agent, streak=streak)
 
@@ -524,57 +458,21 @@ def _named_press(plan: PlanCard) -> GameAction | None:
 MIN_MARGIN = 0.25
 
 
+def confidence_note(read: JevAnswers) -> str:
+    if getattr(read, "decision_mode", "probabilities") == "choice":
+        return ""
+    return f" (conf {read.confidence:.2f})"
+
+
 def accepts(read: JevAnswers | None, floor: float) -> bool:
-    """Jev's pick is pressed: its confidence clears the floor, or it clearly leads."""
+    """Accept a validated API choice, or Jev's confidence/margin-qualified pick."""
     if read is None or not read.action:
         return False
+    if getattr(read, "decision_mode", "probabilities") == "choice":
+        return not read.abstain
     ranked = sorted(read.probabilities.values(), reverse=True)
     margin = ranked[0] - ranked[1] if len(ranked) > 1 else 0.0
     return read.confidence >= floor or margin >= MIN_MARGIN
 
 
-_PRESS_B = "cancel or back out; does not start a conversation"
-_SKIP = "advance narrative text; B-only, does not press A"
-_A = "confirm, talk, or interact with the tile in front"
-
-_MENUS: dict[str, dict[str, str]] = {
-    PlanScene.NAMING.value: {
-        "walk_up": "move the letter cursor up",
-        "walk_down": "move the letter cursor down",
-        "walk_left": "move the letter cursor left",
-        "walk_right": "move the letter cursor right",
-        "press_a": "type the highlighted glyph, or confirm END",
-    },
-    PlanScene.BATTLE.value: {
-        "press_a": "confirm the highlighted battle command or move",
-        "press_b": "back out of a battle submenu",
-        "walk_up": "move the battle cursor up",
-        "walk_down": "move the battle cursor down",
-        "walk_left": "move the battle cursor left",
-        "walk_right": "move the battle cursor right",
-        "skip_dialog": _SKIP,
-        "wait_60": "wait one moment",
-    },
-    PlanScene.DIALOG.value: {"skip_dialog": _SKIP, "press_b": _PRESS_B},
-    PlanScene.TITLE.value: {
-        "press_start": "leave the title splash",
-        "press_a": "confirm NEW GAME or a menu item",
-        "press_b": _PRESS_B,
-        "skip_dialog": _SKIP,
-    },
-    PlanScene.MENU.value: {
-        "press_a": "select the highlighted menu row",
-        "press_b": "close the menu",
-        "press_start": "close the START menu",
-        "walk_up": "move the menu cursor up",
-        "walk_down": "move the menu cursor down",
-    },
-    PlanScene.OVERWORLD.value: {
-        "walk_up": "joystick up, one tile",
-        "walk_down": "joystick down, one tile",
-        "walk_left": "joystick left, one tile",
-        "walk_right": "joystick right, one tile",
-        "press_a": _A,
-        "press_b": _PRESS_B,
-    },
-}
+_MENUS = data("prompts/fast_menus.json")

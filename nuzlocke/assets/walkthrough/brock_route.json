@@ -1,0 +1,94 @@
+{
+  "0": {
+    "id": "leave_pallet",
+    "text": "Leave Pallet Town north onto Route 1.",
+    "hint": "The north exit is a two-tile gap in the top tree line, north of the open ground between the two houses. Walk to it, then straight up. Do not walk south into the water.",
+    "heading": "up",
+    "target": {
+      "kind": "edge",
+      "dir": "up"
+    }
+  },
+  "12": {
+    "id": "to_viridian",
+    "text": "Walk north through Route 1 to Viridian City.",
+    "hint": "Route 1 runs straight north to Viridian City. Ledges only drop south.",
+    "heading": "up",
+    "target": {
+      "kind": "edge",
+      "dir": "up"
+    }
+  },
+  "1": {
+    "id": "to_route_2",
+    "text": "Head north through Viridian City onto Route 2.",
+    "hint": "With the Pokédex the old man steps aside. Viridian's north exit leads to Route 2.",
+    "heading": "up",
+    "target": {
+      "kind": "edge",
+      "dir": "up"
+    }
+  },
+  "42": {
+    "id": "leave_shop",
+    "text": "Leave the Mart: back out of the shop list with B, choose QUIT, then walk out.",
+    "hint": "The exit mat is at the bottom of the Mart.",
+    "heading": "down",
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "50": {
+    "id": "into_forest",
+    "text": "Walk through the gate into Viridian Forest.",
+    "hint": "The forest door is at the top of the gate.",
+    "heading": "up",
+    "target": {
+      "kind": "warp",
+      "dest_map": 51
+    }
+  },
+  "51": {
+    "id": "through_forest",
+    "text": "Cross Viridian Forest to its north gate.",
+    "hint": "The forest is a maze. The exit is at the top-left corner; go up the east side first, then west along the top.",
+    "heading": "up",
+    "target": {
+      "kind": "warp",
+      "dest_map": 47
+    }
+  },
+  "47": {
+    "id": "out_of_forest",
+    "text": "Leave the north gate onto Route 2.",
+    "hint": "The exit is at the top of the gate.",
+    "heading": "up",
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "2": {
+    "id": "to_gym",
+    "text": "Enter Pewter Gym.",
+    "hint": "The gym is the large building in the middle of the city.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 54
+    }
+  },
+  "54": {
+    "id": "face_brock",
+    "text": "Walk up to Brock and challenge him.",
+    "hint": "Brock stands at the top of the gym. Face him and press A.",
+    "heading": "up",
+    "target": {
+      "kind": "face",
+      "x": 4,
+      "y": 2,
+      "dir": "up"
+    }
+  }
+}

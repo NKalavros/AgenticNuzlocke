@@ -1,0 +1,54 @@
+[
+  [
+    "lab",
+    {
+      "id": "leave_lab",
+      "text": "Leave Oak's Lab south.",
+      "hint": "The exit mat is in the middle of the bottom wall. Walk down onto it and walk_down once more. The rival challenges you on the way out; that battle is expected.",
+      "heading": "down",
+      "target": {
+        "kind": "warp",
+        "dest_map": 255
+      }
+    }
+  ],
+  [
+    "pallet",
+    {
+      "id": "leave_pallet",
+      "text": "Leave Pallet Town north onto Route 1.",
+      "hint": "The north exit is a two-tile gap in the top tree line, north of the open ground between the two houses. Walk to it, then straight up. Do not walk south into the water.",
+      "heading": "up",
+      "target": {
+        "kind": "edge",
+        "dir": "up"
+      }
+    }
+  ],
+  [
+    "route 1",
+    {
+      "id": "to_viridian",
+      "text": "Walk north through Route 1 to Viridian City.",
+      "hint": "Route 1 runs straight north to Viridian City. Ledges only drop south.",
+      "heading": "up",
+      "target": {
+        "kind": "edge",
+        "dir": "up"
+      }
+    }
+  ],
+  [
+    "viridian city",
+    {
+      "id": "get_parcel",
+      "text": "Enter the Viridian Poké Mart; the clerk has a parcel for Oak.",
+      "hint": "The Mart is the building with the blue roof. The old man blocks the north road until Oak's Parcel is delivered, so do not go north yet.",
+      "heading": null,
+      "target": {
+        "kind": "warp",
+        "dest_map": 42
+      }
+    }
+  ]
+]

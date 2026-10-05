@@ -55,6 +55,35 @@ def _fake_agents(send: Callable) -> Iterator[list[MagicMock]]:
         yield agents
 
 
+def test_thinking_stream_preserves_throttled_deltas_and_excludes_response_json(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("CURSOR_API_KEY", "test-key")
+    monkeypatch.setattr("nuzlocke.llm.cursor_provider.time.time", lambda: 100)
+    sent = []
+    run = _FakeRun()
+    long_text = "Use Tackle. " * 40
+    run.stream = lambda: iter(
+        [
+            SimpleNamespace(type="thinking", text="Plan: "),
+            SimpleNamespace(type="thinking", text=long_text),
+            SimpleNamespace(
+                type="assistant",
+                message=SimpleNamespace(
+                    content=[SimpleNamespace(type="text", text='{"moves":["TACKLE"]}')]
+                ),
+            ),
+        ]
+    )
+    with _fake_agents(lambda *_: run):
+        provider = CursorProvider(
+            workspace=tmp_path / "ws", compact_at_tokens=0, on_stream=sent.append
+        )
+        provider._run_send("test", role=AgentRole.DIRECTOR)
+    assert sent[-1] == "[director:thinking] Plan: " + long_text
+    assert not any('{"moves"' in message for message in sent)
+
+
 def test_compact_when_input_tokens_exceed_threshold(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("CURSOR_API_KEY", "test-key")
     texts: list[str] = []

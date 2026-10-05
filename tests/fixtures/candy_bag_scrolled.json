@@ -1,0 +1,51 @@
+{
+  "screen_rows": [
+    "          ┌────────┐",
+    "          │        │",
+    "    ┌──────────────┐",
+    "    │              │",
+    "    │▶POKé BALL    │",
+    "    │         ×10  │",
+    "    │ TM34         │",
+    "    │         × 1  │",
+    "    │ HELIX FOSSIL │",
+    "    │              │",
+    "    │ NUGGET       │",
+    "    │         × 1  │",
+    "    └──────────────┘",
+    "          │        │",
+    "          │ EXIT   │",
+    "          └────────┘",
+    "                    ",
+    "                    "
+  ],
+  "bag": [
+    {
+      "id": 4,
+      "item": "Poke Ball",
+      "quantity": 10
+    },
+    {
+      "id": 234,
+      "item": "TM34",
+      "quantity": 1
+    },
+    {
+      "id": 42,
+      "item": "Helix Fossil",
+      "quantity": 1
+    },
+    {
+      "id": 49,
+      "item": "Nugget",
+      "quantity": 1
+    },
+    {
+      "id": 40,
+      "item": "Rare Candy",
+      "quantity": 6
+    }
+  ],
+  "menu_index": 0,
+  "menu_scroll": 0
+}

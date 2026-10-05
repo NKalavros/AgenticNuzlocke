@@ -1,0 +1,76 @@
+{
+  "overworld": {
+    "mode": "overworld",
+    "owner": "overworld",
+    "constraints": [
+      "About 1-5 logical actions per prompt; prefer walk_*_3/4 on clear paths",
+      "Screenshot is ground truth",
+      "Do not walk while a text box or naming grid is visible"
+    ],
+    "abort": [
+      "battle_started",
+      "stuck_score >= 6"
+    ]
+  },
+  "battle": {
+    "mode": "battle",
+    "owner": "battle",
+    "objective": "Resolve the current battle turn conservatively",
+    "constraints": [
+      "One turn at a time",
+      "No trainer items"
+    ],
+    "abort": [
+      "blackout"
+    ],
+    "narration": "Battle detected — routing to Battle Agent."
+  },
+  "speech": {
+    "mode": "overworld",
+    "owner": "overworld",
+    "objective": "Someone is still speaking. Advance that dialogue. The map grid is not the scene.",
+    "constraints": [
+      "Trust the screenshot over the map name and coordinates",
+      "One button press to page the current line",
+      "Do not walk"
+    ],
+    "success": [
+      "the speaker is done and the overworld is visible"
+    ],
+    "abort": [
+      "battle_started"
+    ],
+    "narration": "Speech on screen — ignore the map grid."
+  },
+  "intro": {
+    "mode": "overworld",
+    "owner": "overworld",
+    "objective": "Advance title/intro using the screenshot as ground truth",
+    "constraints": [
+      "Trust the screenshot over RAM",
+      "Prefer skip_dialog for Oak/intro text; naming keyboard → END",
+      "Handle YES-NO / naming before walking",
+      "Max 12 actions (macros count as one)"
+    ],
+    "success": [
+      "controllable overworld visible on screen"
+    ],
+    "abort": [
+      "battle_started"
+    ],
+    "narration": "Boot/intro — overworld agent should read the screen."
+  },
+  "recovery": {
+    "mode": "recovery",
+    "owner": "recovery",
+    "objective": "Break the stuck/noop loop using screenshot + walkthrough hint",
+    "constraints": [
+      "Max 4 actions",
+      "Screenshot is ground truth",
+      "Do not repeat failed_approaches"
+    ],
+    "abort": [
+      "battle_started"
+    ]
+  }
+}

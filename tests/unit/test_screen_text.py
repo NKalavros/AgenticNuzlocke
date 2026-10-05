@@ -105,3 +105,14 @@ def test_pc_levels_do_not_count_as_selectable_rows():
     screen = parse_screen(rows)
     assert screen.menu_rows == ["BULBASAUR 12", "RATTATA 12", "PIDGEY 12", "CANCEL"]
     assert screen.cursor_row == 1
+
+
+def test_pokedex_requires_measurement_labels_and_no_active_menu():
+    from nuzlocke.environment.screen_text import is_pokedex_page
+
+    assert is_pokedex_page(["MEOWTH", " HT  1'04\"", " WT  9.0lb"])
+    assert is_pokedex_page(["│HT  1'04\"│", "│WT  9.0lb│"])
+    assert not is_pokedex_page(["MEOWTH", "▶POKé BALL ×10"])
+    assert not is_pokedex_page(["MEOWTH", "WT 9.0lb"])
+    assert not is_pokedex_page(["NIGHT", "MEOWTH"])
+    assert not is_pokedex_page(["HT 1'04\"", "WT 9.0lb", "▶YES"])

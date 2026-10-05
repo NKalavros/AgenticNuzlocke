@@ -11,36 +11,9 @@ from __future__ import annotations
 
 from pokemon_agent.memory.red import MAP_NAMES
 
-POKERED_NAMES = {
-    46: "Diglett's Cave (Route 2)",
-    47: "Viridian Forest North Gate",
-    48: "Route 2 Trade House",
-    49: "Route 2 Gate",
-    50: "Viridian Forest South Gate",
-    51: "Viridian Forest",
-    52: "Pewter Museum 1F",
-    53: "Pewter Museum 2F",
-    54: "Pewter Gym",
-    55: "Pewter Nidoran House",
-    56: "Pewter Mart",
-    57: "Pewter Speech House",
-    58: "Pewter Pokecenter",
-    59: "Mt Moon 1F",
-    60: "Mt Moon B1F",
-    61: "Mt Moon B2F",
-    62: "Cerulean Trashed House",
-    63: "Cerulean Trade House",
-    64: "Cerulean Pokecenter",
-    65: "Cerulean Gym",
-    66: "Bike Shop",
-    67: "Cerulean Mart",
-    68: "Mt Moon Pokecenter",
-    69: "Cerulean Trashed House",
-    70: "Route 5 Gate",
-    71: "Underground Path (Route 5)",
-    72: "Daycare",
-    73: "Route 6 Gate",
-}
+from nuzlocke.assets import data
+
+POKERED_NAMES = {int(key): value for key, value in data("maps-pokered_names.json").items()}
 LAST_MAP = 255
 
 

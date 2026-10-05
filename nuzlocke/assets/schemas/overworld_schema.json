@@ -1,0 +1,24 @@
+{
+  "task_id": "string",
+  "agent": "overworld",
+  "reason": "string",
+  "actions": [
+    "walk_up_3",
+    "press_a"
+  ],
+  "expected": [
+    "string"
+  ],
+  "risk": "low|medium|high",
+  "objectives": {
+    "primary": "string|null",
+    "secondary": "string|null",
+    "tertiary": "string|null"
+  },
+  "landmarks": [
+    {
+      "label": "stairs",
+      "note": "south of bed"
+    }
+  ]
+}

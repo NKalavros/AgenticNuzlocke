@@ -1,0 +1,302 @@
+{
+  "0": {
+    "id": "heal_pallet",
+    "text": "Heal first: go home to Mom.",
+    "hint": "go home to Mom.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 37
+    }
+  },
+  "37": {
+    "id": "heal_mom",
+    "text": "Heal: talk to Mom in Red's House.",
+    "hint": "Mom sits at the table; talking to her heals the party.",
+    "heading": null,
+    "target": {
+      "kind": "npc",
+      "picture": 51
+    }
+  },
+  "12": {
+    "id": "heal_route1",
+    "text": "Heal first: go north to Viridian's Pokémon Center.",
+    "hint": "go north to Viridian's Pokémon Center.",
+    "heading": null,
+    "target": {
+      "kind": "edge",
+      "dir": "up"
+    }
+  },
+  "1": {
+    "id": "heal_viridian",
+    "text": "Heal first: enter the Pokémon Center.",
+    "hint": "enter the Pokémon Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 41
+    }
+  },
+  "50": {
+    "id": "heal_gate_s",
+    "text": "Heal first: leave the gate south toward Viridian.",
+    "hint": "leave the gate south toward Viridian.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "47": {
+    "id": "heal_gate_n",
+    "text": "Heal first: leave the gate north toward Pewter.",
+    "hint": "leave the gate north toward Pewter.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "2": {
+    "id": "heal_pewter",
+    "text": "Heal first: enter the Pokémon Center.",
+    "hint": "enter the Pokémon Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 58
+    }
+  },
+  "16": {
+    "id": "heal_route5",
+    "text": "Heal first: take the Underground Path toward Vermilion's Center.",
+    "hint": "take the Underground Path toward Vermilion's Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 71
+    }
+  },
+  "71": {
+    "id": "heal_tunnel5",
+    "text": "Heal first: descend into the Underground Path.",
+    "hint": "descend into the Underground Path.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 119
+    }
+  },
+  "119": {
+    "id": "heal_tunnel_ns",
+    "text": "Heal first: take the southern stairs toward Vermilion.",
+    "hint": "take the southern stairs toward Vermilion.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 74
+    }
+  },
+  "74": {
+    "id": "heal_tunnel6",
+    "text": "Heal first: exit to Route 6.",
+    "hint": "exit to Route 6.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "17": {
+    "id": "heal_route6",
+    "text": "Heal first: head south to Vermilion's Center.",
+    "hint": "head south to Vermilion's Center.",
+    "heading": null,
+    "target": {
+      "kind": "edge",
+      "dir": "down"
+    }
+  },
+  "5": {
+    "id": "heal_vermilion",
+    "text": "Heal first: enter Vermilion's Center.",
+    "hint": "enter Vermilion's Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 89
+    }
+  },
+  "4": {
+    "id": "heal_lavender",
+    "text": "Heal first: enter Lavender's Center.",
+    "hint": "enter Lavender's Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 141
+    }
+  },
+  "6": {
+    "id": "heal_celadon",
+    "text": "Heal first: enter Celadon's Center.",
+    "hint": "enter Celadon's Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 133
+    }
+  },
+  "38": {
+    "id": "heal_exit",
+    "text": "Heal first: leave this building for healing.",
+    "hint": "leave this building for healing.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "39": {
+    "id": "heal_exit",
+    "text": "Heal first: leave this building for healing.",
+    "hint": "leave this building for healing.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "40": {
+    "id": "heal_exit",
+    "text": "Heal first: leave this building for healing.",
+    "hint": "leave this building for healing.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "42": {
+    "id": "heal_exit",
+    "text": "Heal first: leave this building for healing.",
+    "hint": "leave this building for healing.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "54": {
+    "id": "heal_exit",
+    "text": "Heal first: leave this building for healing.",
+    "hint": "leave this building for healing.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "56": {
+    "id": "heal_exit",
+    "text": "Heal first: leave this building for healing.",
+    "hint": "leave this building for healing.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "65": {
+    "id": "heal_exit",
+    "text": "Heal first: leave this building for healing.",
+    "hint": "leave this building for healing.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "67": {
+    "id": "heal_exit",
+    "text": "Heal first: leave this building for healing.",
+    "hint": "leave this building for healing.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "33": {
+    "id": "heal_route22",
+    "text": "Heal first: return east to Viridian.",
+    "hint": "return east to Viridian.",
+    "heading": null,
+    "target": {
+      "kind": "edge",
+      "dir": "right"
+    }
+  },
+  "14": {
+    "id": "heal_route3",
+    "text": "Heal first: return west to Pewter.",
+    "hint": "return west to Pewter.",
+    "heading": null,
+    "target": {
+      "kind": "edge",
+      "dir": "left"
+    }
+  },
+  "59": {
+    "id": "heal_moon1",
+    "text": "Heal first: leave Mt. Moon for its Center.",
+    "hint": "leave Mt. Moon for its Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "61": {
+    "id": "heal_moon_b2",
+    "text": "Heal first: return upstairs for healing.",
+    "hint": "return upstairs for healing.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 60
+    }
+  },
+  "3": {
+    "id": "heal_cerulean",
+    "text": "Heal first: enter Cerulean's Center.",
+    "hint": "enter Cerulean's Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 64
+    }
+  },
+  "35": {
+    "id": "heal_north",
+    "text": "Heal first: return to Cerulean's Center.",
+    "hint": "return to Cerulean's Center.",
+    "heading": null,
+    "target": {
+      "kind": "edge",
+      "dir": "down"
+    }
+  },
+  "36": {
+    "id": "heal_north",
+    "text": "Heal first: return to Cerulean's Center.",
+    "hint": "return to Cerulean's Center.",
+    "heading": null,
+    "target": {
+      "kind": "edge",
+      "dir": "left"
+    }
+  }
+}

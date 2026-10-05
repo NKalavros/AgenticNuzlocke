@@ -1,0 +1,44 @@
+{
+  "naming": {
+    "walk_up": "move the letter cursor up",
+    "walk_down": "move the letter cursor down",
+    "walk_left": "move the letter cursor left",
+    "walk_right": "move the letter cursor right",
+    "press_a": "type the highlighted glyph, or confirm END"
+  },
+  "battle": {
+    "press_a": "confirm the highlighted battle command or move",
+    "press_b": "back out of a battle submenu",
+    "walk_up": "move the battle cursor up",
+    "walk_down": "move the battle cursor down",
+    "walk_left": "move the battle cursor left",
+    "walk_right": "move the battle cursor right",
+    "skip_dialog": "advance narrative text; B-only, does not press A",
+    "wait_60": "wait one moment"
+  },
+  "dialog": {
+    "skip_dialog": "advance narrative text; B-only, does not press A",
+    "press_b": "cancel or back out; does not start a conversation"
+  },
+  "title": {
+    "press_start": "leave the title splash",
+    "press_a": "confirm NEW GAME or a menu item",
+    "press_b": "cancel or back out; does not start a conversation",
+    "skip_dialog": "advance narrative text; B-only, does not press A"
+  },
+  "menu": {
+    "press_a": "select the highlighted menu row",
+    "press_b": "close the menu",
+    "press_start": "close the START menu",
+    "walk_up": "move the menu cursor up",
+    "walk_down": "move the menu cursor down"
+  },
+  "overworld": {
+    "walk_up": "joystick up, one tile",
+    "walk_down": "joystick down, one tile",
+    "walk_left": "joystick left, one tile",
+    "walk_right": "joystick right, one tile",
+    "press_a": "confirm, talk, or interact with the tile in front",
+    "press_b": "cancel or back out; does not start a conversation"
+  }
+}

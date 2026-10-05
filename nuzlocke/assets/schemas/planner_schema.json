@@ -1,0 +1,49 @@
+{
+  "scene": "title|dialog|naming|overworld|battle|menu",
+  "see": "one sentence: what is on screen and which cell the goal is in",
+  "plan": "the objective, in one short sentence",
+  "target": {
+    "kind": "exit|edge|npc|cell|tile|none",
+    "value": "Viridian City|up|Mom|G7",
+    "map_id": "integer for tile targets only",
+    "x": "integer for tile targets only",
+    "y": "integer for tile targets only"
+  },
+  "done_when": {
+    "map": "map name, or omit"
+  },
+  "battle_plan": {
+    "moves": [
+      "EMBER",
+      "SCRATCH"
+    ],
+    "opening_moves": [],
+    "move_rules": [],
+    "avoid_moves": [],
+    "switch_to": null,
+    "switch_below": 0.3,
+    "notes": ""
+  },
+  "route_plan": {
+    "map_id": 51,
+    "objective_key": "exit_47",
+    "waypoints": [],
+    "preference": "safe",
+    "reason": ""
+  },
+  "steps": [],
+  "do_not": [
+    "do not talk to the aide"
+  ],
+  "objectives": {
+    "primary": "string|null",
+    "secondary": "string|null",
+    "tertiary": "string|null"
+  },
+  "landmarks": [
+    {
+      "label": "stairs",
+      "note": "south of bed"
+    }
+  ]
+}

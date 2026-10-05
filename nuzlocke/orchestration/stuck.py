@@ -78,9 +78,7 @@ def perpendicular_sidestep(failed_actions: list[str], *, alternate: int = 0) -> 
     return GameAction.WALK_LEFT
 
 
-def avoid_blocked_walk(
-    actions: list[GameAction], blocked_on_tile: set[str] | list[str], *, alternate: int = 0
-) -> list[GameAction]:
+def avoid_blocked_walk(actions: list[GameAction], blocked_on_tile: set[str] | list[str], *, alternate: int = 0) -> list[GameAction]:
     """Swap a first walk that already failed on this tile for a sidestep.
 
     Only this tile: a walk that failed elsewhere is pressed as named. Buttons and menu macros are
@@ -182,11 +180,7 @@ class StuckTracker:
     def repeated_actions(self, limit: int = 5) -> list[dict[str, object]]:
         """Action signatures that keep failing, as prompt evidence."""
         ranked = sorted(self.no_progress_counts.items(), key=lambda kv: kv[1], reverse=True)
-        return [
-            {"actions": list(sig), "times_without_progress": count}
-            for sig, count in ranked[:limit]
-            if count >= 2
-        ]
+        return [{"actions": list(sig), "times_without_progress": count} for sig, count in ranked[:limit] if count >= 2]
 
     def disengage_actions(self) -> list[GameAction]:
         """Mechanical un-stick: close any box, leave the tile, face elsewhere.
@@ -234,11 +228,7 @@ class StuckTracker:
         self.recent_positions = self.recent_positions[-self._position_window :]
         window = self.recent_positions[-self._same_tile_window :]
         # A cutscene or a moving menu cursor changes the picture while RAM x,y hold still.
-        frozen_dwell = (
-            len(window) >= self._same_tile_window
-            and len(set(window)) == 1
-            and self.no_progress_streak >= 2
-        )
+        frozen_dwell = len(window) >= self._same_tile_window and len(set(window)) == 1 and self.no_progress_streak >= 2
         in_scene = obs.dialog_active or obs.in_battle
         if frozen_dwell and not in_scene:
             self.stuck_score += 1
@@ -247,9 +237,7 @@ class StuckTracker:
 
     def is_position_oscillation(self) -> bool:
         window = self.recent_positions[-self._same_tile_window :]
-        return (
-            len(window) >= self._same_tile_window and 1 < len(set(window)) <= self._loop_unique_max
-        )
+        return len(window) >= self._same_tile_window and 1 < len(set(window)) <= self._loop_unique_max
 
     def is_action_oscillation(self) -> bool:
         recent = self.recent_actions[-6:]
@@ -266,9 +254,7 @@ class StuckTracker:
         path = obs.screenshot_path
         world, dialog = screen.digests_from_path(path)
         frame = screen.frame_digest_from_path(path)
-        return Fingerprint(
-            obs.map_name, obs.x, obs.y, obs.facing, obs.dialog_active, frame, world, dialog
-        )
+        return Fingerprint(obs.map_name, obs.x, obs.y, obs.facing, obs.dialog_active, frame, world, dialog)
 
     def record_result(
         self,
@@ -293,9 +279,7 @@ class StuckTracker:
         coords_known = None not in (before_fp.x, before_fp.y, after_fp.x, after_fp.y)
         # A walk into a wall from another facing only turns the player, as planned in "walk_up to
         # face the ball, then press_a". The second press the same way is the failure.
-        turned = (
-            None not in (before_fp.facing, after_fp.facing) and before_fp.facing != after_fp.facing
-        )
+        turned = None not in (before_fp.facing, after_fp.facing) and before_fp.facing != after_fp.facing
         self.last_immobile = False
         if executed and coords_known and before_fp[:3] != after_fp[:3]:  # (map, x, y) changed
             self.immobile_streak = 0
@@ -303,9 +287,7 @@ class StuckTracker:
         elif executed and coords_known and allow_immobile and walked and not turned:
             self.last_immobile = True
             self.immobile_streak += 1
-            self.blocked_on_tile.update(
-                _WALK_BASE[label] for label in actions if label in _WALK_BASE
-            )
+            self.blocked_on_tile.update(_WALK_BASE[label] for label in actions if label in _WALK_BASE)
             # The player walked onto this tile, so one side is open. Four refused directions
             # mean something held the input, not walls.
             if len(self.blocked_on_tile) >= 4:

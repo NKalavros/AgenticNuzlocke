@@ -1,0 +1,298 @@
+{
+  "BEDROOM": {
+    "id": "leave_bedroom",
+    "text": "Leave Red's bedroom via the stairs.",
+    "hint": "The stairs are in the top-right corner of the bedroom: the far-right column, top row. Walk right to the right wall, then up onto the stairs.",
+    "heading": "right",
+    "target": {
+      "kind": "warp",
+      "dest_map": 37
+    }
+  },
+  "LIVING": {
+    "id": "exit_house",
+    "text": "Walk south out of Red's house into Pallet Town.",
+    "hint": "The exit is the door mat in the bottom wall, third and fourth tiles from the left. Walk down to the bottom row, left onto the mat, then walk_down once more — the mat reads as # on the grid but that step leaves the house.",
+    "heading": "down",
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "PALLET_TO_OAK": {
+    "id": "pallet_to_oak",
+    "text": "Go north through the Route 1 grass gap so Oak escorts you to the lab. Do not walk south into the water.",
+    "hint": "With no Pokémon, the way forward is north onto Route 1, not into the lab on your own. The exit is a two-tile gap in the top tree line, north of the open ground between your house and the rival's house to the east (from your door: about five tiles right, then straight up). Stepping into the gap makes Oak stop you. Do not walk south into the shore.",
+    "heading": "up",
+    "target": {
+      "kind": "edge",
+      "dir": "up"
+    }
+  },
+  "LAB_STARTER": {
+    "id": "get_starter",
+    "text": "Choose BULBASAUR. Check the Pokédex species before confirming YES.",
+    "hint": "The three Poké Balls sit on the table just right of Oak. Stand on the tile directly below a ball, walk_up once to face it, then press_a. After its Pokédex page, press_a at YES — press_b at that YES/NO turns the Pokémon down.",
+    "heading": null,
+    "target": {
+      "kind": "npc",
+      "picture": 74
+    }
+  },
+  "LEAVE_LAB": {
+    "id": "leave_lab",
+    "text": "Leave Oak's Lab south.",
+    "hint": "The exit mat is in the middle of the bottom wall. Walk down onto it and walk_down once more. The rival challenges you on the way out; that battle is expected.",
+    "heading": "down",
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "PALLET_NORTH": {
+    "id": "leave_pallet",
+    "text": "Leave Pallet Town north onto Route 1.",
+    "hint": "The north exit is a two-tile gap in the top tree line, north of the open ground between the two houses. Walk to it, then straight up. Do not walk south into the water.",
+    "heading": "up",
+    "target": {
+      "kind": "edge",
+      "dir": "up"
+    }
+  },
+  "ROUTE_OAK": {
+    "id": "oak_on_route_1",
+    "text": "Let Oak walk you from Route 1 to the lab. Do not walk back south.",
+    "hint": "Stepping onto Route 1 with no Pokémon starts Oak's escort. Advance his dialogue. Do not walk south back into the water.",
+    "heading": "up",
+    "target": {
+      "kind": "wait"
+    }
+  },
+  "TO_VIRIDIAN": {
+    "id": "to_viridian",
+    "text": "Walk north through Route 1 to Viridian City.",
+    "hint": "Route 1 runs straight north to Viridian City. Ledges only drop south.",
+    "heading": "up",
+    "target": {
+      "kind": "edge",
+      "dir": "up"
+    }
+  },
+  "GET_PARCEL": {
+    "id": "get_parcel",
+    "text": "Enter the Viridian Poké Mart; the clerk has a parcel for Oak.",
+    "hint": "The Mart is the building with the blue roof. The old man blocks the north road until Oak's Parcel is delivered, so do not go north yet.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 42
+    }
+  },
+  "LEAVE_MART": {
+    "id": "leave_mart",
+    "text": "Take the parcel out of the Mart, back toward Pallet Town.",
+    "hint": "The exit mat is at the bottom of the Mart.",
+    "heading": "down",
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "PARCEL_SOUTH": {
+    "id": "parcel_south",
+    "text": "Carry Oak's Parcel south to Pallet Town.",
+    "hint": "Viridian City's south exit leads to Route 1, which leads south to Pallet Town.",
+    "heading": "down",
+    "target": {
+      "kind": "edge",
+      "dir": "down"
+    }
+  },
+  "PARCEL_LAB": {
+    "id": "parcel_lab",
+    "text": "Enter Oak's Lab with the parcel.",
+    "hint": "Oak's Lab is the large building in the south of Pallet Town.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 40
+    }
+  },
+  "DELIVER_PARCEL": {
+    "id": "deliver_parcel",
+    "text": "Talk to Prof. Oak to hand over the parcel.",
+    "hint": "Oak stands at the top of the lab. Face him and press A.",
+    "heading": null,
+    "target": {
+      "kind": "npc",
+      "picture": 3
+    }
+  },
+  "TO_ROUTE_2": {
+    "id": "to_route_2",
+    "text": "Head north through Viridian City onto Route 2.",
+    "hint": "With the Pokédex the old man steps aside. Viridian's north exit leads to Route 2.",
+    "heading": "up",
+    "target": {
+      "kind": "edge",
+      "dir": "up"
+    }
+  },
+  "TO_FOREST": {
+    "id": "to_forest",
+    "text": "Walk north on Route 2 into the Viridian Forest gate.",
+    "hint": "The gate is the building at the north end of Route 2's first stretch.",
+    "heading": "up",
+    "target": {
+      "kind": "warp",
+      "dest_map": 50
+    }
+  },
+  "INTO_FOREST": {
+    "id": "into_forest",
+    "text": "Walk through the gate into Viridian Forest.",
+    "hint": "The forest door is at the top of the gate.",
+    "heading": "up",
+    "target": {
+      "kind": "warp",
+      "dest_map": 51
+    }
+  },
+  "THROUGH_FOREST": {
+    "id": "through_forest",
+    "text": "Cross Viridian Forest to its north gate.",
+    "hint": "The forest is a maze. The exit is at the top-left corner; go up the east side first, then west along the top.",
+    "heading": "up",
+    "target": {
+      "kind": "warp",
+      "dest_map": 47
+    }
+  },
+  "OUT_OF_FOREST": {
+    "id": "out_of_forest",
+    "text": "Leave the north gate onto Route 2.",
+    "hint": "The exit is at the top of the gate.",
+    "heading": "up",
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "TO_PEWTER": {
+    "id": "to_pewter",
+    "text": "Walk north on Route 2 into Pewter City.",
+    "hint": "Pewter City is straight north.",
+    "heading": "up",
+    "target": {
+      "kind": "edge",
+      "dir": "up"
+    }
+  },
+  "TO_GYM": {
+    "id": "to_gym",
+    "text": "Enter Pewter Gym.",
+    "hint": "The gym is the large building in the middle of the city.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 54
+    }
+  },
+  "FACE_BROCK": {
+    "id": "face_brock",
+    "text": "Walk up to Brock and challenge him.",
+    "hint": "Brock stands at the top of the gym. Face him and press A.",
+    "heading": "up",
+    "target": {
+      "kind": "face",
+      "x": 4,
+      "y": 2,
+      "dir": "up"
+    }
+  },
+  "BUY_BALLS_CITY": {
+    "id": "buy_balls_city",
+    "text": "Enter the Viridian Mart to buy POKé BALLs.",
+    "hint": "The Mart is the building with the blue roof.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 42
+    }
+  },
+  "BUY_BALLS": {
+    "id": "buy_balls",
+    "text": "Top up to ten capture balls: buy the best affordable stocked ball, Ultra then Great then Poké Ball.",
+    "hint": "The clerk stands behind the counter on the left. Face him across it and press A.",
+    "heading": null,
+    "target": {
+      "kind": "face",
+      "x": 2,
+      "y": 5,
+      "dir": "left"
+    }
+  },
+  "BACK_FOR_BALLS": {
+    "id": "back_for_balls",
+    "text": "Go back to Viridian City for POKé BALLs.",
+    "hint": "Viridian City is south.",
+    "heading": "down",
+    "target": {
+      "kind": "edge",
+      "dir": "down"
+    }
+  },
+  "LEAVE_SHOP": {
+    "id": "leave_shop",
+    "text": "Leave the Mart: back out of the shop list with B, choose QUIT, then walk out.",
+    "hint": "The exit mat is at the bottom of the Mart.",
+    "heading": "down",
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "LEAVE_INTERIOR": {
+    "id": "leave_interior",
+    "text": "Leave the building and continue toward Cerulean.",
+    "hint": "Use the exit mat.",
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "LEAVE_INTERIOR_EARLY": {
+    "id": "leave_interior",
+    "text": "Leave through the exit and resume the journey.",
+    "hint": "Walk out the door.",
+    "heading": "down",
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "MOON_CHOOSE_FOSSIL": {
+    "id": "moon_choose_fossil",
+    "text": "Choose one Mt. Moon fossil before taking the northwest exit ladder.",
+    "hint": "Approach the fossil from below, defeat the blocking Super Nerd if challenged, face up and press A; answer YES. Verify a fossil in the bag, let the scientist take the other, then continue to the northwest ladder. Do not bypass this story gate."
+  },
+  "PREPARE_CENTER": {
+    "id": "prepare_center",
+    "text": "Heal and prepare the team for the next leg.",
+    "hint": "Enter the Pokémon Center."
+  },
+  "LEAVE_ROUTE22": {
+    "id": "leave_route22",
+    "text": "Return east to Viridian after the encounter.",
+    "hint": "Walk east.",
+    "target": {
+      "kind": "edge",
+      "dir": "right"
+    }
+  },
+  "PREPARE_CENTER_EARLY": {
+    "id": "prepare_center",
+    "text": "Visit the Pokémon Center to heal and prepare the team.",
+    "hint": "Enter the Center."
+  }
+}

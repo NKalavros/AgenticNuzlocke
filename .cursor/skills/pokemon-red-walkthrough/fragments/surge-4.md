@@ -1,0 +1,1 @@
+4. **No HM01 yet:** heal, then board the S.S. Anne from Vermilion's southern dock using the ticket. Find the stairs to 2F and the captain's corridor, prepare for the rival battle, then talk to the captain to obtain **HM01 CUT**. Verify receipt before leaving. The ship departs after obtaining CUT and exiting, so do not leave required ship work unfinished.

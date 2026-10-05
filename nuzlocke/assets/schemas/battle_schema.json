@@ -1,0 +1,13 @@
+{
+  "task_id": "string",
+  "agent": "battle",
+  "reason": "string",
+  "actions": [
+    "press_a",
+    "press_a"
+  ],
+  "expected": [
+    "string"
+  ],
+  "risk": "low|medium|high"
+}

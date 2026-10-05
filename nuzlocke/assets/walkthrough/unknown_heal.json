@@ -1,0 +1,7 @@
+{
+  "id": "heal_route_unknown",
+  "text": "Heal first: find a route to a Pokémon Center or Mom.",
+  "hint": "Healing is mandatory. Plan the next safe step to a Center or Mom from the observed map; defer story, items and encounter searches until healed.",
+  "heading": null,
+  "target": {}
+}

@@ -21,6 +21,17 @@ ensure_relay_routing()
 ROM_OPTION = typer.Option(None, "--rom", help="Path to Pokemon Red/Blue .gb ROM")
 BENCHMARK_OUTPUT_OPTION = typer.Option(Path("runs/benchmark.json"))
 PROVIDER_OPTION = typer.Option(None, "--provider", help="cursor | openai_compatible | dual")
+AGENTS_CONFIG_OPTION = typer.Option(None, "--agents-config", help="Agent configuration YAML")
+S1_PROVIDER_OPTION = typer.Option(None, "--system1-provider", help="jev | openai | openai_compatible | codex")
+S1_MODEL_OPTION = typer.Option(None, "--system1-model")
+S2_PROVIDER_OPTION = typer.Option(
+    None, "--system2-provider", help="codex | claude_code | antigravity | gemini_cli | cursor | openai_compatible"
+)
+S2_MODEL_OPTION = typer.Option(None, "--system2-model")
+
+
+def _agent_overrides(s1_provider, s1_model, s2_provider, s2_model):
+    return {"system1": {"provider": s1_provider, "model": s1_model}, "system2": {"provider": s2_provider, "model": s2_model}}
 
 
 @contextlib.contextmanager
@@ -34,11 +45,9 @@ def _exit_on(*errors: type[Exception]) -> Iterator[None]:
 
 
 @app.command("smoke")
-def smoke(
-    rom: Path | None = ROM_OPTION, steps: int = typer.Option(5, "--steps", help="Tiles to walk")
-) -> None:
+def smoke(rom: Path | None = ROM_OPTION, steps: int = typer.Option(5, "--steps", help="Tiles to walk")) -> None:
     """Scripted observe + walk (no LLM). Validates env + arbiter + dashboard events."""
-    with _exit_on(FileNotFoundError, RuntimeError):
+    with _exit_on(FileNotFoundError, RuntimeError, ValueError):
         result = scripted_smoke(rom, steps=steps)
     console.print_json(json.dumps(result, indent=2, default=str))
     console.print(f"[green]Dashboard:[/green] {result['dashboard']}")
@@ -48,53 +57,46 @@ def smoke(
 def run(
     rom: Path | None = ROM_OPTION,
     provider: str | None = PROVIDER_OPTION,
+    agents_config: Path | None = AGENTS_CONFIG_OPTION,
+    system1_provider: str | None = S1_PROVIDER_OPTION,
+    system1_model: str | None = S1_MODEL_OPTION,
+    system2_provider: str | None = S2_PROVIDER_OPTION,
+    system2_model: str | None = S2_MODEL_OPTION,
     max_steps: int | None = typer.Option(
-        -1,
-        "--max-steps",
-        help="Stop after N agent steps. Default -1 = no step limit; milestone/wipe/STOP still end play.",
+        -1, "--max-steps", help="Stop after N agent steps. Default -1 = no step limit; milestone/wipe/STOP still end play."
     ),
     vision_only: bool | None = typer.Option(
         None,
         "--vision-only/--with-ram",
-        help="Screenshot (+ memory) only for role prompts; omit RAM JSON. "
-        "Default from config/run.yaml or NUZLOCKE_VISION_ONLY.",
+        help="Screenshot (+ memory) only for role prompts; omit RAM JSON. Default from config/run.yaml or NUZLOCKE_VISION_ONLY.",
     ),
     resume: str | None = typer.Option(
         None,
         "--resume",
-        help="Continue run-id from its validated paired checkpoint (checkpoints/current.json) "
-        "instead of starting a new game.",
+        help="Continue run-id from its validated paired checkpoint (checkpoints/current.json) instead of starting a new game.",
     ),
 ) -> None:
     """Start a segment; stop on the configured milestone, wipe, dashboard STOP, or step limit."""
     steps = None if max_steps is None or max_steps < 0 else max_steps
-    with _exit_on(FileNotFoundError, RuntimeError):
+    with _exit_on(FileNotFoundError, RuntimeError, ValueError):
         loop = RunLoop(
             rom_path=rom,
             run_id=resume,
             resume=bool(resume),
             provider_override=provider,
+            agents_config=agents_config,
+            agent_overrides=_agent_overrides(system1_provider, system1_model, system2_provider, system2_model),
             vision_only=vision_only,
         )
     cfg = loop.agents_cfg
     console.print(f"[cyan]Run directory:[/cyan] {loop.run_dir}")
-    if cfg.get("provider") == "dual":
-        planner, jev = (cfg.get("planner") or {}), (cfg.get("jev") or {})
-        models = f"planner={planner.get('model')} jev={jev.get('model')}"
-    else:
-        models = f"model={(cfg.get('cursor') or {}).get('model')}"
-    console.print(f"[cyan]Provider:[/cyan] {cfg.get('provider')} {models}")
-    limit = (
-        "no step cap — configured milestone, wipe, or dashboard STOP ends play"
-        if steps is None
-        else f"{steps} agent steps"
-    )
+    for role in ("system1", "system2") if cfg["provider"] == "dual" else ("system2",):
+        settings = cfg[role]
+        console.print(f"[cyan]{role}:[/cyan] {settings['provider']} / {settings['model'] or 'vendor default'}")
+    limit = "no step cap — configured milestone, wipe, or dashboard STOP ends play" if steps is None else f"{steps} agent steps"
     console.print(f"[cyan]Limit:[/cyan] {limit}")
     prompt_iv = float(loop.run_cfg.get("prompt_interval_s", 2.0))
-    console.print(
-        f"[cyan]Pace:[/cyan] prompt ~every {prompt_iv:g}s → announce → real-time actions "
-        "(NUZLOCKE_PROMPT_INTERVAL_S)"
-    )
+    console.print(f"[cyan]Pace:[/cyan] prompt ~every {prompt_iv:g}s → announce → real-time actions (NUZLOCKE_PROMPT_INTERVAL_S)")
     if not loop.vision_only:
         vision = "screenshot + RAM JSON"
     elif loop.memory.enabled:
@@ -109,20 +111,19 @@ def run(
 
 @app.command("sandbox")
 def sandbox(
-    source: str | None = typer.Option(
-        None, "--from", help="Run id whose savestate to start from. Omit to boot the ROM fresh."
-    ),
+    source: str | None = typer.Option(None, "--from", help="Run id whose savestate to start from. Omit to boot the ROM fresh."),
     state: str = typer.Option("auto", "--state", help="Savestate name in that run."),
     script: str | None = typer.Option(
-        None,
-        "--script",
-        help="Buttons to press with no LLM, e.g. 'skip_dialog walk_down*2 wait_30'.",
+        None, "--script", help="Buttons to press with no LLM, e.g. 'skip_dialog walk_down*2 wait_30'."
     ),
     steps: int = typer.Option(30, "--steps", help="Loop cycles when no --script is given."),
-    port: int | None = typer.Option(
-        None, "--port", help="Emulator port. Default: the first free port from 8791."
-    ),
+    port: int | None = typer.Option(None, "--port", help="Emulator port. Default: the first free port from 8791."),
     provider: str | None = PROVIDER_OPTION,
+    agents_config: Path | None = AGENTS_CONFIG_OPTION,
+    system1_provider: str | None = S1_PROVIDER_OPTION,
+    system1_model: str | None = S1_MODEL_OPTION,
+    system2_provider: str | None = S2_PROVIDER_OPTION,
+    system2_model: str | None = S2_MODEL_OPTION,
     rom: Path | None = ROM_OPTION,
 ) -> None:
     """Try the current code on a private emulator. The live run and its port are untouched."""
@@ -130,14 +131,7 @@ def sandbox(
     from nuzlocke.environment.nous_red import NousRedEnvironment
     from nuzlocke.orchestration.checkpoint import CHECKPOINT_NAME, stage_for_boot
     from nuzlocke.orchestration.loop import configured_rom
-    from nuzlocke.orchestration.sandbox import (
-        format_rows,
-        free_port,
-        new_sandbox,
-        parse_script,
-        run_script,
-        summarize,
-    )
+    from nuzlocke.orchestration.sandbox import format_rows, free_port, new_sandbox, parse_script, run_script, summarize
 
     with _exit_on(FileNotFoundError, ValueError):
         tokens = parse_script(script) if script else None
@@ -163,20 +157,20 @@ def sandbox(
             env.save_checkpoint(CHECKPOINT_NAME)
         finally:
             env.shutdown()
-        (run_dir / "probe.jsonl").write_text(
-            "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
-        )
+        (run_dir / "probe.jsonl").write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
         typer.echo(format_rows(rows))
         typer.echo(f"frames: {run_dir / 'frames'}")
         typer.echo(f"continue from the last row: nuzlocke sandbox --from {run_id}")
         return
 
-    with _exit_on(FileNotFoundError, RuntimeError):
+    with _exit_on(FileNotFoundError, RuntimeError, ValueError):
         loop = RunLoop(
             rom_path=rom,
             run_id=run_id,
             resume=bool(source),
             provider_override=provider,
+            agents_config=agents_config,
+            agent_overrides=_agent_overrides(system1_provider, system1_model, system2_provider, system2_model),
             port=port,
             headless=True,
         )
@@ -195,15 +189,54 @@ def benchmark_command(
     steps: int = typer.Option(1500, min=1),
     rom: Path | None = ROM_OPTION,
     output: Path = BENCHMARK_OUTPUT_OPTION,
+    provider: str | None = PROVIDER_OPTION,
+    agents_config: Path | None = AGENTS_CONFIG_OPTION,
+    system1_provider: str | None = S1_PROVIDER_OPTION,
+    system1_model: str | None = S1_MODEL_OPTION,
+    system2_provider: str | None = S2_PROVIDER_OPTION,
+    system2_model: str | None = S2_MODEL_OPTION,
 ) -> None:
     """Verify fresh boots through Brock on private servers (real planner calls)."""
     from nuzlocke.orchestration.sandbox import benchmark
 
-    report = benchmark(trials=trials, steps=steps, rom=rom)
+    report = benchmark(
+        trials=trials,
+        steps=steps,
+        rom=rom,
+        provider_override=provider,
+        agents_config=agents_config,
+        agent_overrides=_agent_overrides(system1_provider, system1_model, system2_provider, system2_model),
+    )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2))
     console.print_json(json.dumps(report))
     if not report["passed"]:
+        raise typer.Exit(code=1)
+
+
+llm_app = typer.Typer(help="Inspect provider setup without inference.")
+app.add_typer(llm_app, name="llm")
+
+
+@llm_app.command("doctor")
+def llm_doctor(
+    agents_config: Path | None = AGENTS_CONFIG_OPTION,
+    system1_provider: str | None = S1_PROVIDER_OPTION,
+    system1_model: str | None = S1_MODEL_OPTION,
+    system2_provider: str | None = S2_PROVIDER_OPTION,
+    system2_model: str | None = S2_MODEL_OPTION,
+) -> None:
+    from nuzlocke.config import load_agents_config
+    from nuzlocke.llm.diagnostics import doctor
+    from nuzlocke.llm.settings import resolve_agents_config
+
+    with _exit_on(ValueError, FileNotFoundError, RuntimeError):
+        cfg = resolve_agents_config(
+            load_agents_config(agents_config), _agent_overrides(system1_provider, system1_model, system2_provider, system2_model)
+        )
+        report = doctor(cfg)
+    console.print_json(json.dumps(report))
+    if not report["ready"]:
         raise typer.Exit(code=1)
 
 

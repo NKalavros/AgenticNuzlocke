@@ -7,15 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
-from nuzlocke.agents.goals import (
-    MAX_BURST,
-    Goal,
-    RoomMap,
-    Routes,
-    _grid_tiles,
-    collision_map,
-    map_key,
-)
+from nuzlocke.agents.goals import MAX_BURST, Goal, RoomMap, Routes, _grid_tiles, collision_map, map_key
 from nuzlocke.environment.terrain import step_delta
 from nuzlocke.state.models import GameAction, PlayerObservation
 
@@ -76,9 +68,7 @@ class Navigator:
         data.update(name=obs.map_name, size=obs.map_size or data["size"])
         if obs.warps:
             data["warps"] = obs.warps
-        data["grass"] = sorted(
-            {tuple(t) for t in data["grass"]} | {(t["x"], t["y"]) for t in obs.grass_tiles}
-        )
+        data["grass"] = sorted({tuple(t) for t in data["grass"]} | {(t["x"], t["y"]) for t in obs.grass_tiles})
         room.costs = {}
         searching = obs.policy.get("encounter_search", False)
         poisoned = any(str(m.get("status", "")).startswith("PSN") for m in obs.party)
@@ -106,7 +96,7 @@ class Navigator:
             self.brief = {}
             self.reason = "Objective has no legal route; director must replan"
             return None
-        signature = [obs.map_id, goal.key, objective_text, goal.finish]
+        signature = [obs.map_id, goal.key, objective_text, goal.finish, list(goal.target) if goal.target is not None else None]
         if self.route.get("signature") != signature:
             self.route = {}
             self.plan = {}
@@ -169,11 +159,7 @@ class Navigator:
                     jumps=jumps,
                 )
                 observed = {**room.known.get(map_key(obs), {}), **_grid_tiles(obs)}
-                path = (
-                    routes.paths.get(waypoint)
-                    if observed.get(waypoint) or waypoint in room.seen(obs)
-                    else None
-                )
+                path = routes.paths.get(waypoint) if observed.get(waypoint) or waypoint in room.seen(obs) else None
                 if path:
                     remaining, suffix = path, []
                     self.reason = "Following System 2 waypoint"
@@ -186,8 +172,7 @@ class Navigator:
                 "path": remaining,
                 "tiles": path_tiles(start, remaining),
                 "suffix": suffix,
-                "terminal": not self.plan.get("waypoints")
-                and (goal.kind in {"exit", "edge", "talk"} or goal.finish is not None),
+                "terminal": not self.plan.get("waypoints") and (goal.kind in {"exit", "edge", "talk"} or goal.finish is not None),
             }
         if not remaining:
             self.brief = {
@@ -207,11 +192,7 @@ class Navigator:
             "next_waypoint": path_tiles(start, remaining[:MAX_BURST])[-1],
             "preference": self.plan.get("preference", "safe"),
             "reason": self.reason,
-            "replan_when": [
-                "map or objective changes",
-                "next edge blocked",
-                "healing or battle interrupts",
-            ],
+            "replan_when": ["map or objective changes", "next edge blocked", "healing or battle interrupts"],
         }
         # First selection goes through Jev; later verified segments execute directly.
         return Goal(
@@ -258,15 +239,11 @@ class Navigator:
             "warps": obs.warps or data.get("warps", []),
             "objects": [object_facts(obs, npc) for npc in obs.npcs],
             "signs": obs.signs,
-            "interaction_target": objective
-            if objective and objective.get("kind") in {"npc", "face"}
-            else None,
+            "interaction_target": objective if objective and objective.get("kind") in {"npc", "face"} else None,
             "temporary_blocked_edges": [list(e) for e in room.temporary_edges(obs)],
             "terrain_blocked_edges": [list(e) for e in sorted(room.terrain_edges(obs))],
             "route": self.brief,
-            "path": self.route.get("tiles", [])
-            if self.route.get("signature", [None])[0] == obs.map_id
-            else [],
+            "path": self.route.get("tiles", []) if self.route.get("signature", [None])[0] == obs.map_id else [],
             "replans": self.replans,
             "reused_segments": self.reused,
             "rejected_waypoints": self.rejected_waypoints,

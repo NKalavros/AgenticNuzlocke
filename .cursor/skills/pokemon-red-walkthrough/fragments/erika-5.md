@@ -1,0 +1,1 @@
+5. **Southern Route 10 → Lavender:** after the south exit, head SOUTH to Lavender (4), heal at its Center (141), then leave WEST onto Route 8 (19). Pokémon Tower, the ghost, the Poké Flute and Rocket Hideout are not prerequisites for Erika; do not get diverted into them.

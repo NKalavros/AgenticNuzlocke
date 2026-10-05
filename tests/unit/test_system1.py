@@ -97,6 +97,30 @@ def test_objective_option_is_marked_and_first():
     assert "CURRENT OBJECTIVE: Talk to Oak" in goals[0].criterion()
 
 
+def test_hidden_cutscene_oak_is_not_a_goal_but_real_offscreen_oak_is():
+    obs = _obs(
+        x=6,
+        y=10,
+        map_id=40,
+        map_size={"w": 10, "h": 12},
+        collision_ascii=None,
+        npcs=[
+            {"slot": 5, "picture": 3, "x": 5, "y": 2, "on_screen": False, "hidden": False},
+            {"slot": 8, "picture": 3, "x": 5, "y": 10, "on_screen": False, "hidden": True},
+        ],
+    )
+    room = RoomMap()
+    goals = build_goals(obs, room, objective={"kind": "npc", "picture": 3})
+    assert goals[0].key == "talk_5" and goals[0].objective
+    assert "talk_8" not in {g.key for g in goals}
+    # Supports older servers with no hidden flag, using absence near the player.
+    for npc in obs.npcs:
+        npc.pop("hidden")
+    goals = build_goals(obs, room, objective={"kind": "npc", "picture": 3})
+    assert goals[0].key == "talk_5"
+    assert "talk_8" not in {g.key for g in goals}
+
+
 def test_an_untrusted_grid_learns_from_bumps():
     room = RoomMap()
     obs = _obs(collision_ascii=None, npcs=[])
@@ -322,3 +346,26 @@ def test_uncertain_jev_uses_executable_code_target_without_another_look():
     assert turn.trigger is None
     assert turn.goal.objective
     assert turn.actions
+
+
+def test_meowth_battle_bag_throws_legal_ball_instead_of_waiting_on_pokedex():
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from nuzlocke.agents.policy import decision
+    from nuzlocke.agents.preparation import preparation_turn
+
+    obs = PlayerObservation.model_validate(
+        json.loads((Path(__file__).parents[1] / "fixtures/meowth_battle_bag.json").read_text())
+    )
+    decide, calls = _jev("unused")
+    turn = _turn(obs, first_encounter=True, jev_decide=decide)
+    assert turn.kind == "battle"
+    assert turn.actions == [GameAction.PRESS_A]
+    assert "throw" in turn.reason
+    assert not calls
+    assert decision(obs, first_encounter=True).validate(turn.actions) is None
+    # Recognition fixes the actor; it must not loosen the battle item policy.
+    assert decision(obs, first_encounter=False).validate(turn.actions) is not None
+    assert preparation_turn(SimpleNamespace(), obs) == ([], "")

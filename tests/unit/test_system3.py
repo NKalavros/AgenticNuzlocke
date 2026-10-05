@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from nuzlocke.agents import system3
 from nuzlocke.knowledge.beats import current_beat
 from nuzlocke.orchestration.ledger import LedgerTracker
@@ -37,6 +39,43 @@ def test_healing_outranks_the_story():
     center = system3.current_beat(_obs(10, map_name="Viridian Pokecenter", map_id=41))
     assert center.target["kind"] == "face"
     assert system3.current_beat(_obs(29)).id == "to_forest"
+
+
+@pytest.mark.parametrize(
+    "map_id,target",
+    [
+        (16, {"kind": "warp", "dest_map": 71}),
+        (71, {"kind": "warp", "dest_map": 119}),
+        (119, {"kind": "warp", "dest_map": 74}),
+        (74, {"kind": "warp", "dest_map": 255}),
+        (17, {"kind": "edge", "dir": "down"}),
+        (5, {"kind": "warp", "dest_map": 89}),
+    ],
+)
+def test_healing_route_through_underground_path(map_id, target):
+    obs = _obs(10, map_id=map_id, badges=["Boulder", "Cascade"])
+    assert system3.current_beat(obs).target == target
+    assert system3.objective_window(obs)["primary"].startswith("Heal")
+
+
+@pytest.mark.parametrize("map_id", [81, 89, 133, 141])
+def test_later_centers_offer_nurse_without_enabling_candy_preparation(map_id):
+    obs = _obs(10, map_id=map_id)
+    assert system3.heal_beat(obs).id == "heal_nurse"
+    obs.party[0]["hp"] = 28
+    assert system3.heal_beat(obs) is None
+
+
+@pytest.mark.parametrize("map_id", [None, 94, 232])
+def test_unknown_healing_route_keeps_priority_until_party_recovers(map_id):
+    obs = _obs(10, map_id=map_id, badges=["Boulder", "Cascade"])
+    assert system3.current_beat(obs).id == "heal_route_unknown"
+    assert system3.objective_window(obs)["primary"].startswith("Heal")
+    obs.in_battle = True
+    assert system3.heal_beat(obs) is None
+    obs.in_battle = False
+    obs.party[0]["hp"] = 29
+    assert system3.heal_beat(obs) is None
 
 
 def test_a_blackout_is_a_wipe_even_when_the_fainted_party_is_never_seen():

@@ -9,12 +9,13 @@ import shutil
 import time
 import uuid
 import webbrowser
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
 from rich.console import Console
 
-from nuzlocke.agents.goals import DIRS, ObjectTrust, RoomMap, cell_to_tile
+from nuzlocke.agents.goals import DIRS, ObjectTrust, RoomMap, build_goals, cell_to_tile
 from nuzlocke.agents.jev_policy import (
     FrameSignals,
     accepts,
@@ -39,33 +40,18 @@ from nuzlocke.agents.roles import (
 from nuzlocke.agents.system1 import S1Turn, system1_turn
 from nuzlocke.agents.system3 import constraints as nuzlocke_constraints
 from nuzlocke.agents.system3 import current_beat, objective_window
-from nuzlocke.config import (
-    ensure_relay_routing,
-    load_agents_config,
-    load_project_env,
-    load_rules,
-    load_run_config,
-    project_root,
-)
+from nuzlocke.config import ensure_relay_routing, load_agents_config, load_project_env, load_rules, load_run_config, project_root
 from nuzlocke.environment.joypad import is_naming_lock
 from nuzlocke.environment.nous_red import NousRedEnvironment
 from nuzlocke.environment.screen import digests_from_path, prompt_box_open, text_box_open
 from nuzlocke.environment.screen_text import parse_screen
-from nuzlocke.knowledge.walkthrough import excerpt_for_context, skill_dir
+from nuzlocke.knowledge.walkthrough import compose, excerpt_for_context, progression_hint, skill_dir
 from nuzlocke.llm.factory import create_jev, create_provider
+from nuzlocke.llm.settings import preflight, provider_identity, resolve_agents_config
 from nuzlocke.memory import OptMem
 from nuzlocke.orchestration.arbiter import ActionArbiter
-from nuzlocke.orchestration.checkpoint import (
-    CHECKPOINT_NAME,
-    RunCheckpoint,
-    should_checkpoint,
-    stage_for_boot,
-)
-from nuzlocke.orchestration.fallback import (
-    bridge_down_proposal,
-    is_bridge_down,
-    llm_error_fallback_proposal,
-)
+from nuzlocke.orchestration.checkpoint import CHECKPOINT_NAME, RunCheckpoint, stage_for_boot
+from nuzlocke.orchestration.fallback import bridge_down_proposal, is_bridge_down, llm_error_fallback_proposal
 from nuzlocke.orchestration.journal import Journal
 from nuzlocke.orchestration.journal import outcome as journal_outcome
 from nuzlocke.orchestration.ledger import LedgerTracker
@@ -148,14 +134,22 @@ def _stamp(card: PlanCard, signals: FrameSignals, obs: PlayerObservation | None 
         card.target = {"x": tile[0], "y": tile[1], "label": card.target_cell}
     if tile is not None and (card.goal_target or {}).get("kind") == "cell":
         # A cell is only right from where the player stood; a map tile stays right.
-        card.goal_target = {
-            "kind": "tile",
-            "x": tile[0],
-            "y": tile[1],
-            "label": card.target_cell,
-            "map_id": obs.map_id,
-        }
+        card.goal_target = {"kind": "tile", "x": tile[0], "y": tile[1], "label": card.target_cell, "map_id": obs.map_id}
     return card
+
+
+_CONTROLLER_DEFAULTS = {
+    "preparing_target": None,
+    "preparation_wait_cycles": 0,
+    "closing_preparation": False,
+    "starter_seen": None,
+    "pending_move": None,
+    "evolution_waits": 0,
+    "previous_party": [],
+    "encounter_search_counts": {},
+    "encounter_tables": {},
+    "grass_visits": {},
+}
 
 
 class RunLoop:
@@ -166,6 +160,8 @@ class RunLoop:
         run_id: str | None = None,
         resume: bool = False,
         provider_override: str | None = None,
+        agents_config: Path | None = None,
+        agent_overrides: dict | None = None,
         vision_only: bool | None = None,
         port: int | None = None,
         headless: bool = False,
@@ -176,9 +172,13 @@ class RunLoop:
         ensure_relay_routing()
         self.root = project_root()
         self.run_cfg = load_run_config()
-        self.agents_cfg = load_agents_config()
+        self.agents_cfg = load_agents_config(agents_config)
         if provider_override:
             self.agents_cfg["provider"] = provider_override
+        if provider_override and provider_override != "dual":
+            self.agents_cfg.pop("system2", None)
+        self.agents_cfg = resolve_agents_config(self.agents_cfg, agent_overrides)
+        preflight(self.agents_cfg)
         self.rules = load_rules()
         self.run_id = run_id or time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
         self.run_dir = self.root / "runs" / self.run_id
@@ -209,9 +209,7 @@ class RunLoop:
                     raise IntegrityError("This run ended in a wipe; inspect it with sandbox --from")
             stage_for_boot(self.run_dir)
         self.referee = NuzlockeReferee(self.rules)
-        self.vision_only = bool(
-            self.run_cfg.get("vision_only", False) if vision_only is None else vision_only
-        )
+        self.vision_only = bool(self.run_cfg.get("vision_only", False) if vision_only is None else vision_only)
         rom = configured_rom(rom_path, self.run_cfg)
         pa = self.run_cfg.get("pokemon_agent") or {}
         base_url = f"http://{pa.get('host', '127.0.0.1')}:{int(port or pa.get('port', 8765))}"
@@ -233,20 +231,18 @@ class RunLoop:
             self.env.publish_savestate(CHECKPOINT_NAME)
             self.env.load_checkpoint(CHECKPOINT_NAME)
         control = self.run_cfg.get("control") or {}
-        self.arbiter = ActionArbiter(
-            self.env, self.store, max_actions=int(control.get("max_actions_per_proposal", 12))
-        )
+        self.arbiter = ActionArbiter(self.env, self.store, max_actions=int(control.get("max_actions_per_proposal", 12)))
         workspace = self.run_dir / "agent_workspace"
         try:
             self.llm = create_provider(
-                self.agents_cfg,
-                workspace=workspace,
-                on_stream=lambda text: self.env.push_event("reasoning", text),
+                self.agents_cfg, workspace=workspace, on_stream=lambda text: self.env.push_event("reasoning", text)
             )
+            self.jev = create_jev(self.agents_cfg, workspace=workspace)
         except Exception:
+            if getattr(self, "llm", None) is not None:
+                self.llm.close()
             self.env.shutdown()
             raise
-        self.jev = create_jev(self.agents_cfg)
         planner_cfg = self.agents_cfg.get("planner") or {}
         self.plan_every_s = float(planner_cfg.get("plan_every_s", 45))
         self.stale_noul = float(planner_cfg.get("stale_noul", 0.7))
@@ -279,18 +275,9 @@ class RunLoop:
         self.prompt_interval_s = max(0.0, float(self.run_cfg.get("prompt_interval_s", 1.5)))
         mem_cfg = self.run_cfg.get("memory") or {}
         self.memory = OptMem(
-            self.run_dir / "memory",
-            wake_lines=int(mem_cfg.get("wake_lines", 24)),
-            enabled=bool(mem_cfg.get("enabled", True)),
+            self.run_dir / "memory", wake_lines=int(mem_cfg.get("wake_lines", 24)), enabled=bool(mem_cfg.get("enabled", True))
         )
         self.rollup_every = max(0, int(mem_cfg.get("rollup_every", 25)))
-        checkpoint_cfg = self.run_cfg.get("checkpoint") or {}
-        self.checkpoint_every_steps = (
-            max(0, int(checkpoint_cfg.get("every_steps", 50)))
-            if checkpoint_cfg.get("enabled", True)
-            else 0
-        )
-        self._last_ledger_change_step = -1000
         self._last_recovery_step = -1
         self.objectives = self._seed_objectives()
         self._beat_locked = False
@@ -306,10 +293,8 @@ class RunLoop:
             )
         self._cycle = 0
         self._cached_observation = None
-        self._preparing_target = None
-        self._closing_preparation = False
-        self._starter_seen = None
-        self._pending_move = None
+        for key, default in _CONTROLLER_DEFAULTS.items():
+            setattr(self, "_" + key, deepcopy(default))
         from nuzlocke.agents.move_learning import MoveLearner
 
         self.move_learner = MoveLearner()
@@ -320,18 +305,34 @@ class RunLoop:
 
         self.shop = ShopController()
         self._rejected_starters = set()
-        self._previous_party = []
-        self._encounter_search_counts = {}
-        self._encounter_tables = {}
-        self._grass_visits = {}
         self._last_search_cycle = None
+        self._force_planner_refresh = False
         if restored:
             self._restore_controller(restored)
+            self._restore_provider_context(restored)
         self.env.on_before_action = self.integrity.begin
         self.env.on_transition = self._ingest
         self.arbiter.policy = lambda obs: self._policy(obs)
         if not resume:
             self._write_manifest(rom)
+
+    def _restore_provider_context(self, restored: dict) -> None:
+        previous = restored.get("planner_provider")
+        current = provider_identity(self.agents_cfg["system2"])
+        # A restarted process gets a fresh vendor conversation and restored local context.
+        self.journal.restore_recent()
+        if previous != current:
+            self.plan = None
+            self.navigator.route = {}
+            self.navigator.plan = {}
+            self.navigator.last_plan = {}
+            self.navigator.brief = {}
+            self._force_planner_refresh = True
+            self._low_confidence_streak = 0
+            self.store.append("provider_change", {"system": "system2", "previous": previous, "current": current})
+        self.store.append(
+            "provider_configuration", {role: provider_identity(self.agents_cfg[role]) for role in ("system1", "system2")}
+        )
 
     def _ingest(self, obs: PlayerObservation) -> None:
         """Observe irreversible outcomes at every actual emulator advancement."""
@@ -341,10 +342,7 @@ class RunLoop:
         if self._pending_move and self.plan:
             slot, name, old_pp = self._pending_move
             mon = obs.party[slot] if slot < len(obs.party) else {}
-            current = next(
-                (m.get("pp") for m in mon.get("moves", []) if str(m.get("name")).upper() == name),
-                None,
-            )
+            current = next((m.get("pp") for m in mon.get("moves", []) if str(m.get("name")).upper() == name), None)
             if current is not None and current < old_pp:
                 opening = self.plan.battle_plan.get("opening_moves", [])
                 if opening and opening[0].upper() == name:
@@ -353,12 +351,9 @@ class RunLoop:
                 self.store.append("battle_plan_advanced", {"move": name})
         if obs.in_battle and obs.active_mon and obs.active_party_slot is not None:
             slot = obs.active_party_slot
-            if 0 <= slot < len(obs.party) and obs.active_mon.get("species") == obs.party[slot].get(
-                "species"
-            ):
+            if 0 <= slot < len(obs.party) and obs.active_mon.get("species") == obs.party[slot].get("species"):
                 obs.party[slot].update(obs.active_mon)
         if self.ledger.update(obs, step=self._cycle):
-            self._last_ledger_change_step = self._cycle
             self.store.append("ledger_commit", self.referee.snapshot())
         self.referee.identify(obs)
         if getattr(self, "move_learner", None) is not None:
@@ -375,6 +370,7 @@ class RunLoop:
             for mon in obs.party:
                 old = previous.get(mon.get("capture_id"))
                 if old and mon.get("level", 0) > old.get("level", 0):
+                    self._preparation_wait_cycles = 0
                     self.store.append(
                         "candy_use",
                         {
@@ -395,16 +391,8 @@ class RunLoop:
             setting = "brock_level" if obs.map_id in {2, 54, 58} else "first_center_level"
             default = 14 if setting == "brock_level" else 12
         target = int(preparation.get(setting, default)) if preparation.get("enabled") else 0
-        obs.policy.update(
-            preparation_target=min(target, self._preparation_limit()),
-            level_cap=self.referee.current_cap,
-            level_cap_buffer=int(self.run_cfg.get("level_cap_buffer", 1)),
-            first_encounter=self.ledger.first_encounter,
-            duplicate_encounter=self.ledger.duplicate_encounter,
-            avoid_wild_grinding=bool((self.run_cfg.get("rare_candy") or {}).get("enabled")),
-            wiped=self.referee.wiped,
-            preparing=bool(self._preparing_target),
-        )
+        obs.policy["preparation_target"] = min(target, self._preparation_limit())
+        self._annotate_policy(obs)
         if self.referee.wiped:
             self.env.terminal = True
             return
@@ -413,18 +401,15 @@ class RunLoop:
         from nuzlocke.agents.policy import decision
 
         self.referee.identify(obs)
-        if getattr(self, "move_learner", None) is not None:
-            actions = self.move_learner.actions(obs)
+        for name, key in (("move_learner", "learning"), ("lead_rotation", "rotation"), ("shop", "shop")):
+            controller = getattr(self, name, None)
+            actions = controller.actions(obs) if controller is not None else None
             if actions is not None:
-                obs.policy["learning_actions"] = [a.value for a in actions]
-        if getattr(self, "lead_rotation", None) is not None:
-            actions = self.lead_rotation.actions(obs)
-            if actions is not None:
-                obs.policy["rotation_actions"] = [a.value for a in actions]
-        if getattr(self, "shop", None) is not None:
-            actions = self.shop.actions(obs)
-            if actions is not None:
-                obs.policy["shop_actions"] = [a.value for a in actions]
+                obs.policy[f"{key}_actions"] = [a.value for a in actions]
+        self._annotate_policy(obs)
+        return decision(obs, first_encounter=self.ledger.first_encounter)
+
+    def _annotate_policy(self, obs):
         obs.policy.update(
             level_cap=self.referee.current_cap,
             level_cap_buffer=int(self.run_cfg.get("level_cap_buffer", 1)),
@@ -434,20 +419,19 @@ class RunLoop:
             preparing=bool(self._preparing_target),
             wiped=self.referee.wiped,
         )
-        return decision(obs, first_encounter=self.ledger.first_encounter)
 
     def _preparation_limit(self):
         from nuzlocke.agents.level_buffer import preparation_limit
 
-        return preparation_limit(
-            self.referee.current_cap, int(self.run_cfg.get("level_cap_buffer", 1))
-        )
+        return preparation_limit(self.referee.current_cap, int(self.run_cfg.get("level_cap_buffer", 1)))
 
     def _controller_snapshot(self) -> dict:
         def tiles(data):
             return {str(k): [[*tile, value] for tile, value in v.items()] for k, v in data.items()}
 
         return {
+            **{key: getattr(self, "_" + key, default) for key, default in _CONTROLLER_DEFAULTS.items()},
+            "planner_provider": provider_identity(getattr(self, "agents_cfg", {}).get("system2", {})),
             "integrity_head": self.store.integrity_head(),
             "referee": self.referee.snapshot(),
             "ledger": self.ledger.snapshot(),
@@ -455,31 +439,17 @@ class RunLoop:
             "plan": self.plan.model_dump(mode="json") if self.plan else None,
             "objectives": self.objectives,
             "move_types": self.move_types,
-            "preparing_target": self._preparing_target,
-            "closing_preparation": self._closing_preparation,
-            "starter_seen": self._starter_seen,
-            "pending_move": self._pending_move,
             "move_learning": self.move_learner.snapshot(),
             "shop": self.shop.snapshot() if getattr(self, "shop", None) else None,
-            "evolution_waits": getattr(self, "_evolution_waits", 0),
-            "lead_rotation": self.lead_rotation.snapshot()
-            if getattr(self, "lead_rotation", None)
-            else None,
+            "lead_rotation": self.lead_rotation.snapshot() if getattr(self, "lead_rotation", None) else None,
             "rejected_starters": list(self._rejected_starters),
-            "previous_party": self._previous_party,
-            "encounter_search_counts": self._encounter_search_counts,
-            "encounter_tables": self._encounter_tables,
-            "grass_visits": self._grass_visits,
             "navigation": self.navigator.snapshot(),
             "room": {
                 "known": tiles(self.room.known),
                 "blocked": tiles(self.room._blocked),
                 "visited": {str(k): list(v) for k, v in self.room.visited.items()},
                 "cycle": self.room.cycle,
-                "edge_blocks": {
-                    str(k): [[*edge, at] for edge, at in v.items()]
-                    for k, v in self.room.edge_blocks.items()
-                },
+                "edge_blocks": {str(k): [[*edge, at] for edge, at in v.items()] for k, v in self.room.edge_blocks.items()},
                 "crossed_edges": {str(k): list(v) for k, v in self.room.crossed_edges.items()},
                 "terrain_tiles": tiles(self.room.terrain_tiles),
             },
@@ -490,75 +460,47 @@ class RunLoop:
         }
 
     def _restore_controller(self, data: dict) -> None:
+        for key, default in _CONTROLLER_DEFAULTS.items():
+            setattr(self, "_" + key, deepcopy(data.get(key, default)))
         self.referee.restore(data["referee"])
         self.ledger.restore(data["ledger"])
         self._cycle = data["cycle"]
         self.plan = PlanCard.model_validate(data["plan"]) if data.get("plan") else None
         self.objectives = data["objectives"]
         self.move_types = data["move_types"]
-        self._preparing_target = data.get("preparing_target")
-        self._closing_preparation = data.get("closing_preparation", False)
-        self._starter_seen = data.get("starter_seen")
-        self._pending_move = data.get("pending_move")
         self.move_learner.restore(data.get("move_learning"))
-        self._evolution_waits = data.get("evolution_waits", 0)
         if getattr(self, "shop", None) is not None:
             self.shop.restore(data.get("shop"))
         if getattr(self, "lead_rotation", None) is not None:
             self.lead_rotation.restore(data.get("lead_rotation"))
-        self._previous_party = data.get("previous_party", [])
-        self._encounter_search_counts = data.get("encounter_search_counts", {})
-        self._encounter_tables = data.get("encounter_tables", {})
-        self._grass_visits = data.get("grass_visits", {})
         self._rejected_starters = {tuple(t) for t in data.get("rejected_starters", [])}
 
         def key(k):
             return int(k) if str(k).isdigit() else k
 
         room = data["room"]
-        self.room.known = {
-            key(k): {(x, y): v for x, y, v in rows} for k, rows in room["known"].items()
-        }
-        self.room._blocked = {
-            key(k): {(x, y): v for x, y, v in rows} for k, rows in room["blocked"].items()
-        }
-        self.room.visited = {
-            key(k): {tuple(t) for t in rows} for k, rows in room["visited"].items()
-        }
+        self.room.known = {key(k): {(x, y): v for x, y, v in rows} for k, rows in room["known"].items()}
+        self.room._blocked = {key(k): {(x, y): v for x, y, v in rows} for k, rows in room["blocked"].items()}
+        self.room.visited = {key(k): {tuple(t) for t in rows} for k, rows in room["visited"].items()}
         self.room.cycle = room["cycle"]
-        self.room.edge_blocks = {
-            key(k): {(x, y, d): at for x, y, d, at in rows}
-            for k, rows in room.get("edge_blocks", {}).items()
-        }
-        self.room.crossed_edges = {
-            key(k): {tuple(edge) for edge in rows}
-            for k, rows in room.get("crossed_edges", {}).items()
-        }
+        self.room.edge_blocks = {key(k): {(x, y, d): at for x, y, d, at in rows} for k, rows in room.get("edge_blocks", {}).items()}
+        self.room.crossed_edges = {key(k): {tuple(edge) for edge in rows} for k, rows in room.get("crossed_edges", {}).items()}
         self.room.terrain_tiles = {
-            key(k): {(x, y): tuple(value) for x, y, value in rows}
-            for k, rows in room.get("terrain_tiles", {}).items()
+            key(k): {(x, y): tuple(value) for x, y, value in rows} for k, rows in room.get("terrain_tiles", {}).items()
         }
         self.navigator.restore(data.get("navigation", {}))
         self.grid_trust._counts = {key(k): v for k, v in data["grid_trust"].items()}
         self.object_trust._counts = {key(k): v for k, v in data["object_trust"].items()}
         self.grid_trust._confirmed = {key(k): v for k, v in data.get("grid_confirmed", {}).items()}
-        self.object_trust._confirmed = {
-            key(k): v for k, v in data.get("object_confirmed", {}).items()
-        }
+        self.object_trust._confirmed = {key(k): v for k, v in data.get("object_confirmed", {}).items()}
 
     def _intervention(self, obs, task):
         from nuzlocke.agents.preparation import preparation_turn
         from nuzlocke.environment.evolution import evolution_phase
 
-        self._evolution_waits = (
-            getattr(self, "_evolution_waits", 0) + 1
-            if evolution_phase(obs.screen_rows) == "animation"
-            else 0
-        )
+        self._evolution_waits = getattr(self, "_evolution_waits", 0) + 1 if evolution_phase(obs.screen_rows) == "animation" else 0
         if self._evolution_waits > 30:
-            raise RuntimeError(
-                "Evolution screen did not finish after 30 wait cycles; paused for inspection"
-            )
+            raise RuntimeError("Evolution screen did not finish after 30 wait cycles; paused for inspection")
 
         if getattr(self, "move_learner", None) is not None:
             actions, reason = self.move_learner.turn(
@@ -566,17 +508,14 @@ class RunLoop:
                 decide=self.jev.decide if self.jev else None,
                 record=self.store.append,
                 confidence_floor=self.confidence_floor,
+                goal=" ".join([self.plan.plan, *self.plan.do_not]) if self.plan else task.objective,
             )
             if actions:
-                return ActionProposal(
-                    task_id=task.task_id, agent=task.owner, actions=actions, reason=reason
-                )
+                return ActionProposal(task_id=task.task_id, agent=task.owner, actions=actions, reason=reason)
         if getattr(self, "shop", None) is not None:
             actions, reason = self.shop.turn(obs, record=self.store.append)
             if actions:
-                return ActionProposal(
-                    task_id=task.task_id, agent=task.owner, actions=actions, reason=reason
-                )
+                return ActionProposal(task_id=task.task_id, agent=task.owner, actions=actions, reason=reason)
         from nuzlocke.agents.gym_preparation import at_leader, needs_top_up
 
         if (
@@ -587,25 +526,22 @@ class RunLoop:
         ):
             actions, reason = self.lead_rotation.turn(obs, record=self.store.append)
             if actions:
-                return ActionProposal(
-                    task_id=task.task_id, agent=task.owner, actions=actions, reason=reason
-                )
+                return ActionProposal(task_id=task.task_id, agent=task.owner, actions=actions, reason=reason)
         actions, reason = preparation_turn(self, obs)
         if actions:
-            return ActionProposal(
-                task_id=task.task_id, agent=task.owner, actions=actions, reason=reason
-            )
+            return ActionProposal(task_id=task.task_id, agent=task.owner, actions=actions, reason=reason)
         return None
 
     def _seed_objectives(self) -> dict[str, str]:
-        texts: list[str] = []
-        for item in self.run_cfg.get("milestones") or []:
-            if isinstance(item, dict) and item.get("description"):
-                texts.append(str(item["description"]).strip())
-            elif isinstance(item, str):
-                texts.append(item.strip())
-        texts += [""] * len(DEFAULT_OBJECTIVES)
-        return {key: texts[i] or text for i, (key, text) in enumerate(DEFAULT_OBJECTIVES.items())}
+        texts = [
+            str(item["description"]).strip() if isinstance(item, dict) else item.strip()
+            for item in self.run_cfg.get("milestones") or []
+            if isinstance(item, str) or (isinstance(item, dict) and item.get("description"))
+        ]
+        from nuzlocke.orchestration.objectives import completed_descriptions
+
+        done = completed_descriptions(self.run_cfg, self.referee)
+        return dict(zip(DEFAULT_OBJECTIVES, (text for text in texts if text not in done))) if texts else dict(DEFAULT_OBJECTIVES)
 
     def _nuzlocke_state(self) -> dict[str, Any]:
         return {
@@ -624,51 +560,42 @@ class RunLoop:
             "memory_enabled": self.memory.enabled,
             "rom_path": str(rom) if rom else None,
             "provider": self.agents_cfg.get("provider"),
-            "model": self._manifest_model(),
+            "model": {role: provider_identity(self.agents_cfg[role]) for role in ("system1", "system2")},
             "rules": self.rules,
         }
-        (self.run_dir / "manifest.json").write_text(
-            json.dumps(manifest, indent=2), encoding="utf-8"
-        )
+        (self.run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         self.store.set_meta("manifest", manifest)
 
-    def _manifest_model(self) -> Any:
-        provider = self.agents_cfg.get("provider")
-        if provider == "dual":
-            planner = self.agents_cfg.get("planner") or {}
-            return {
-                "planner": {"id": planner.get("model"), "params": planner.get("params")},
-                "jev": (self.agents_cfg.get("jev") or {}).get("model"),
-            }
-        if provider == "cursor":
-            cursor = self.agents_cfg.get("cursor") or {}
-            return {"id": cursor.get("model"), "params": cursor.get("params")}
-        return (self.agents_cfg.get("openai_compatible") or {}).get("model")
-
     def _publish_navigation(self, obs: PlayerObservation) -> None:
-        from nuzlocke.referee.type_chart import types_for_species
-
+        from nuzlocke.environment.dashboard import capture_count
         from nuzlocke.knowledge.encounters import coverage
+        from nuzlocke.referee.type_chart import types_for_species
 
         payload = self.navigator.context(obs, self.room, self._objective(obs)[0])
         payload.update(
             run_id=self.run_id,
             cycle=self._cycle,
             in_battle=obs.in_battle,
-            party=[
-                {**m, "types": list(types_for_species(m.get("species", ""))) or m.get("types", [])}
-                for m in obs.party
-            ],
+            party=[{**m, "types": list(types_for_species(m.get("species", ""))) or m.get("types", [])} for m in obs.party],
             badges=obs.badges,
             encounters=coverage(self),
+            capture_count=capture_count(self.referee.encounter_ledger),
             updated_at=time.time(),
         )
         self.env.publish_navigation(payload)
 
-    def _publish_objectives(self) -> None:
-        dash = objectives_for_dashboard(self.objectives)
-        if dash:
-            self.env.set_objectives(dash)
+    def _publish_objectives(self, obs: PlayerObservation | None = None) -> None:
+        from nuzlocke.orchestration.objectives import progression_objectives, prune_completed
+
+        if obs is not None:
+            self._objectives_observation = obs
+        progression = progression_objectives(getattr(self, "_objectives_observation", None))
+        if progression and not self._beat_locked:
+            # Planner updates often repeat broad gym milestones. Keep the actual
+            # prerequisite shared by the dashboard and future planner context.
+            self.objectives = progression
+        self.objectives = prune_completed(self.objectives, self.run_cfg, self.referee)
+        self.env.set_objectives(objectives_for_dashboard(self.objectives))
 
     def _wait_until_running(self) -> ControlState:
         control = self.run_cfg.get("control") or {}
@@ -684,19 +611,23 @@ class RunLoop:
         return ControlState.RUNNING
 
     def run(self, *, max_steps: int | None = None) -> None:
+        try:
+            self._run(max_steps=max_steps)
+        finally:
+            self.close()
+
+    def _run(self, *, max_steps: int | None = None) -> None:
         self.store.append("run_start", {"run_id": self.run_id})
-        flags = (" · vision-only" if self.vision_only else "") + (
-            " · OptMem on" if self.memory.enabled else ""
-        )
+        flags = (" · vision-only" if self.vision_only else "") + (" · OptMem on" if self.memory.enabled else "")
         self.env.push_event(
-            "key_moment",
-            f"Nuzlocke run {self.run_id} live — watch Field Log + game stage{flags}",
-            category="milestone",
+            "key_moment", f"Nuzlocke run {self.run_id} live — watch Field Log + game stage{flags}", category="milestone"
         )
-        self._publish_objectives()
+        self._publish_objectives(self.env.observe())
         console.print(f"[bold cyan]Watch live:[/bold cyan] {self.dashboard_url}")
         console.print(f"[bold cyan]Route monitor:[/bold cyan] {self.navigation_url}")
-        console.print("[dim]Cursor agents: Agents panel → Filter → Source → SDK[/dim]")
+        console.print(
+            f"[dim]System 2: {self.agents_cfg['system2']['provider']} / {self.agents_cfg['system2']['model'] or 'vendor default'}[/dim]"
+        )
         if not self.headless:
             with contextlib.suppress(Exception):
                 webbrowser.open(self.navigation_url)
@@ -724,19 +655,14 @@ class RunLoop:
             locked = obs.in_battle or is_naming_lock(obs.joy_ignore)
             speech = not locked and text_box_open(obs.screenshot_path)
             controllable = not locked and not speech
-            console.print(
-                "[dim]speech on screen[/dim]"
-                if speech
-                else f"[dim]map={obs.map_name} battle={obs.in_battle}[/dim]"
-            )
+            console.print("[dim]speech on screen[/dim]" if speech else f"[dim]map={obs.map_name} battle={obs.in_battle}[/dim]")
             self.store.append("observation", raw_obs.model_dump(mode="json"))
             self._publish_navigation(obs)
             if obs.cutscene or self._cutscene_screen(obs):
                 self.stuck.pause_for_cutscene()
             self.stuck.update_position(obs)
             self.referee.advance(len(obs.badges))
-            if self.ledger.update(obs, step=steps):
-                self._last_ledger_change_step = steps
+            self.ledger.update(obs, step=steps)
             if self.referee.wiped:
                 # A Nuzlocke ends when the whole party is gone. Keep the savestate to look at.
                 self.store.append("nuzlocke_wipe", {"reason": self.referee.wiped, "step": steps})
@@ -744,7 +670,7 @@ class RunLoop:
                 console.print(f"[red]Nuzlocke lost: {self.referee.wiped}. Stopping.[/red]")
                 break
             stop_after = self.run_cfg.get("stop_after", "brock")
-            stop_badge = {"brock": "Boulder", "misty": "Cascade"}.get(stop_after)
+            stop_badge = {"brock": "Boulder", "misty": "Cascade", "lt_surge": "Thunder", "erika": "Rainbow"}.get(stop_after)
             if stop_badge and stop_badge in obs.badges:
                 self.store.append("milestone_complete", {"milestone": stop_after, "step": steps})
                 self.integrity.commit(self.env, self._controller_snapshot())
@@ -775,14 +701,13 @@ class RunLoop:
             }
             memory_text = self.memory.wake()
             beat_hint = self._sync_beats(obs, controllable=controllable)
-            walkthrough_hint = beat_hint
-            if stuck.needs_guide():
+            stage_hint = "" if str(self._beat_id).startswith("heal") else progression_hint(obs)
+            walkthrough_hint = "\n\n".join(filter(None, (beat_hint, stage_hint))) or None
+            if stuck.needs_guide() and not str(self._beat_id).startswith("heal"):
                 # The RAM map name picks the section; the model still does not see RAM.
-                excerpt = excerpt_for_context(
-                    map_name=obs.map_name, reason=hint or "", memory=memory_text
-                )
+                excerpt = excerpt_for_context(map_name=obs.map_name, reason=hint or "", memory=memory_text)
                 if excerpt:
-                    walkthrough_hint = f"{beat_hint}\n\n{excerpt}" if beat_hint else excerpt
+                    walkthrough_hint = f"{walkthrough_hint}\n\n{excerpt}" if walkthrough_hint else excerpt
                 if walkthrough_hint:
                     self.env.push_event("reasoning", "[walkthrough] injected stuck-helper excerpt")
             # A few B presses page a real line. After that the beat stays the
@@ -802,8 +727,7 @@ class RunLoop:
             if decision.narration:
                 self.env.push_event("reasoning", f"[director] {decision.narration}")
             self.env.push_event(
-                "decision",
-                f"mode={decision.mode.value} owner={decision.owner.value} → {decision.objective}",
+                "reasoning", f"[director] mode={decision.mode.value} owner={decision.owner.value} → {decision.objective}"
             )
             if decision.stop_run:
                 console.print(f"[red]Director stopped run: {decision.stop_reason}[/red]")
@@ -828,9 +752,15 @@ class RunLoop:
                     steps=steps,
                     context=self._context(memory_text, walkthrough_hint),
                 )
-            except Exception as err:
+            except Exception as err:  # noqa: BLE001 — provider/controller boundary pauses and preserves the checkpoint
+                if self.env.get_control() == ControlState.STOPPED:
+                    break
                 proposal = self._fallback_proposal(task, err)
             if pause:
+                continue
+            if self.env.get_control() != ControlState.RUNNING:
+                if self.integrity.pending.exists():
+                    self.integrity.commit(self.env, self._controller_snapshot())
                 continue
 
             if self._s1 and self._s1.choice.startswith("move_"):
@@ -840,14 +770,7 @@ class RunLoop:
                 index = int(self._s1.choice.removeprefix("move_"))
                 if index < len(screen.options):
                     name = screen.options[index].upper()
-                    pp = next(
-                        (
-                            m.get("pp")
-                            for m in active_mon(obs).get("moves", [])
-                            if str(m.get("name")).upper() == name
-                        ),
-                        None,
-                    )
+                    pp = next((m.get("pp") for m in active_mon(obs).get("moves", []) if str(m.get("name")).upper() == name), None)
                     if pp is not None:
                         self._pending_move = (obs.active_party_slot or 0, name, pp)
             self._apply_proposal_meta(proposal)
@@ -871,10 +794,7 @@ class RunLoop:
                 after_fp,
                 executed=bool(executed),
                 actions=executed or None,
-                allow_immobile=controllable
-                and not after.in_battle
-                and not is_naming_lock(after.joy_ignore)
-                and not after_box,
+                allow_immobile=controllable and not after.in_battle and not is_naming_lock(after.joy_ignore) and not after_box,
             )
             if result.walks:
                 grid_disagreed = self.grid_trust.record_path(raw_obs, result.walks)
@@ -886,9 +806,7 @@ class RunLoop:
                     f"warp table for {raw_obs.map_name or 'this map'} disagrees with where "
                     "the map changed; its doors and NPCs are withheld from now on",
                 )
-                self.store.append(
-                    "objects_untrusted", {"map": raw_obs.map_name, "map_id": raw_obs.map_id}
-                )
+                self.store.append("objects_untrusted", {"map": raw_obs.map_name, "map_id": raw_obs.map_id})
             if grid_disagreed:
                 self.env.push_event(
                     "alert",
@@ -900,51 +818,35 @@ class RunLoop:
             if used_recovery and not is_noop:
                 stuck.discount(2)
             if is_noop:
-                self.env.push_event(
-                    "alert", f"noop x{stuck.noop_streak}: actions did not change screen/state"
-                )
+                self.env.push_event("alert", f"noop x{stuck.noop_streak}: actions did not change screen/state")
                 walked = any(label.startswith("walk_") for label in executed)
                 if self.memory.enabled and stuck.noop_streak >= 3 and walked:
                     noted = self.memory.note("ANTI do not repeat: " + " ".join(executed))
                     if noted:
                         self.env.push_event("reasoning", noted)
             elif stuck.loop_streak >= 3:
-                self.env.push_event(
-                    "alert", f"loop x{stuck.loop_streak}: oscillating walks or tiles"
-                )
+                self.env.push_event("alert", f"loop x{stuck.loop_streak}: oscillating walks or tiles")
             elif stuck.last_immobile:
-                self.env.push_event(
-                    "alert",
-                    f"immobile x{stuck.immobile_streak}: {' '.join(executed)} did not change the tile",
-                )
+                self.env.push_event("alert", f"immobile x{stuck.immobile_streak}: {' '.join(executed)} did not change the tile")
             elif stuck.no_progress_streak >= 3:
-                self.env.push_event(
-                    "alert",
-                    f"no_progress x{stuck.no_progress_streak}: only text changed, the world did not",
-                )
+                self.env.push_event("alert", f"no_progress x{stuck.no_progress_streak}: only text changed, the world did not")
             stopped = result.stopped_early_because
-            self.env.push_event(
-                "action", f"{result.status}: {executed}" + (f" ({stopped})" if stopped else "")
-            )
+            self.env.push_event("action", f"{result.status}: {executed}" + (f" ({stopped})" if stopped else ""))
             tag = _first_streak(
                 ("immobile", stuck.immobile_streak if stuck.last_immobile else 0),
                 ("noop", stuck.noop_streak),
                 ("loop", stuck.loop_streak),
             )
             console.print(
-                f"[green]step {steps}[/green] {task.owner.value} -> {result.status} {executed}"
-                + (f" [{tag}]" if tag else "")
+                f"[green]step {steps}[/green] {task.owner.value} -> {result.status} {executed}" + (f" [{tag}]" if tag else "")
             )
-            if (before_fp.map_name, before_fp.x, before_fp.y) == (
-                after_fp.map_name,
-                after_fp.x,
-                after_fp.y,
-            ):
+            if (before_fp.map_name, before_fp.x, before_fp.y) == (after_fp.map_name, after_fp.x, after_fp.y):
                 for label in executed:
                     stuck.press_counts[label] = stuck.press_counts.get(label, 0) + 1
             else:
                 stuck.press_counts.clear()
             self._after_system1(raw_obs, after, result, executed, after_box, steps)
+            self._publish_objectives(after)
             # Label honestly: a history of "ok" on every looping step reads as success.
             if stuck.last_immobile:
                 outcome = f"immobile x{stuck.immobile_streak}"
@@ -973,12 +875,9 @@ class RunLoop:
             remaining = self.prompt_interval_s - (time.time() - cycle_started)
             if remaining > 0:
                 time.sleep(remaining)
-        if self.integrity.pending.exists() and (
-            self._cached_observation is not None or self.referee.wiped
-        ):
+        if self.integrity.pending.exists() and (self._cached_observation is not None or self.referee.wiped):
             self.integrity.commit(self.env, self._controller_snapshot())
         self.store.append("run_end", {"run_id": self.run_id, "steps": steps})
-        self.close()
 
     def _context(self, memory: str | None, walkthrough_hint: str | None) -> dict[str, Any]:
         """Keyword arguments the role prompts share."""
@@ -996,30 +895,32 @@ class RunLoop:
         }
 
     def _fallback_proposal(self, task: Any, err: Exception) -> ActionProposal:
-        self.store.append("llm_error", {"error": str(err), "owner": task.owner.value})
-        if getattr(self, "jev", None) is not None:
+        from nuzlocke.agents.lead_rotation import LeadRotationError
+
+        intervention_error = isinstance(err, LeadRotationError)
+        self.store.append("controller_error" if intervention_error else "llm_error", {"error": str(err), "owner": task.owner.value})
+        if intervention_error or getattr(self, "jev", None) is not None:
             self.env.set_control(ControlState.PAUSED)
-            self.env.push_event(
-                "alert",
-                f"Planning unavailable; paused. Restore the connection and press START: {err}",
+            message = (
+                f"Party-menu controller paused for inspection: {err}"
+                if intervention_error
+                else f"Planning unavailable; paused. Restore the connection and press START: {err}"
             )
-            console.print(f"[yellow]Planning unavailable; paused:[/yellow] {err}")
+            self.env.push_event("alert", message)
+            console.print(f"[yellow]{message}[/yellow]")
             proposal = ActionProposal(
                 task_id=task.task_id,
                 agent=task.owner,
                 actions=[GameAction.WAIT_60],
-                reason="planning unavailable; pause and preserve checkpoint",
+                reason="controller paused; preserve checkpoint"
+                if intervention_error
+                else "planning unavailable; pause and preserve checkpoint",
             )
             self.arbiter.set_owner(proposal.agent)
             return proposal
         if is_bridge_down(err):
-            self.env.push_event(
-                "alert", f"Cursor bridge down — waiting (keep Cursor app open): {err}"
-            )
-            console.print(
-                "[red]Cursor SDK bridge connection refused.[/red] "
-                "Keep the Cursor app open, then the run will retry."
-            )
+            self.env.push_event("alert", f"Cursor bridge down — waiting (keep Cursor app open): {err}")
+            console.print("[red]Cursor SDK bridge connection refused.[/red] Keep the Cursor app open, then the run will retry.")
             time.sleep(8.0)
             proposal = bridge_down_proposal(task)
         else:
@@ -1030,14 +931,7 @@ class RunLoop:
         return proposal
 
     def _select_proposal(
-        self,
-        *,
-        tier: int,
-        decision: Any,
-        task: Any,
-        obs: PlayerObservation,
-        steps: int,
-        context: dict[str, Any],
+        self, *, tier: int, decision: Any, task: Any, obs: PlayerObservation, steps: int, context: dict[str, Any]
     ) -> tuple[ActionProposal | None, bool, bool]:
         """Pick this cycle's buttons. Returns proposal, used_recovery, pause."""
         if getattr(self, "referee", None) is not None:
@@ -1101,28 +995,18 @@ class RunLoop:
             return self._fast_proposal(task=task, obs=obs, context=context), False, False
         frame = self.env.vision_frame(obs)
         if task.owner == AgentRole.OVERWORLD:
-            proposal = propose_overworld(
-                self.llm, task=task, obs=frame, loop_streak=self.stuck.loop_streak, **context
-            )
+            proposal = propose_overworld(self.llm, task=task, obs=frame, loop_streak=self.stuck.loop_streak, **context)
         else:
-            proposal = propose_battle(
-                self.llm, task=task, obs=frame, **_without(context, OVERWORLD_ONLY)
-            )
+            proposal = propose_battle(self.llm, task=task, obs=frame, **_without(context, OVERWORLD_ONLY))
         return proposal, False, False
 
-    def _fast_proposal(
-        self, *, task: Any, obs: PlayerObservation, context: dict[str, Any]
-    ) -> ActionProposal:
+    def _fast_proposal(self, *, task: Any, obs: PlayerObservation, context: dict[str, Any]) -> ActionProposal:
         """System 1 cycle. The planner runs only when the card is stale."""
         signals = self._frame_signals(obs)
         # The last mash left the box unchanged. Another would be the same B,
         # so the planner looks at it instead.
         last_actions = self.recent_steps[-1]["actions"] if self.recent_steps else []
-        mash_stalled = (
-            signals.text_box
-            and last_actions == [GameAction.SKIP_DIALOG.value]
-            and not signals.dialog_changed
-        )
+        mash_stalled = signals.text_box and last_actions == [GameAction.SKIP_DIALOG.value] and not signals.dialog_changed
 
         def refresh(trigger: str | None = None) -> PlanCard:
             started = time.monotonic()
@@ -1134,22 +1018,32 @@ class RunLoop:
                 trigger=trigger,
                 journal=self.journal.since_last_look() or None,
                 battle=self._battle_brief(obs) if obs.in_battle else None,
-                navigation=self.navigator.context(obs, self.room, self._objective(obs)[0])
-                if not obs.in_battle
-                else None,
+                navigation=self.navigator.context(obs, self.room, self._objective(obs)[0]) if not obs.in_battle else None,
                 constraints=self._constraints(obs),
                 **context,
             )
             _stamp(card, signals, obs)
             card.created_at = time.time()
             latency = round(time.monotonic() - started, 2)
-            self.store.append("plan", {**card.model_dump(mode="json"), "latency_s": latency})
+            self.store.append(
+                "plan",
+                {
+                    **card.model_dump(mode="json"),
+                    "latency_s": latency,
+                    "trigger": trigger,
+                    "provider": getattr(self.llm, "name", "unknown"),
+                    "model": getattr(self.llm, "model", None),
+                },
+            )
             self.env.push_event("reasoning", f"[planner] {card.see} → {card.plan}")
             return card
 
         def jev_decide(state: dict[str, Any], questions: dict[str, Any]) -> Any:
             menu = (questions.get("action") or {}).get("criteria") or {}
+            event_kind = "jev_call" if getattr(self.jev, "name", "jev") == "jev" else "actor_call"
             record: dict[str, Any] = {
+                "provider": getattr(self.jev, "name", "jev"),
+                "model": getattr(self.jev, "model", None),
                 "scene": state.get("scene"),
                 "menu": menu,
                 "state_bytes": len(json.dumps(state, default=str)),
@@ -1157,14 +1051,17 @@ class RunLoop:
             try:
                 read = self.jev.decide(state=state, questions=questions, allowed=set(menu))
             except Exception as err:
-                self.store.append("jev_call", {**record, "error": str(err)[:200]})
+                self.store.append(event_kind, {**record, "error": str(err)[:200]})
                 raise
             self.store.append(
-                "jev_call",
+                event_kind,
                 {
                     **record,
+                    "decision_mode": read.decision_mode,
+                    "abstain": read.abstain,
+                    "usage": read.usage,
                     "choice": read.action,
-                    "confidence": read.confidence,
+                    "confidence": read.confidence if read.decision_mode == "probabilities" else None,
                     "probabilities": read.probabilities,
                     "plan_stale": read.plan_stale,
                     "objective_done": read.objective_done,
@@ -1173,6 +1070,12 @@ class RunLoop:
                 },
             )
             return read
+
+        if getattr(self, "_force_planner_refresh", False) and (not signals.text_box or signals.prompt_box):
+            self.plan = reconcile_plan(refresh("provider changed on resume"), obs)
+            self._force_planner_refresh = False
+            self._last_look = len(self.journal.lines)
+            self.journal.looked()
 
         # System 1 first. System 2's steps are for screens System 1 cannot read (the naming
         # keyboard); pressed ahead of it, they kept a battle bag from System 3's POKé BALL.
@@ -1183,23 +1086,14 @@ class RunLoop:
             # System 2 already answered with buttons for this screen: press them, no new look.
             s1 = None
         looked = False
-        if (
-            s1 is not None
-            and s1.trigger in _COOLDOWN_TRIGGERS
-            and len(self.journal.lines) - self._last_look < S2_COOLDOWN_CYCLES
-        ):
+        if s1 is not None and s1.trigger in _COOLDOWN_TRIGGERS and len(self.journal.lines) - self._last_look < S2_COOLDOWN_CYCLES:
             # Healing must retain its objective during the planning cooldown.
             if current_beat(obs) and current_beat(obs).id.startswith("heal"):
                 return ActionProposal(
-                    task_id=task.task_id,
-                    agent=task.owner,
-                    reason="retain healing objective",
-                    actions=[GameAction.WAIT_60],
+                    task_id=task.task_id, agent=task.owner, reason="retain healing objective", actions=[GameAction.WAIT_60]
                 )
             # System 2 looked moments ago. Asking again buys the same answer; explore instead.
-            s1 = self._system1(
-                obs, signals, mash_stalled=mash_stalled, jev_decide=jev_decide, explore=True
-            )
+            s1 = self._system1(obs, signals, mash_stalled=mash_stalled, jev_decide=jev_decide, explore=True)
         if s1 is not None and s1.trigger:
             # A decision System 1 cannot make: System 2 looks once, then System 1 tries again.
             self.plan = reconcile_plan(refresh(s1.trigger), obs)
@@ -1209,21 +1103,11 @@ class RunLoop:
             self._low_confidence_streak = 0
             looked = True
             self.store.append("jev", {"actions": [], "reason": s1.reason, "looks": [s1.trigger]})
-            s1 = (
-                None
-                if self.plan.steps
-                else self._system1(obs, signals, mash_stalled=False, jev_decide=jev_decide)
-            )
+            s1 = None if self.plan.steps else self._system1(obs, signals, mash_stalled=False, jev_decide=jev_decide)
             if s1 is not None and s1.trigger:
                 # Still undecided right after a look: press the look's steps if it wrote
                 # any, else wait a moment. Never a second look in the same cycle.
-                s1 = (
-                    None
-                    if self.plan.steps
-                    else S1Turn(
-                        [GameAction.WAIT_60], f"System 2 looked ({s1.trigger}); waiting", "wait"
-                    )
-                )
+                s1 = None if self.plan.steps else S1Turn([GameAction.WAIT_60], f"System 2 looked ({s1.trigger}); waiting", "wait")
         if s1 is not None:
             return self._system1_proposal(task, s1)
         self._s1 = None
@@ -1267,32 +1151,37 @@ class RunLoop:
         """The target System 1 walks toward: the beat's, else System 2's card, else none."""
         beat = current_beat(obs) if self._beat_locked else None
         from nuzlocke.knowledge.encounters import encounter_objective
+        from nuzlocke.knowledge.items import item_objective
 
+        pickup = item_objective(self, obs, beat)
+        if pickup:
+            return pickup
         encounter = encounter_objective(self, obs, beat)
         if encounter:
             return encounter
-        if beat is not None and beat.id == "heal_forest":
+        if beat is not None and beat.id == "heal_forest" and self.plan is None:
             from nuzlocke.agents.goals import Routes, collision_map
 
             routes = Routes((obs.x, obs.y), collision_map(obs, self.room) or {})
-            choices = []
-            for warp in obs.warps:
-                destination = warp.get("dest_map")
-                if destination not in {47, 50}:
-                    continue
-                path = routes.onto((warp["x"], warp["y"]))
-                if path is not None:
-                    # Remaining gate/Route 2 walks are a conservative allowance, not a guarantee.
-                    choices.append((len(path) + (32 if destination == 47 else 64), destination))
+            # Gate distance includes a conservative allowance for the route outside the forest.
+            choices = [
+                (len(path) + (32 if warp["dest_map"] == 47 else 64), warp["dest_map"])
+                for warp in obs.warps
+                if warp.get("dest_map") in {47, 50} and (path := routes.onto((warp["x"], warp["y"]))) is not None
+            ]
             if choices:
                 cost, destination = min(choices)
                 obs.policy["healing_route_steps"] = cost
                 return {"kind": "warp", "dest_map": destination}, beat.text, True
-        if beat is not None and beat.target:
+        # The healing destination stays locked, but a planner can clear an obstacle en route.
+        delegated_heal = beat and beat.id.startswith("heal") and beat.target.get("kind") in {"warp", "edge"} and self.plan
+        if delegated_heal and any(g.objective and g.complete for g in build_goals(obs, self.room, objective=beat.target)):
+            delegated_heal = self.plan = None
+        if beat is not None and beat.target and not delegated_heal:
             return beat.target, beat.text, True
         card = self.plan
         if card is None or not card.goal_target:
-            return None, None, False
+            return None, card.plan if card else None, False
         if card.goal_target.get("kind") == "tile" and card.goal_target.get("map_id") != obs.map_id:
             # A tile on the screenshot belongs to the map it was read on.
             return None, None, False
@@ -1302,21 +1191,12 @@ class RunLoop:
         return card.goal_target, card.plan, False
 
     def _system1(
-        self,
-        obs: PlayerObservation,
-        signals: FrameSignals,
-        *,
-        mash_stalled: bool,
-        jev_decide: Any,
-        explore: bool = False,
+        self, obs: PlayerObservation, signals: FrameSignals, *, mash_stalled: bool, jev_decide: Any, explore: bool = False
     ) -> S1Turn | None:
         target, text, from_code = self._objective(obs)
+        obs.policy["healing_route"] = self._beat_locked and str(self._beat_id).startswith("heal")
         if not obs.party and obs.map_id == 40 and self._rejected_starters:
-            balls = [
-                n
-                for n in obs.npcs
-                if n.get("picture") == 74 and (n["x"], n["y"] + 1) not in self._rejected_starters
-            ]
+            balls = [n for n in obs.npcs if n.get("picture") == 74 and (n["x"], n["y"] + 1) not in self._rejected_starters]
             if balls:
                 target = {"kind": "face", "x": balls[0]["x"], "y": balls[0]["y"] + 1, "dir": "up"}
         if explore:
@@ -1350,19 +1230,11 @@ class RunLoop:
     def _battle_brief(self, obs: PlayerObservation) -> dict[str, Any]:
         """What System 2 plans a battle from: the field, our moves with types, the party."""
         brief = dict(battle_facts(obs) or {})
-        from nuzlocke.agents.battle import active_mon
+        from nuzlocke.agents.battle import active_mon, move_facts
 
         lead = active_mon(obs)
-        brief["our_moves"] = [
-            f"{m.get('name')} ({self.move_types.get(str(m.get('name')).upper(), 'type unknown')},"
-            f" {m.get('pp')} PP)"
-            for m in lead.get("moves") or []
-            if isinstance(m, dict)
-        ]
-        brief["party"] = [
-            f"{m.get('species')} L{m.get('level')} {m.get('hp')}/{m.get('max_hp')}"
-            for m in obs.party
-        ]
+        brief["our_moves"] = [move_facts(obs, m["name"], self.move_types) for m in lead.get("moves") or [] if isinstance(m, dict)]
+        brief["party"] = [f"{m.get('species')} L{m.get('level')} {m.get('hp')}/{m.get('max_hp')}" for m in obs.party]
         return brief
 
     def _battle_plan(self, obs: PlayerObservation) -> dict[str, Any] | None:
@@ -1370,6 +1242,7 @@ class RunLoop:
         if self.plan is None:
             return None
         from nuzlocke.agents.battle import active_mon
+        from nuzlocke.environment.status import normalize_status
 
         lead = active_mon(obs)
         exhausted = sorted(m.get("name", "") for m in lead.get("moves", []) if m.get("pp") == 0)
@@ -1380,21 +1253,20 @@ class RunLoop:
                 (obs.battle or {}).get("type"),
                 (obs.battle or {}).get("enemy", {}).get("species"),
                 (obs.battle or {}).get("enemy", {}).get("level"),
+                normalize_status((obs.battle or {}).get("enemy", {}).get("status")),
                 obs.active_party_slot,
                 lead.get("status"),
                 critical,
                 exhausted,
-                [
-                    m.get("capture_id")
-                    for m in obs.party
-                    if not m.get("dead") and not m.get("ineligible")
-                ],
+                [m.get("capture_id") for m in obs.party if not m.get("dead") and not m.get("ineligible")],
             ]
         )
         if not obs.in_battle or (self.plan.battle_context and self.plan.battle_context != context):
             self.plan.battle_plan = {}
         self.plan.battle_context = context
-        return self.plan.battle_plan or None
+        if not self.plan.battle_plan:
+            return None
+        return {**self.plan.battle_plan, "intent": self.plan.plan, "do_not": self.plan.do_not}
 
     def _constraints(self, obs: PlayerObservation) -> list[str]:
         """System 3's briefing: the rules, the cap, the next boss, the trainers on this map."""
@@ -1415,18 +1287,10 @@ class RunLoop:
             },
         )
         # The arbiter takes presses from the task's owner, which a stuck tier can make Recovery.
-        return ActionProposal(
-            task_id=task.task_id, agent=task.owner, reason=s1.reason, actions=s1.actions
-        )
+        return ActionProposal(task_id=task.task_id, agent=task.owner, reason=s1.reason, actions=s1.actions)
 
     def _after_system1(
-        self,
-        before: PlayerObservation,
-        after: PlayerObservation,
-        result: Any,
-        executed: list[str],
-        after_box: bool,
-        cycle: int,
+        self, before: PlayerObservation, after: PlayerObservation, result: Any, executed: list[str], after_box: bool, cycle: int
     ) -> None:
         """Teach the room map, count goals that went nowhere, and write the journal line."""
         if not before.cutscene and not before.in_battle:
@@ -1436,11 +1300,7 @@ class RunLoop:
         self.room.visit(self.grid_trust.view(after))
         self.navigator.observe(after, self.room)
         self._publish_navigation(after)
-        moved = sum(
-            1
-            for step in result.walks or []
-            if (step.get("x0"), step.get("y0")) != (step.get("x1"), step.get("y1"))
-        )
+        moved = sum(1 for step in result.walks or [] if (step.get("x0"), step.get("y0")) != (step.get("x1"), step.get("y1")))
         walks = [label.removeprefix("walk_") for label in executed if label.startswith("walk_")]
         if walks and walks[-1] in DIRS:
             self._last_direction = walks[-1]
@@ -1472,13 +1332,7 @@ class RunLoop:
                 "label": s1.goal.label if s1 is not None and s1.goal is not None else None,
                 "p": s1.probability if s1 is not None else None,
                 "actions": executed,
-                "outcome": journal_outcome(
-                    before,
-                    after,
-                    moved_tiles=moved,
-                    text=text,
-                    stopped=result.stopped_early_because,
-                ),
+                "outcome": journal_outcome(before, after, moved_tiles=moved, text=text, stopped=result.stopped_early_because),
                 "text": text,
             }
         )
@@ -1501,10 +1355,7 @@ class RunLoop:
     def _adopt_recovery_plan(self, advice: RecoveryAdvice, obs: PlayerObservation) -> None:
         signals = self._frame_signals(obs)
         card = plan_from_recovery(
-            advice,
-            scene=classify_scene(obs, None, signals),
-            world_digest=signals.world_digest,
-            now=time.time(),
+            advice, scene=classify_scene(obs, None, signals), world_digest=signals.world_digest, now=time.time()
         )
         self.plan = _stamp(reconcile_plan(card, obs), signals)
         self._low_confidence_streak = 0
@@ -1536,28 +1387,19 @@ class RunLoop:
         streak = self.stuck.no_progress_streak
         if streak < 2:
             return None
-        ctx: dict[str, Any] = {
-            "streak": streak,
-            "measured_from": "pixels above the text box (world region)",
-        }
+        ctx: dict[str, Any] = {"streak": streak, "measured_from": "pixels above the text box (world region)"}
         if repeats := self.stuck.repeated_actions():
             ctx["repeated_actions"] = repeats
         if self.stuck.same_tile_streak >= 2:
             ctx["cycles_on_this_tile"] = self.stuck.same_tile_streak
         return ctx
 
-    def _disengage_proposal(
-        self, task: Any, *, obs: PlayerObservation, tier: int
-    ) -> ActionProposal:
+    def _disengage_proposal(self, task: Any, *, obs: PlayerObservation, tier: int) -> ActionProposal:
         """Leave the tile toward the beat heading. One step, not a random circle."""
         stuck = self.stuck
         target, _, _ = self._objective(obs)
-        recovery_heading = (
-            target.get("dir") if target and target.get("kind") == "edge" else self._beat_heading
-        )
-        step = next_tile(
-            heading=recovery_heading, grid=obs.collision_ascii, blocked=set(stuck.blocked_on_tile)
-        )
+        recovery_heading = target.get("dir") if target and target.get("kind") == "edge" else self._beat_heading
+        step = next_tile(heading=recovery_heading, grid=obs.collision_ascii, blocked=set(stuck.blocked_on_tile))
         if step and step.action:
             actions = [step.action]
         elif step and step.choices:
@@ -1582,9 +1424,7 @@ class RunLoop:
                 "repeated_actions": stuck.repeated_actions(),
             },
         )
-        return ActionProposal(
-            task_id=task.task_id, agent=AgentRole.RECOVERY, reason=reason, actions=actions
-        )
+        return ActionProposal(task_id=task.task_id, agent=AgentRole.RECOVERY, reason=reason, actions=actions)
 
     def _hard_reset_intent(self) -> None:
         """Tier 4: tear the goal down.
@@ -1596,9 +1436,7 @@ class RunLoop:
         dropped = self.objectives.get("primary")
         self.stuck.hard_reset()
         if self._beat_locked:
-            self.env.push_event(
-                "alert", f"Stuck streaks reset. The current beat stays: {dropped or 'unknown'}."
-            )
+            self.env.push_event("alert", f"Stuck streaks reset. The current beat stays: {dropped or 'unknown'}.")
             console.print(f"[red]hard reset of stuck state:[/red] {dropped}")
             self.store.append("intent_reset", {"dropped_primary": None, "beat": dropped})
             return
@@ -1620,15 +1458,40 @@ class RunLoop:
         Returns the beat's walkthrough line for this planner call, or None on
         speech, a battle, or the naming grid (speech is not a new goal).
         """
+        self._objectives_observation = obs
         if not controllable:
             return None
+        from nuzlocke.knowledge.encounters import encounter_objective
+
         window = objective_window(obs)
         beat = current_beat(obs)
+        from nuzlocke.knowledge.items import item_objective
+
+        pickup = item_objective(self, obs, beat)
+        encounter = pickup or encounter_objective(self, obs, beat)
+        if encounter:
+            # The same override supplies the actor's target. Keep it ahead of
+            # the story and remaining milestones in both dashboard and prompts.
+            texts = list(dict.fromkeys([encounter[1], *(window or {}).values(), *self._seed_objectives().values()]))
+            self.objectives = dict(zip(DEFAULT_OBJECTIVES, texts))
+            self._beat_locked = True
+            self._prompt_beat, self._beat_heading = encounter[1], None
+            identity = f"item:{obs.map_id}:{pickup[0]['slot']}" if pickup else f"encounter:{obs.map_id}"
+            if self._beat_id != identity:
+                self._beat_id = identity
+                self.plan = None
+            return encounter[1]
         if window is None or beat is None:
+            from nuzlocke.orchestration.objectives import progression_objectives
+
             if self._beat_locked:
+                self.plan = None
                 self.objectives = self._seed_objectives()
             self._beat_locked = False
             self._beat_id = self._prompt_beat = self._beat_heading = None
+            progression = progression_objectives(obs)
+            if progression:
+                self.objectives = progression
             return None
         self._beat_locked = True
         self.objectives = window
@@ -1636,7 +1499,7 @@ class RunLoop:
         if beat.id != self._beat_id:
             self._beat_id = beat.id
             self.plan = None
-        return beat.hint
+        return "\n\n".join((beat.hint, compose("healing"))) if beat.id.startswith("heal") else beat.hint
 
     def _apply_proposal_meta(self, proposal: ActionProposal) -> None:
         if proposal.objectives is not None and not self._beat_locked:
@@ -1645,9 +1508,7 @@ class RunLoop:
             self.store.append("objectives", self.objectives)
         if proposal.landmarks and self.memory.enabled:
             wrote = [
-                landmark.label
-                for landmark in proposal.landmarks
-                if self.memory.note(f"LANDMARK {landmark.label}: {landmark.note}")
+                landmark.label for landmark in proposal.landmarks if self.memory.note(f"LANDMARK {landmark.label}: {landmark.note}")
             ]
             if wrote:
                 self.env.push_event("reasoning", f"landmarks: {wrote}")
@@ -1668,15 +1529,13 @@ class RunLoop:
             or stuck
         ):
             return
-        recent = "; ".join(
-            f"s{r.get('step')}:{r.get('actions')}→{r.get('outcome')}" for r in self.recent_steps
-        )
+        recent = "; ".join(f"s{r.get('step')}:{r.get('actions')}→{r.get('outcome')}" for r in self.recent_steps)
         source = "\n".join([self.memory.wake(), f"recent: {recent}" if recent else ""]).strip()
         if not source:
             return
         try:
             notes = rollup_memory(self.llm, memory=source)
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001 — optional memory rollup cannot interrupt gameplay
             self.env.push_event("alert", f"memory rollup failed: {err}")
             return
         if not notes:
@@ -1686,51 +1545,19 @@ class RunLoop:
         self.env.push_event("reasoning", f"[memory] rollup wrote {len(notes)} notes")
         self.store.append("memory_rollup", {"steps": steps, "notes": notes})
 
-    def _maybe_checkpoint(self, *, steps: int, in_battle: bool) -> None:
-        if not should_checkpoint(
-            steps=steps,
-            every_steps=self.checkpoint_every_steps,
-            in_battle=in_battle,
-            last_ledger_change_step=self._last_ledger_change_step,
-        ):
-            return
-        try:
-            self.env.save_checkpoint(CHECKPOINT_NAME)
-        except Exception as err:
-            self.env.push_event("alert", f"checkpoint save failed: {err}")
-            return
-        self.store.append("checkpoint", {"steps": steps, "name": CHECKPOINT_NAME})
-        self.env.push_event("reasoning", f"[checkpoint] saved at step {steps}")
-
-    def _save_continue_point(self) -> None:
-        """Write the savestate a later ``--resume`` will load."""
-        if self.checkpoint_every_steps <= 0:
-            return
-        try:
-            if self.env.observe().in_battle:
-                console.print(
-                    "[yellow]In battle, so the last out-of-battle savestate was left as-is.[/yellow]"
-                )
-                return
-            self.env.save_checkpoint(CHECKPOINT_NAME)
-        except Exception as err:
-            console.print(f"[yellow]Could not write the continue savestate: {err}[/yellow]")
-            return
-        self.store.append("checkpoint", {"name": CHECKPOINT_NAME, "reason": "stop"})
-        console.print(
-            "[green]Savestate saved.[/green] Continue from here with:\n"
-            f"  uv run nuzlocke run --resume {self.run_id}"
-        )
-
     def close(self) -> None:
-        self.llm.close()
-        if self.jev is not None:
-            self.jev.close()
-        # A live run leaves pokemon-agent up so the dashboard stays watchable.
-        if self.headless:
-            self.env.shutdown()
-        else:
-            self.env._client.close()
+        try:
+            self.llm.close()
+        finally:
+            try:
+                if self.jev is not None:
+                    self.jev.close()
+            finally:
+                # A live run leaves pokemon-agent up so the dashboard stays watchable.
+                if self.headless:
+                    self.env.shutdown()
+                else:
+                    self.env._client.close()
 
 
 def scripted_smoke(rom_path: Path | None, steps: int = 5) -> dict[str, Any]:
@@ -1742,20 +1569,14 @@ def scripted_smoke(rom_path: Path | None, steps: int = 5) -> dict[str, Any]:
     pa = run_cfg.get("pokemon_agent") or {}
     base_url = f"http://{pa.get('host', '127.0.0.1')}:{int(pa.get('port', 8765))}"
     env = NousRedEnvironment(
-        base_url=base_url,
-        run_dir=run_dir,
-        rom_path=configured_rom(rom_path, run_cfg),
-        auto_start=bool(pa.get("auto_start", True)),
+        base_url=base_url, run_dir=run_dir, rom_path=configured_rom(rom_path, run_cfg), auto_start=bool(pa.get("auto_start", True))
     )
     arbiter = ActionArbiter(env, store, active_owner=AgentRole.OVERWORLD)
     obs = env.observe()
     store.append("observation", obs.model_dump(mode="json"))
     env.push_event("milestone", "Scripted smoke walk")
     proposal = ActionProposal(
-        task_id="task-smoke",
-        agent=AgentRole.OVERWORLD,
-        reason="scripted smoke walk",
-        actions=[GameAction.WALK_UP] * min(steps, 5),
+        task_id="task-smoke", agent=AgentRole.OVERWORLD, reason="scripted smoke walk", actions=[GameAction.WALK_UP] * min(steps, 5)
     )
     result = arbiter.apply(proposal)
     final = env.observe()

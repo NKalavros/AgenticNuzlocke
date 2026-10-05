@@ -39,30 +39,30 @@ def alternatives(obs, *, active_slot=0):
         own_types = types_for_species(mon.get("species", ""))
         if obs.in_battle and any(effectiveness(t, list(own_types)) > 1 for t in enemy_types):
             continue
-        attacks = [
-            move_data().get(m.get("id"), {}) for m in mon.get("moves", []) if m.get("pp", 0) > 0
-        ]
-        attacks = [
-            m
-            for m in attacks
-            if m.get("power", 0) > 1
-            and effectiveness(m.get("type", "Normal"), list(enemy_types)) > 0
-        ]
+        attacks = [move_data().get(m.get("id"), {}) for m in mon.get("moves", []) if m.get("pp", 0) > 0]
+        attacks = [m for m in attacks if m.get("power", 0) > 1 and effectiveness(m.get("type", "Normal"), list(enemy_types)) > 0]
         if not attacks:
             continue
-        strength = max(
-            m["power"] * effectiveness(m.get("type", "Normal"), list(enemy_types)) for m in attacks
-        )
+        strength = max(m["power"] * effectiveness(m.get("type", "Normal"), list(enemy_types)) for m in attacks)
         candidates.append((slot, mon, (strength, hp, mon.get("level", 0))))
     return [(slot, mon) for slot, mon, _ in sorted(candidates, key=lambda p: p[2], reverse=True)]
 
 
-def switch_target(obs):
+def switch_target(obs, *, first_encounter=None):
     from nuzlocke.agents.battle import active_mon
+    from nuzlocke.agents.system3 import RUN_BELOW, has_balls
 
     slot = (obs.active_party_slot or 0) if obs.in_battle else 0
     mon = active_mon(obs) if obs.in_battle else (obs.party or [{}])[0]
-    if not reserved(obs, mon) and eligible(mon):
+    capture_rescue = (
+        obs.in_battle
+        and (obs.battle or {}).get("type") == "wild"
+        and (obs.policy.get("first_encounter") if first_encounter is None else first_encounter)
+        and not obs.policy.get("duplicate_encounter")
+        and has_balls(obs)
+        and mon.get("hp", 0) / (mon.get("max_hp") or 1) < RUN_BELOW
+    )
+    if not capture_rescue and not reserved(obs, mon) and eligible(mon):
         return None
     choices = alternatives(obs, active_slot=slot)
     if choices:
@@ -89,10 +89,7 @@ def switch_order(obs, desired=""):
         key=lambda pair: (
             pair[0] != target if target is not None else False,
             pair[0] not in safe if safe else False,
-            not any(
-                str(pair[1].get(k, "")).upper() == desired.upper()
-                for k in ("species", "nickname", "capture_id")
-            ),
+            not any(str(pair[1].get(k, "")).upper() == desired.upper() for k in ("species", "nickname", "capture_id")),
             -(pair[1].get("hp", 0) / (pair[1].get("max_hp") or 1)),
         ),
     )

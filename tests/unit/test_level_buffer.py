@@ -1,4 +1,7 @@
 import json
+from pathlib import Path
+
+import pytest
 
 from nuzlocke.agents.lead_rotation import LeadRotation
 from nuzlocke.agents.level_buffer import preparation_limit, reserved, switch_target
@@ -89,6 +92,57 @@ def test_catching_and_fleeing_take_priority_over_optional_buffer_switch():
     assert forced_battle_choice(obs) == "run"
 
 
+def capture_rescue_battle():
+    obs = battle()
+    obs.battle = {"type": "wild", "enemy": {"species": "Mankey", "level": 16}}
+    obs.party[0].update(level=19, hp=10)
+    obs.bag = [{"item": "Poke Ball", "quantity": 7}]
+    obs.policy.update(first_encounter=True, avoid_wild_grinding=True)
+    return obs
+
+
+def test_low_hp_capture_switch_agrees_with_party_policy_then_throws_ball():
+    from nuzlocke.agents.level_buffer import switch_order
+
+    obs = capture_rescue_battle()
+    assert forced_battle_choice(obs, first_encounter=True) == "pkmn"
+    assert switch_target(obs) == 1
+    assert switch_order(obs)[0][0] == 1
+    obs.screen_rows = party_rows(obs.party, 0)
+    assert decision(obs, first_encounter=True).required == "party_1"
+    assert decision(obs, first_encounter=True).validate([A.WALK_DOWN, A.PRESS_A]) is None
+    obs.active_party_slot = 1
+    assert forced_battle_choice(obs, first_encounter=True) == "item"
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"hp": 20},
+        {"status": "PSN"},
+        {"dead": True},
+        {"ineligible": True},
+        {"level": 20},
+        {"species": "Raticate"},
+        {"moves": []},
+    ],
+)
+def test_capture_rescue_flees_without_suitable_alternative(updates):
+    obs = capture_rescue_battle()
+    obs.party[1].update(updates)
+    assert forced_battle_choice(obs, first_encounter=True) == "run"
+
+
+def test_capture_rescue_does_not_delay_other_wild_flees():
+    obs = capture_rescue_battle()
+    assert forced_battle_choice(obs, first_encounter=False) == "run"
+    obs.policy["duplicate_encounter"] = True
+    assert forced_battle_choice(obs, first_encounter=True) == "run"
+    obs.policy["duplicate_encounter"] = False
+    obs.bag = []
+    assert forced_battle_choice(obs, first_encounter=True) == "run"
+
+
 def party_rows(party, cursor, question="Choose a POKéMON."):
     rows = [" " * 20 for _ in range(18)]
     for i, m in enumerate(party):
@@ -148,3 +202,80 @@ def test_trainer_interrupt_discards_stale_overworld_rotation_target():
     obs.in_battle = False
     obs.party[1]["hp"] = 1
     assert rotation.turn(obs)[0] == []
+
+
+def nidoran_party():
+    return O.model_validate(
+        json.loads((Path(__file__).parents[1] / "fixtures/nidoran_party_rotation.json").read_text())
+    )
+
+
+def test_nidoran_glyph_mismatch_recognizes_fifth_party_slot_and_resumes_timeout():
+    from nuzlocke.agents.battle import party_cursor
+
+    obs = nidoran_party()
+    assert obs.party[4]["nickname"] == "NIDORAN?"
+    assert party_cursor(obs) == 4
+    rotation = LeadRotation()
+    rotation.restore(
+        {
+            "target": "capture-0005",
+            "old_lead": "capture-0001",
+            "species": "Nidoran♂",
+            "verified": False,
+            "cycles": 40,
+        }
+    )
+    actions, _ = rotation.turn(obs)
+    assert actions == [A.PRESS_A]
+    obs.policy["rotation_actions"] = [a.value for a in rotation.actions(obs)]
+    assert decision(obs).validate(actions) is None
+    assert rotation.pending["cycles"] == 1
+
+
+def test_same_party_screen_still_pauses_after_40_cycles_without_progress():
+    from nuzlocke.agents.lead_rotation import LeadRotationError
+
+    obs = nidoran_party()
+    rotation = LeadRotation()
+    rotation.restore({"target": "capture-0005", "species": "Nidoran♂", "verified": False})
+    for _ in range(40):
+        assert rotation.turn(obs)[0] == [A.PRESS_A]
+    restored = LeadRotation()
+    restored.restore(json.loads(json.dumps(rotation.snapshot())))
+    with pytest.raises(LeadRotationError, match="no menu progress"):
+        restored.turn(obs)
+
+
+def test_unreadable_party_menu_does_not_reset_restored_timeout():
+    from nuzlocke.agents.lead_rotation import LeadRotationError
+
+    obs = nidoran_party()
+    obs.screen_rows[8] = "  DIFFERENT  12"
+    rotation = LeadRotation()
+    rotation.restore(
+        {"target": "capture-0005", "species": "Nidoran♂", "verified": False, "cycles": 40}
+    )
+    with pytest.raises(LeadRotationError, match="no menu progress"):
+        rotation.turn(obs)
+
+
+def test_rotation_failure_is_reported_as_controller_error():
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from nuzlocke.agents.lead_rotation import LeadRotationError
+    from nuzlocke.orchestration.loop import RunLoop
+    from nuzlocke.state.models import AgentRole, ControlState
+
+    loop = RunLoop.__new__(RunLoop)
+    loop.jev = None
+    loop.env = MagicMock()
+    loop.store = MagicMock()
+    loop.arbiter = MagicMock()
+    task = SimpleNamespace(task_id="t", owner=AgentRole.OVERWORLD)
+    loop._fallback_proposal(task, LeadRotationError("No menu progress"))
+    loop.env.set_control.assert_called_once_with(ControlState.PAUSED)
+    assert loop.store.append.call_args.args[0] == "controller_error"
+    assert "Party-menu controller" in loop.env.push_event.call_args.args[1]
+    assert "Planning unavailable" not in loop.env.push_event.call_args.args[1]

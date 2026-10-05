@@ -1,0 +1,67 @@
+[
+  [
+    "mart",
+    {
+      "id": "leave_mart",
+      "text": "Take the parcel out of the Mart, back toward Pallet Town.",
+      "hint": "The exit mat is at the bottom of the Mart.",
+      "heading": "down",
+      "target": {
+        "kind": "warp",
+        "dest_map": 255
+      }
+    }
+  ],
+  [
+    "viridian city",
+    {
+      "id": "parcel_south",
+      "text": "Carry Oak's Parcel south to Pallet Town.",
+      "hint": "Viridian City's south exit leads to Route 1, which leads south to Pallet Town.",
+      "heading": "down",
+      "target": {
+        "kind": "edge",
+        "dir": "down"
+      }
+    }
+  ],
+  [
+    "route 1",
+    {
+      "id": "parcel_south",
+      "text": "Carry Oak's Parcel south to Pallet Town.",
+      "hint": "Viridian City's south exit leads to Route 1, which leads south to Pallet Town.",
+      "heading": "down",
+      "target": {
+        "kind": "edge",
+        "dir": "down"
+      }
+    }
+  ],
+  [
+    "pallet",
+    {
+      "id": "parcel_lab",
+      "text": "Enter Oak's Lab with the parcel.",
+      "hint": "Oak's Lab is the large building in the south of Pallet Town.",
+      "heading": null,
+      "target": {
+        "kind": "warp",
+        "dest_map": 40
+      }
+    }
+  ],
+  [
+    "lab",
+    {
+      "id": "deliver_parcel",
+      "text": "Talk to Prof. Oak to hand over the parcel.",
+      "hint": "Oak stands at the top of the lab. Face him and press A.",
+      "heading": null,
+      "target": {
+        "kind": "npc",
+        "picture": 3
+      }
+    }
+  ]
+]

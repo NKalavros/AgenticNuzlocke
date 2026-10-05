@@ -1,0 +1,10 @@
+{
+  "id": "heal_mom",
+  "text": "Heal: talk to Mom in Red's House.",
+  "hint": "Mom sits at the table; talking to her heals the party.",
+  "heading": null,
+  "target": {
+    "kind": "npc",
+    "picture": 51
+  }
+}

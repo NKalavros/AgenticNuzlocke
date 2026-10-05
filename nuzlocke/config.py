@@ -16,7 +16,7 @@ def load_yaml(path: Path) -> dict[str, Any]:
     with path.open(encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
     if not isinstance(data, dict):
-        raise ValueError(f"Expected mapping in {path}")
+        raise ValueError(f"Expected mapping in {path}")  # noqa: TRY004 — CLI configuration error
     return data
 
 
@@ -110,8 +110,7 @@ def load_run_config(path: Path | None = None) -> dict[str, Any]:
         cfg["rom_path"] = str(Path(rom).expanduser().resolve())
     # NUZLOCKE_ACTION_INTERVAL_S is an older name for the same setting.
     raw_interval = (
-        os.environ.get("NUZLOCKE_PROMPT_INTERVAL_S", "").strip()
-        or os.environ.get("NUZLOCKE_ACTION_INTERVAL_S", "").strip()
+        os.environ.get("NUZLOCKE_PROMPT_INTERVAL_S", "").strip() or os.environ.get("NUZLOCKE_ACTION_INTERVAL_S", "").strip()
     )
     if raw_interval:
         cfg["prompt_interval_s"] = float(raw_interval)

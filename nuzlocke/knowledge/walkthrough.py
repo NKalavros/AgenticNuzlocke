@@ -1,72 +1,112 @@
-"""Load Pokemon Red walkthrough excerpts for stuck recovery."""
+"""Load stage-aware progression guidance and excerpts for stuck recovery."""
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
 from nuzlocke.config import project_root
-
-_SECTION_RE = re.compile(r"^## (.+)$", re.MULTILINE)
-
-# (keywords in the context, section title substring to pull in)
-_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
-    (("name", "keyboard", "letter", "rival name", "your name", "title", "new game"), "title"),
-    (("2f", "bedroom", "stairs"), "2f"),
-    (("1f", "mom", "living", "door mat", "doormat"), "1f"),
-    (("lab", "starter", "poké ball", "poke ball", "ball table", "aide"), "lab"),
-    (("pallet", "fence", "post"), "pallet"),
-    (("parcel", "pokedex", "pokédex", "mart", "aide"), "after starter"),
-    (("route 1", "viridian forest", "forest", "ledge", "viridian"), "route 1"),
-    (("pewter", "brock"), "pewter"),
-    (("route 3", "route 4", "moon", "cerulean", "misty", "route 24", "route 25"), "route 3 / mt. moon"),
-    (("stuck", "noop", "oscillat", "bounce", "loop"), "stuck"),
-)
 
 
 def skill_dir() -> Path:
     return project_root() / ".cursor" / "skills" / "pokemon-red-walkthrough"
 
 
-def load_full_walkthrough() -> str:
-    path = skill_dir() / "reference.md"
-    return path.read_text(encoding="utf-8") if path.is_file() else ""
+def _manifest(root=None):
+    return json.loads(((root or skill_dir()) / "manifest.json").read_text(encoding="utf-8"))
 
 
-def _split_sections(full: str) -> list[tuple[str, str]]:
-    parts = _SECTION_RE.split(full)[1:]
-    return [(title.strip(), body.strip()) for title, body in zip(parts[::2], parts[1::2])]
+def compose(*sections: str, root: Path | None = None, max_chars: int | None = None) -> str:
+    """Expand named bundles in order, reject cycles, and read each fragment once."""
+    if max_chars is not None and max_chars < 0:
+        raise ValueError("max_chars must be nonnegative")
+    root = (root or skill_dir()).resolve()
+    manifest, seen, chunks = _manifest(root), set(), []
 
+    def add(name, stack=()):
+        if name in stack:
+            raise ValueError(f"Walkthrough include cycle: {' -> '.join((*stack, name))}")
+        if name in seen:
+            return
+        if name in manifest["bundles"]:
+            for child in manifest["bundles"][name]:
+                add(child, (*stack, name))
+        else:
+            path = (root / manifest["fragments"][name]).resolve()
+            if not path.is_relative_to(root):
+                raise ValueError(f"Walkthrough fragment escapes its root: {name}")
+            chunks.append(path.read_text(encoding="utf-8").strip())
+        seen.add(name)
 
-def excerpt_for_context(
-    *,
-    map_name: str | None = None,
-    reason: str | None = None,
-    memory: str | None = None,
-    max_chars: int = 1800,
-) -> str:
-    """Pick the most relevant walkthrough section(s) for the current jam."""
-    full = load_full_walkthrough()
-    if not full:
-        return ""
-    hay = " ".join(x for x in (map_name, reason, memory) if x).lower()
-    sections = _split_sections(full)
-    picked: dict[str, str] = {}
-
-    def add_matching(substr: str) -> None:
-        for title, body in sections:
-            if substr in title.lower():
-                picked.setdefault(title, body)
-
-    for keys, substr in _RULES:
-        if any(k in hay for k in keys):
-            add_matching(substr)
-    # Only the generic stuck cheatsheet as a fallback: the early-game sections are
-    # location-specific and actively misleading once a run is past them.
-    if not any("stuck" in title.lower() for title in picked):
-        add_matching("stuck")
-
-    text = "\n\n".join(f"## {title}\n{body}" for title, body in picked.items()).strip()
-    if len(text) > max_chars:
-        text = text[: max_chars - 20].rstrip() + "\n…(truncated)"
+    for section in sections:
+        add(section)
+    text = "\n\n".join(chunks)
+    if max_chars is not None and len(text) > max_chars:
+        suffix = "\n…(truncated)"
+        text = text[: max(0, max_chars - len(suffix))].rstrip() + suffix[:max_chars]
     return text
+
+
+def load_full_walkthrough() -> str:
+    return compose("all")
+
+
+def surge_stage(obs) -> str | None:
+    """Shared observed prerequisite for planner guidance and displayed objectives."""
+    if obs is None or "Cascade" not in obs.badges or "Thunder" in obs.badges:
+        return None
+
+    def normalized(value):
+        return re.sub(r"[^A-Z0-9]", "", str(value).upper())
+
+    held = [item for item in obs.bag if item.get("quantity", 0) > 0]
+    ticket = any(item.get("id") == 63 or normalized(item.get("item")) == "SSTICKET" for item in held)
+    hm = any(item.get("id") == 196 or normalized(item.get("item")) == "HM01" for item in held)
+    cut = any(
+        normalized(move.get("name")) == "CUT"
+        for mon in obs.party
+        if not mon.get("dead") and mon.get("hp", 0) > 0
+        for move in mon.get("moves", [])
+    )
+    if cut:
+        return "gym" if obs.map_id == 92 else "gym_access"
+    return "teach_cut" if hm else "captain" if ticket else "bill"
+
+
+def progression_hint(obs) -> str:
+    """Compose only the current stage; observed prerequisites still control selection."""
+    if obs is None or obs.in_battle:
+        return ""
+    if stage := erika_stage(obs):
+        return f"Post-Thunder progression — next stage: {stage}.\n\n{compose('erika.' + stage)}"
+    if stage := surge_stage(obs):
+        key = "surge." + stage
+        return f"Post-Cascade progression — next unmet prerequisite: {_manifest()['stage_hints'][key]}\n\n{compose(key)}"
+    return ""
+
+
+def erika_stage(obs) -> str | None:
+    """Location-based travel stage; only the observed Rainbow Badge completes it."""
+    if obs is None or "Thunder" not in obs.badges or "Rainbow" in obs.badges:
+        return None
+    if obs.map_id == 134:
+        return "gym"
+    if obs.map_id == 6 or obs.map_id in range(122, 141):
+        return "celadon"
+    if obs.map_id in {4, 18, 19, 77, 78, 80, 121, 141}:
+        return "underground_west"
+    if obs.map_id == 21 and (obs.y or 0) >= 36:
+        return "lavender"
+    if obs.map_id in {82, 232}:
+        return "rock_tunnel"
+    if obs.map_id in {3, 20, 21, 64, 81}:
+        return "route9"
+    return "return_cerulean"
+
+
+def excerpt_for_context(*, map_name=None, reason=None, memory=None, max_chars=1800) -> str:
+    """Select reusable sections for the current location and recovery reason."""
+    hay = " ".join(value for value in (map_name, reason, memory) if value).lower()
+    selected = [name for rule in _manifest()["matches"] if any(key in hay for key in rule["keywords"]) for name in rule["include"]]
+    return compose(*selected, "stuck", max_chars=max_chars)

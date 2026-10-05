@@ -13,6 +13,8 @@ from __future__ import annotations
 import sys
 from typing import Any
 
+from nuzlocke.assets import data as asset_data
+
 W_Y_COORD = 0xD361
 W_X_COORD = 0xD362
 W_CUR_MAP = 0xD35E
@@ -21,6 +23,7 @@ W_WARP_ENTRIES = 0xD3AF  # y, x, destination warp, destination map
 W_NUM_SIGNS = 0xD4B0
 W_SIGN_COORDS = 0xD4B1  # y, x
 W_NUM_SPRITES = 0xD4E1
+W_MAP_SPRITE_EXTRA_DATA = 0xD504  # slot-1 pairs: item ID/0, trainer class/team, or 0/0
 W_SPRITE_STATE_DATA_1 = 0xC100  # +0 picture id, +2 image index (0xFF: off screen)
 W_SPRITE_STATE_DATA_2 = 0xC200  # +4 map y + 4, +5 map x + 4
 W_CUR_MAP_HEIGHT = 0xD368  # in 2x2-tile blocks
@@ -38,6 +41,8 @@ W_ENEMY_MON = 0xCFE5  # +0 species, +1 HP (2, big-endian)
 W_ENEMY_MON_LEVEL = 0xCFF3
 W_ENEMY_MON_MAX_HP = 0xCFF4
 W_TILE_MAP = 0xC3A0  # the 20x18 background tiles on screen
+W_TOGGLEABLE_OBJECT_FLAGS = 0xD5A6  # 32 bytes, set bit means hidden
+W_TOGGLEABLE_OBJECT_LIST = 0xD5CE  # local sprite slot/global flag index pairs, FF terminator
 # pret/pokered symbols branch, verified against screen/party in sandbox fixtures.
 W_PLAYER_MON_NUMBER = 0xCC2F
 W_BATTLE_MON = 0xD014
@@ -46,19 +51,7 @@ W_OPTIONS = 0xD355
 _SCREEN_W, _SCREEN_H = 20, 18
 # Font tiles pokemon-agent's GEN1_ENCODING leaves out: box borders, the menu
 # cursor, the page arrow, and the é in POKéMON.
-_EXTRA_GLYPHS = {
-    0x79: "┌",
-    0x7A: "─",
-    0x7B: "┐",
-    0x7C: "│",
-    0x7D: "└",
-    0x7E: "┘",
-    0x7F: " ",
-    0xBA: "é",
-    0xEC: "▷",
-    0xED: "▶",
-    0xEE: "▼",
-}
+_EXTRA_GLYPHS = {int(key): value for key, value in asset_data("glyphs.json").items()}
 _MAX_WARPS = 32
 _MAX_SIGNS = 16
 _MAX_SPRITES = 15
@@ -67,11 +60,7 @@ _MAX_SPRITES = 15
 def _glyphs() -> dict[int, str]:
     from pokemon_agent.memory.red import GEN1_ENCODING
 
-    table = {
-        code: char
-        for code, char in GEN1_ENCODING.items()
-        if code >= 0x80 and len(char) == 1 and char != "\n"
-    }
+    table = {code: char for code, char in GEN1_ENCODING.items() if code >= 0x80 and len(char) == 1 and char != "\n"}
     table.update(_EXTRA_GLYPHS)
     return table
 
@@ -84,15 +73,14 @@ def read_screen_rows(emu: Any, glyphs: dict[int, str] | None = None) -> list[str
     """
     table = glyphs if glyphs is not None else _glyphs()
     tiles = emu.read_range(W_TILE_MAP, _SCREEN_W * _SCREEN_H)
-    return [
-        "".join(table.get(tile, " ") for tile in tiles[row * _SCREEN_W : (row + 1) * _SCREEN_W])
-        for row in range(_SCREEN_H)
-    ]
+    return ["".join(table.get(tile, " ") for tile in tiles[row * _SCREEN_W : (row + 1) * _SCREEN_W]) for row in range(_SCREEN_H)]
 
 
 def read_enemy(emu: Any) -> dict[str, Any] | None:
     """The enemy on the field, or None outside battle."""
     from pokemon_agent.memory.red import species_name_from_index
+
+    from nuzlocke.environment.status import decode_status
 
     if not emu.read_u8(W_IS_IN_BATTLE):
         return None
@@ -104,7 +92,24 @@ def read_enemy(emu: Any) -> dict[str, Any] | None:
         "hp": (data[1] << 8) | data[2],
         "max_hp": (emu.read_u8(W_ENEMY_MON_MAX_HP) << 8) | emu.read_u8(W_ENEMY_MON_MAX_HP + 1),
         "level": emu.read_u8(W_ENEMY_MON_LEVEL),
+        "status": decode_status(emu.read_u8(W_ENEMY_MON + 4)),
     }
+
+
+def read_hidden_objects(emu: Any) -> set[int] | None:
+    """Map-local toggle list; visibility alone conflates hidden with off-screen."""
+    hidden, seen = set(), set()
+    for index in range(_MAX_SPRITES + 1):
+        slot = emu.read_u8(W_TOGGLEABLE_OBJECT_LIST + index * 2)
+        if slot == 0xFF:
+            return hidden
+        if not 1 <= slot <= _MAX_SPRITES or slot in seen:
+            return None  # Unknown layout: do not infer absence from unvalidated RAM.
+        seen.add(slot)
+        flag = emu.read_u8(W_TOGGLEABLE_OBJECT_LIST + index * 2 + 1)
+        if emu.read_u8(W_TOGGLEABLE_OBJECT_FLAGS + flag // 8) & (1 << (flag % 8)):
+            hidden.add(slot)
+    return None
 
 
 def read_map_objects(emu: Any) -> dict[str, Any]:
@@ -118,6 +123,7 @@ def read_map_objects(emu: Any) -> dict[str, Any]:
         y, x = emu.read_range(W_SIGN_COORDS + 2 * index, 2)
         signs.append({"x": x, "y": y})
     npcs = []
+    hidden = read_hidden_objects(emu)
     for slot in range(1, min(emu.read_u8(W_NUM_SPRITES), _MAX_SPRITES) + 1):
         picture = emu.read_u8(W_SPRITE_STATE_DATA_1 + 16 * slot)
         if picture == 0:
@@ -125,7 +131,19 @@ def read_map_objects(emu: Any) -> dict[str, Any]:
         on_screen = emu.read_u8(W_SPRITE_STATE_DATA_1 + 16 * slot + 2) != 0xFF
         y = emu.read_u8(W_SPRITE_STATE_DATA_2 + 16 * slot + 4) - 4
         x = emu.read_u8(W_SPRITE_STATE_DATA_2 + 16 * slot + 5) - 4
-        npcs.append({"slot": slot, "picture": picture, "x": x, "y": y, "on_screen": on_screen})
+        npc = {"slot": slot, "picture": picture, "x": x, "y": y, "on_screen": on_screen}
+        # LoadMapHeader clears ordinary objects' extra bytes (including starters).
+        # Only field item balls have a real item ID and zero second byte.
+        # Source: pret/pokered home/overworld.asm, .itemBallSprite/.regularSprite.
+        item_id, extra = emu.read_range(W_MAP_SPRITE_EXTRA_DATA + 2 * (slot - 1), 2)
+        if picture == 74 and item_id and not extra:
+            from pokemon_agent.memory.red import ITEM_NAMES
+
+            if item_id in ITEM_NAMES and "?" not in ITEM_NAMES[item_id]:
+                npc.update(item_id=item_id, item_name=ITEM_NAMES[item_id])
+        if hidden is not None:
+            npc["hidden"] = slot in hidden
+        npcs.append(npc)
     return {
         "map_id": emu.read_u8(W_CUR_MAP),
         "player": {"x": emu.read_u8(W_X_COORD), "y": emu.read_u8(W_Y_COORD)},
@@ -133,9 +151,7 @@ def read_map_objects(emu: Any) -> dict[str, Any]:
         "signs": signs,
         "npcs": npcs,
         "size": {"w": 2 * emu.read_u8(W_CUR_MAP_WIDTH), "h": 2 * emu.read_u8(W_CUR_MAP_HEIGHT)},
-        "connections": [
-            side for side, bit in _CONNECTION_BITS.items() if emu.read_u8(W_MAP_CONNECTIONS) & bit
-        ],
+        "connections": [side for side, bit in _CONNECTION_BITS.items() if emu.read_u8(W_MAP_CONNECTIONS) & bit],
         "input": {
             "status5": emu.read_u8(W_STATUS_FLAGS_5),
             "joy_ignore": emu.read_u8(W_JOY_IGNORE),
@@ -195,9 +211,7 @@ def read_wild_species(emu: Any) -> list[str]:
         return []
     slots = list(emu.read_range(0xD888, 20))
     names = [species_name_from_index(slots[i]) for i in range(1, 20, 2)]
-    if any(not 1 <= slots[i] <= 100 for i in range(0, 20, 2)) or any(
-        not n or "?" in n or n.lower() == "unknown" for n in names
-    ):
+    if any(not 1 <= slots[i] <= 100 for i in range(0, 20, 2)) or any(not n or "?" in n or n.lower() == "unknown" for n in names):
         return []
     return sorted(set(names))
 
@@ -220,6 +234,8 @@ def read_grass(emu: Any) -> list[dict[str, int]]:
 def read_active(emu: Any) -> dict[str, Any]:
     from pokemon_agent.memory.red import MOVE_NAMES, species_name_from_index
 
+    from nuzlocke.environment.status import decode_status
+
     if emu.read_u8(W_IS_IN_BATTLE) not in (1, 2):
         return {}
     d = emu.read_range(W_BATTLE_MON, 29)
@@ -228,11 +244,9 @@ def read_active(emu: Any) -> dict[str, Any]:
         "hp": (d[1] << 8) | d[2],
         "max_hp": (d[15] << 8) | d[16],
         "level": d[14],
-        "status": "PSN" if d[4] & 8 else ("OK" if d[4] == 0 else "STATUS"),
+        "status": decode_status(d[4]),
         "moves": [
-            {"id": d[8 + i], "name": MOVE_NAMES.get(d[8 + i], "UNKNOWN"), "pp": d[25 + i] & 63}
-            for i in range(4)
-            if d[8 + i]
+            {"id": d[8 + i], "name": MOVE_NAMES.get(d[8 + i], "UNKNOWN"), "pp": d[25 + i] & 63} for i in range(4) if d[8 + i]
         ],
     }
 
@@ -262,19 +276,18 @@ def _mount() -> None:
     @server.app.middleware("http")
     async def serialized_emulator(request, call_next):
         path = request.url.path
+        if path == "/dashboard/app.js" and request.method == "GET":
+            from fastapi.responses import Response
+
+            from nuzlocke.environment.dashboard import field_log_script
+
+            return Response(field_log_script(), media_type="application/javascript", headers={"Cache-Control": "no-store"})
         mutation = request.method == "POST" and (
             path in {"/action", "/load", "/nuzlocke/prepare", "/nuzlocke/navigation", "/games/new"}
             or (path.startswith("/games/") and path.endswith("/load"))
         )
-        if (
-            writer
-            and mutation
-            and not secrets.compare_digest(request.headers.get("X-Nuzlocke-Writer", ""), writer)
-        ):
-            return JSONResponse(
-                status_code=409,
-                content={"detail": "This emulator is owned by the Nuzlocke controller"},
-            )
+        if writer and mutation and not secrets.compare_digest(request.headers.get("X-Nuzlocke-Writer", ""), writer):
+            return JSONResponse(status_code=409, content={"detail": "This emulator is owned by the Nuzlocke controller"})
         if (
             request.url.path
             in {
@@ -296,6 +309,16 @@ def _mount() -> None:
         return await call_next(request)
 
     navigation = {"status": "Waiting for the controller"}
+
+    upstream_state = server._get_state_dict
+
+    def state_with_capture_count():
+        state = upstream_state()
+        state["nuzlocke"] = {"caught": navigation.get("capture_count")}
+        return state
+
+    # Both HTTP state reads and the Field Log's WebSocket use this function.
+    server._get_state_dict = state_with_capture_count
 
     @server.app.post("/nuzlocke/navigation")
     async def publish_navigation(payload: dict):
@@ -370,13 +393,9 @@ def prepare_items(reader: Any, request: dict) -> dict:
         or not 1 <= target <= cap
         or (emu.read_u8(W_CUR_MAP) not in {40, 41, 58, 64, 68} and not at_leader)
     ):
-        raise ValueError(
-            f"candy grants require a Center or unbeaten leader position and a target at or below {cap}"
-        )
+        raise ValueError(f"candy grants require a Center or unbeaten leader position and a target at or below {cap}")
     party = reader.read_party()
-    if emu.read_u8(W_CUR_MAP) == 40 and (
-        target > 8 or len(party) != 1 or party[0].get("species") != "Bulbasaur"
-    ):
+    if emu.read_u8(W_CUR_MAP) == 40 and (target > 8 or len(party) != 1 or party[0].get("species") != "Bulbasaur"):
         raise ValueError("lab preparation is limited to a lone Bulbasaur through level 8")
     if not party or any(m["hp"] != m["max_hp"] or m["status"] != "OK" for m in party):
         raise ValueError("heal the whole party before preparing")

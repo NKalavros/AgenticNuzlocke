@@ -1,0 +1,12 @@
+{
+  "id": "heal_nurse",
+  "text": "Heal: talk to the nurse at the counter and answer YES.",
+  "hint": "Stand below the counter in front of the nurse, face up, press A, then YES.",
+  "heading": null,
+  "target": {
+    "kind": "face",
+    "x": 3,
+    "y": 3,
+    "dir": "up"
+  }
+}

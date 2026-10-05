@@ -1,0 +1,18 @@
+{
+  "plan_stale": {
+    "type": "noul",
+    "instructions": "Recent outcomes show this plan is no longer the right thing to follow.",
+    "criteria": {
+      "true": "The plan no longer matches what is happening",
+      "false": "The plan still fits the recent outcomes"
+    }
+  },
+  "objective_done": {
+    "type": "noul",
+    "instructions": "The plan's objective is already complete.",
+    "criteria": {
+      "true": "The goal in the plan has already been achieved",
+      "false": "The goal is still ahead"
+    }
+  }
+}

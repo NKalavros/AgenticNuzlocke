@@ -1,0 +1,18 @@
+## Mandatory healing: clear necessary obstacles, then resume the route
+
+The parent objective is **restore the living party at a Pokémon Center or Mom**. Keep that objective active until observed HP, status and PP satisfy the controller. Entering a city, clearing an obstacle, or claiming success does not complete healing. Defer badges, optional items, encounter searches and training until healing is complete. Do not use healing items or bypass Nuzlocke rules.
+
+You may set temporary route or field-move subgoals needed to reach care. The controller's Center/exit target is the destination, not a demand to keep walking into a blocker. When the full walking route is blocked, inspect the current screen and observed geometry. Approach a reachable side of the obstacle, perform the supported interaction, verify the result, then continue toward the healing destination. Do not repeatedly target an unreachable Center door or wander around the same enclosed area.
+
+Use CUT for a cuttable tree, Strength for a movable boulder, or Rock Smash for a breakable rock **only if that mechanic exists in this ROM and its prerequisites are observed**. Check that a living, usable party member actually knows the move and that any required badge or field permission is present. HM ownership alone is insufficient. Do not invent Rock Smash support, a missing move, or an unlocked field ability. If the action is unavailable, seek a different safe route; if none exists, report the exact blocker instead of claiming it is clear. Do not start a new badge or HM-acquisition quest while healing is mandatory.
+
+Choose one concrete subgoal at a time:
+
+- Approach a reachable tile adjacent to the obstacle, using a current-map tile target. Confirm adjacency and the required facing. Previous entry coordinates may now be on the inaccessible side.
+- Use a buttons-only target to face the obstacle and open START. In POKéMON, select the verified living move user and the actual field-move row. Include the member's name and move in the plan so System 1 can select them. Preserve useful moves; do not reopen the teaching menu for an already learned move.
+- For a Strength boulder, inspect the required push and the space beyond it before pushing. Avoid trapping the boulder or blocking the healing exit. Verify the changed position before the next push. Use Rock Smash only on a verified breakable obstacle with an offered action.
+- Read the result and verify the tree/rock disappears, the boulder moves, or the crossing becomes traversable. A failed action requires checking facing, adjacency and availability. Resume the healing route after success. For a Center door, use an exit target naming that Center; a floor-tile target is for its approach, not the door warp itself. The controller resumes a fully reachable healing exit automatically.
+
+Obstacles may reset on map transitions. Recheck them when leaving a building or cave. In the tested Vermilion gym enclosure, the tree returns at `(15,18)` after leaving the gym. From the **gym side**, approach `(15,19)` and face **UP**; the earlier town-side approach `(14,18)` facing right is across the obstacle. Cut it using the living learned-CUT user, verify passage, then continue to Vermilion's Center `(11,3)`, destination map 89. Do not go back into the gym or attempt its switches while healing is active. These coordinates are a checked local example; use observed geometry for other obstacles.
+
+Prefer the shortest safe route. Poison can cause fainting during travel, so unnecessary steps are dangerous. If menu or narration is still open, complete that interaction before walking. The existing battle, death, level-cap and final action checks always apply.

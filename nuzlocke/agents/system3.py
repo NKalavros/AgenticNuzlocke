@@ -4,7 +4,8 @@ Battle items are limited to Poké Balls; audited preparation candies are allowed
 one Charmander that walked through grass at 3/23 and 1/29 HP and chose FIGHT there, and never
 caught anything. The rules:
 
-- Below 25% HP in a wild battle, RUN is pressed without asking Jev.
+- Below 25% HP in a wild battle, switch to a suitable healthy teammate for a legal catch,
+  otherwise RUN without asking Jev.
 - Below 50% HP, poisoned, or with anyone fainted, outside battle, the objective is healing: the
   nearest Pokémon Center and its nurse, or Mom in Red's House before the first Center.
 - The first wild encounter in each area (once the player has Poké Balls) gets a Poké Ball;
@@ -15,32 +16,18 @@ A wipe is detected in ``orchestration.ledger`` and ends the run.
 
 from __future__ import annotations
 
+from nuzlocke.assets import data
 from nuzlocke.knowledge import beats, trainers
 from nuzlocke.knowledge.beats import Beat
 from nuzlocke.state.models import PlayerObservation
 
-_RULES = (
-    "Nuzlocke: only capture balls (Poké, Great, Ultra) in battle; audited Rare Candies for preparation outside battle; "
-    "SET battle style; a fainted POKéMON is permanently dead; the first eligible wild encounter "
-    "in each area is the only one that may be caught; never let the party wipe."
-)
 RUN_BELOW = 0.25
 HEAL_BELOW = 0.5
 # Map ids are pokered's (environment.maps).
 POKECENTERS = {41, 58, 64, 68}
+HEALING_CENTERS = POKECENTERS | {81, 89, 133, 141}
 # pokered's Pokémon Center: the nurse at (3,1) behind the counter, answered from (3,3) facing up.
-_NURSE = Beat(
-    id="heal_nurse",
-    text="Heal: talk to the nurse at the counter and answer YES.",
-    hint="Stand below the counter in front of the nurse, face up, press A, then YES.",
-    target={"kind": "face", "x": 3, "y": 3, "dir": "up"},
-)
-_MOM = Beat(
-    id="heal_mom",
-    text="Heal: talk to Mom in Red's House.",
-    hint="Mom sits at the table; talking to her heals the party.",
-    target={"kind": "npc", "picture": 51},
-)
+_NURSE = Beat(**data("walkthrough/nurse.json"))
 
 
 def _toward(beat_id: str, text: str, target: dict) -> Beat:
@@ -48,21 +35,9 @@ def _toward(beat_id: str, text: str, target: dict) -> Beat:
 
 
 # Where to go to heal from each early map.
-_ROUTE: dict[int, Beat] = {
-    0: _toward("heal_pallet", "go home to Mom.", {"kind": "warp", "dest_map": 37}),
-    37: _MOM,
-    12: _toward(
-        "heal_route1", "go north to Viridian's Pokémon Center.", {"kind": "edge", "dir": "up"}
-    ),
-    1: _toward("heal_viridian", "enter the Pokémon Center.", {"kind": "warp", "dest_map": 41}),
-    50: _toward(
-        "heal_gate_s", "leave the gate south toward Viridian.", {"kind": "warp", "dest_map": 255}
-    ),
-    47: _toward(
-        "heal_gate_n", "leave the gate north toward Pewter.", {"kind": "warp", "dest_map": 255}
-    ),
-    2: _toward("heal_pewter", "enter the Pokémon Center.", {"kind": "warp", "dest_map": 58}),
-}
+_ROUTE = {int(key): Beat(**row) for key, row in data("walkthrough/healing_routes.json").items()}
+
+_UNKNOWN_HEAL = Beat(**data("walkthrough/unknown_heal.json"))
 
 
 def lead_fraction(obs: PlayerObservation) -> float | None:
@@ -96,7 +71,7 @@ def needs_heal(obs: PlayerObservation) -> bool:
 
 
 def heal_beat(obs: PlayerObservation) -> Beat | None:
-    """Where healing is from here, or None when healthy or no route is known."""
+    """Keep healing mandatory even when the director must find the route."""
     living = [m for m in obs.party if not m.get("dead")]
     target = obs.policy.get("preparation_target", 12 if obs.map_id == 41 else 14)
     preparing = any((m.get("level") or 14) < target for m in living)
@@ -112,73 +87,29 @@ def heal_beat(obs: PlayerObservation) -> Beat | None:
         preparation_heal |= any(
             m.get("hp") != m.get("max_hp")
             or m.get("status", "OK") != "OK"
-            or any(
-                move.get("pp", 0) < move.get("observed_max_pp", 0) for move in m.get("moves", [])
-            )
+            or any(move.get("pp", 0) < move.get("observed_max_pp", 0) for move in m.get("moves", []))
             for m in living
         )
-    if (not needs_heal(obs) and not preparation_heal) or obs.map_id is None:
+    if not needs_heal(obs) and not preparation_heal:
         return None
-    if obs.map_id in POKECENTERS:
+    if obs.map_id in HEALING_CENTERS:
         return _NURSE
     if obs.map_id == 13:  # Route 2: the north section past the forest is nearer Pewter
         up = obs.y is not None and obs.y < 12
-        return _toward(
-            "heal_route2",
-            "head for the nearest Pokémon Center.",
-            {"kind": "edge", "dir": "up" if up else "down"},
-        )
+        return _toward("heal_route2", "head for the nearest Pokémon Center.", {"kind": "edge", "dir": "up" if up else "down"})
     if obs.map_id == 51:  # Viridian Forest: whichever gate is nearer
         north = obs.y is not None and obs.y < 24
         gate = 47 if north else 50
-        return _toward(
-            "heal_forest",
-            "leave the forest by the nearer gate.",
-            {"kind": "warp", "dest_map": gate},
-        )
-    if obs.map_id in {38, 39, 40, 42, 54, 56, 65, 67}:
-        return _toward(
-            "heal_exit", "leave this building for healing.", {"kind": "warp", "dest_map": 255}
-        )
-    if obs.map_id == 33:
-        return _toward("heal_route22", "return east to Viridian.", {"kind": "edge", "dir": "right"})
-    if obs.map_id == 14:
-        return _toward("heal_route3", "return west to Pewter.", {"kind": "edge", "dir": "left"})
+        return _toward("heal_forest", "leave the forest by the nearer gate.", {"kind": "warp", "dest_map": gate})
     if obs.map_id == 15:
         from nuzlocke.knowledge.map_reference import route4_east
 
-        target = (
-            {"kind": "warp", "dest_map": 68}
-            if not route4_east(obs)
-            else {"kind": "edge", "dir": "right"}
-        )
+        target = {"kind": "warp", "dest_map": 68} if not route4_east(obs) else {"kind": "edge", "dir": "right"}
         return _toward("heal_route4", "reach the nearest Center.", target)
-    if obs.map_id == 59:
-        return _toward(
-            "heal_moon1", "leave Mt. Moon for its Center.", {"kind": "warp", "dest_map": 255}
-        )
     if obs.map_id == 60:
-        target = (
-            {"kind": "warp", "dest_map": 255}
-            if (obs.y or 0) < 6 and (obs.x or 0) > 20
-            else {"kind": "warp", "dest_map": 59}
-        )
+        target = {"kind": "warp", "dest_map": 255} if (obs.y or 0) < 6 and (obs.x or 0) > 20 else {"kind": "warp", "dest_map": 59}
         return _toward("heal_moon_b1", "return to a Center via the nearest surface exit.", target)
-    if obs.map_id == 61:
-        return _toward(
-            "heal_moon_b2", "return upstairs for healing.", {"kind": "warp", "dest_map": 60}
-        )
-    if obs.map_id == 3:
-        return _toward(
-            "heal_cerulean", "enter Cerulean's Center.", {"kind": "warp", "dest_map": 64}
-        )
-    if obs.map_id in {35, 36}:
-        return _toward(
-            "heal_north",
-            "return to Cerulean's Center.",
-            {"kind": "edge", "dir": "down" if obs.map_id == 35 else "left"},
-        )
-    return _ROUTE.get(obs.map_id)
+    return _ROUTE.get(obs.map_id, _UNKNOWN_HEAL)
 
 
 def current_beat(obs: PlayerObservation) -> Beat | None:
@@ -192,9 +123,7 @@ def current_beat(obs: PlayerObservation) -> Beat | None:
                 target={"kind": "face", "x": 13, "y": 4, "dir": "up"},
             )
         # Route to a Center even if the surviving party is healthy.
-        hurt = obs.model_copy(
-            update={"party": [{**m, "hp": 1} for m in obs.party if not m.get("dead")]}
-        )
+        hurt = obs.model_copy(update={"party": [{**m, "hp": 1} for m in obs.party if not m.get("dead")]})
         return heal_beat(hurt)
     return heal_beat(obs) or supply_beat(obs) or beats.current_beat(obs)
 
@@ -213,7 +142,7 @@ def supply_beat(obs: PlayerObservation) -> Beat | None:
             target={"kind": "warp", "dest_map": {1: 42, 2: 56, 3: 67}[obs.map_id]},
         )
     if obs.map_id in {42, 56, 67}:
-        return beats.BUY_BALLS
+        return beats.load_beat("BUY_BALLS")
     return None
 
 
@@ -251,6 +180,8 @@ def forced_battle_choice(obs: PlayerObservation, first_encounter: bool = False) 
     if wild and obs.policy.get("avoid_wild_grinding") and not first_encounter:
         return "run"
     if wild and fraction is not None and fraction < RUN_BELOW:
+        if first_encounter and has_balls(obs) and switch_target(obs, first_encounter=True) is not None:
+            return "pkmn"
         return "run"
     if wild and first_encounter and has_balls(obs):
         return "item"
@@ -261,7 +192,14 @@ def forced_battle_choice(obs: PlayerObservation, first_encounter: bool = False) 
 
 def constraints(obs: PlayerObservation, cap: int | None, dead: list[str]) -> list[str]:
     """What System 1 and 2 must obey and know: the rules, the cap, the next boss, trainers here."""
-    lines = [_RULES]
+    lines = [data("rule_briefing.json")]
+    lines += [
+        f"Living field-move user: {mon.get('nickname') or mon.get('species')} knows {move['name']}; verify field permission."
+        for mon in obs.party
+        if mon.get("hp", 0) > 0 and not mon.get("dead")
+        for move in mon.get("moves", [])
+        if move.get("name", "").upper() in {"CUT", "STRENGTH", "ROCK SMASH"}
+    ]
     if cap:
         buffer = int(obs.policy.get("level_cap_buffer", 1))
         over = [m.get("species") for m in obs.party if (m.get("level") or 0) >= cap - buffer]
@@ -272,10 +210,7 @@ def constraints(obs: PlayerObservation, cap: int | None, dead: list[str]) -> lis
         lines.append(
             "Use a reserved but legal Pokémon only when alternatives are unsafe or unavailable; over-cap Pokémon remain ineligible for new battles. Switch before fights when possible, as switching after entry can still share XP."
         )
-    if dead:
-        lines.append("dead, never use: " + ", ".join(str(name) for name in dead))
-    boss = trainers.next_boss(len(obs.badges))
-    if boss:
-        lines.append(boss)
+    lines += ["dead, never use: " + ", ".join(str(name) for name in dead)] if dead else []
+    lines.extend(filter(None, [trainers.next_boss(len(obs.badges))]))
     lines += [f"trainer here: {line}" for line in trainers.on_map(obs.map_id)]
     return lines

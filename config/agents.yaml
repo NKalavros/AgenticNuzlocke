@@ -1,8 +1,24 @@
-# LLM backend for role agents.
-# cursor: one vision model does planning and button choices.
-# dual: a Cursor vision planner (System 2) writes a short plan; Jev (System 1)
-# picks one legal button per cycle. openai_compatible: text-only local models.
+# Orchestration mode; dual selects independent System 1 and System 2 backends.
+# The older cursor/openai_compatible modes remain available via --provider.
 provider: dual  # cursor | openai_compatible | dual
+
+# Actor: jev | openai (Responses API) | openai_compatible (Chat Completions) | codex.
+# Codex System 1 uses subscription login and requires an explicit model.
+# API backends require an explicit model. Keys are environment variable names.
+system1:
+  provider: jev
+  model: jev-latest
+
+# Planner: codex | claude_code | antigravity | gemini_cli | cursor | openai_compatible.
+# Google personal subscription: antigravity (agy), default gemini-3.8-flash-low.
+# CLI backends use the vendor's own login and credential storage.
+# null resolves the vendor default; Codex verifies vision through model/list.
+system2:
+  provider: codex
+  model: null
+  timeout_s: 120
+
+# Legacy/provider settings below are retained for backwards compatibility.
 
 cursor:
   api_key_env: CURSOR_API_KEY
@@ -19,7 +35,7 @@ cursor:
   # compact a short session summary and recreate with that summary carried forward.
   compact_at_tokens: 250000
 
-# System 2 — vision planner. Jev follows this text; it cannot see the screen.
+# Legacy Cursor model and shared planning cadence/uncertainty settings.
 # Swap the model the same way as `cursor.model`. Other options:
 #   model: gpt-5.6-sol
 #   params: { reasoning: high }

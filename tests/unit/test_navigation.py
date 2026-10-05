@@ -131,6 +131,19 @@ def test_new_obstacle_invalidates_cached_route():
     assert nav.reused == 0
 
 
+def test_changed_grass_destination_invalidates_same_named_objective_route():
+    obs, room = scene()
+    nav = Navigator()
+    first = goal(["right"] * 4)
+    first.target = (5, 1)
+    nav.select(obs, room, [first], objective_text="Find encounter")
+    changed = goal(["down"])
+    changed.target = (1, 2)
+    selected = nav.select(obs, room, [changed], objective_text="Find encounter")
+    assert selected.actions == [A.WALK_DOWN]
+    assert nav.reused == 0
+
+
 def test_waypoint_must_be_reachable_and_match_objective():
     obs, room = scene()
     nav = Navigator()
@@ -242,3 +255,22 @@ def test_unknown_waypoint_cannot_use_optimistic_collision_fallback():
         plan={"map_id": 51, "objective_key": "exit_47", "waypoints": [[2, 1]]},
     )
     assert nav.rejected_waypoints == 1
+
+
+def test_continuation_atlas_connects_tunnels_and_rock_tunnel_chambers():
+    from nuzlocke.knowledge.map_reference import atlas, shortest_path
+
+    for mid, start, end in [
+        (119, (5, 4), (2, 41)),
+        (121, (47, 2), (2, 5)),
+        (82, (15, 3), (37, 3)),
+        (232, (33, 25), (27, 3)),
+        (82, (5, 3), (17, 11)),
+        (232, (23, 11), (3, 3)),
+        (82, (37, 17), (15, 33)),
+    ]:
+        at = PlayerObservation(map_id=mid, x=start[0], y=start[1])
+        path = shortest_path(at, [end])
+        assert path and path[-1] == end
+    # Header declares two extra rows with no source blocks: never invent floor.
+    assert atlas()["maps"]["119"]["rows"][-2:] == ["?" * 8] * 2

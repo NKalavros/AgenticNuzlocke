@@ -47,6 +47,24 @@ def test_search_continues_past_old_budget_without_consuming_slot():
     assert loop.referee.encounter_ledger == {}
 
 
+def test_grass_search_never_uses_door_exception_to_enter_an_item_or_wall():
+    loop = fixture()
+    at = obs(
+        x=2,
+        y=31,
+        grass_tiles=[{"x": 1, "y": 31}, {"x": 2, "y": 30}],
+        npcs=[{"slot": 7, "picture": 74, "x": 1, "y": 31, "on_screen": False, "hidden": False}],
+    )
+    loop.room.known[51] = {(2, 31): True, (1, 31): True, (2, 30): True}
+    loop._grass_visits["51:2:30"] = 100
+    target, _, _ = encounter_objective(loop, at, None)
+    assert target == {"kind": "tile", "x": 2, "y": 30}
+    at.npcs = []
+    # Explicitly known walls must not become targets either.
+    loop.room.known[51][1, 31] = False
+    assert encounter_objective(loop, at, None)[0] == target
+
+
 def test_missed_route22_routes_back_from_pewter():
     loop = fixture()
     loop.referee.encounter_ledger.update({"12": {"outcome": "caught"}, "13": {"outcome": "caught"}})
@@ -146,3 +164,77 @@ def test_model_failure_pauses_without_b_or_walks():
     proposal = loop._fallback_proposal(task, RuntimeError("planner disconnected"))
     loop.env.set_control.assert_called_once_with(ControlState.PAUSED)
     assert proposal.actions == [A.WAIT_60]
+
+
+def test_post_cascade_travel_does_not_reenter_completed_encounter_circuit():
+    loop = fixture()
+    loop.referee.encounter_ledger.update({"35": {"outcome": "caught"}, "36": {"outcome": "caught"}})
+    # The same tiles used to turn every northbound crossing straight back south.
+    for mid in (3, 35, 36, 35, 3):
+        at = obs(map_id=mid, badges=["Boulder", "Cascade"], grass_tiles=[])
+        assert encounter_objective(loop, at, None) is None
+    # The pre-Misty return to the gym is still intentional.
+    assert encounter_objective(loop, obs(map_id=35), None)[0] == {"kind": "edge", "dir": "down"}
+    # A real unresolved local encounter is still searched after Cascade.
+    del loop.referee.encounter_ledger["36"]
+    at = obs(map_id=36, badges=["Boulder", "Cascade"])
+    assert encounter_objective(loop, at, None)[0] == {"kind": "tile", "x": 2, "y": 1}
+    assert at.policy["encounter_search"]
+
+
+def test_rock_tunnel_floors_share_a_slot_including_legacy_floor_keys():
+    from nuzlocke.knowledge.encounters import area_key
+
+    assert area_key(82) == area_key(232) == "82"
+    assert resolved({"232": {"outcome": "forfeited"}}, 82)
+    ref = fixture().referee
+    ref.encounter_ledger["82"] = {"outcome": "caught", "species": "Machop"}
+    ledger = LedgerTracker(ref)
+    ledger.update(
+        obs(map_id=232, in_battle=True, battle={"type": "wild", "enemy": {"species": "Onix"}}),
+        step=1,
+    )
+    assert not ledger.first_encounter and "232" not in ref.encounter_ledger
+
+
+def test_route5_side_lane_reenters_via_cerulean_without_consuming_encounter():
+    from nuzlocke.knowledge.map_reference import atlas
+
+    loop = fixture()
+    for mid in (3, 16):
+        data = atlas()["maps"][str(mid)]
+        loop.room.known[mid] = {
+            (x, y): c == "." for y, row in enumerate(data["rows"]) for x, c in enumerate(row)
+        }
+    grass = atlas()["maps"]["16"]["grass"]
+    loop.navigator.maps["16"] = {"grass": grass}
+    at = obs(
+        map_id=16,
+        map_name="Route 5",
+        x=15,
+        y=2,
+        map_size={"w": 20, "h": 36},
+        connections=["up", "down"],
+        grass_tiles=[],
+        wild_species=["Meowth"],
+        badges=["Boulder", "Cascade"],
+    )
+    assert encounter_objective(loop, at, None)[0] == {"kind": "edge", "dir": "up"}
+    at.map_id, at.map_name, at.x, at.y = 3, "Cerulean City", 25, 35
+    at.map_size = {"w": 40, "h": 36}
+    at.wild_species = []
+    assert encounter_objective(loop, at, None)[0] == {"kind": "tile", "x": 23, "y": 35}
+    at.x = 23
+    assert encounter_objective(loop, at, None)[0] == {"kind": "edge", "dir": "down"}
+    at.map_id, at.map_name, at.x, at.y = 16, "Route 5", 13, 0
+    at.map_size = {"w": 20, "h": 36}
+    at.wild_species = ["Meowth"]
+    target = encounter_objective(loop, at, None)[0]
+    assert target["kind"] == "tile" and [target["x"], target["y"]] in grass
+    assert not loop.referee.encounter_ledger
+    loop.referee.encounter_ledger["16"] = {"outcome": "caught", "species": "Meowth"}
+    assert encounter_objective(loop, at, None) is None
+    at.map_id, at.x, at.y = 3, 25, 35
+    at.map_size = {"w": 40, "h": 36}
+    at.wild_species = []
+    assert encounter_objective(loop, at, None) is None

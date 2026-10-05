@@ -1,0 +1,64 @@
+{
+  "0": {
+    "id": "leave_pallet",
+    "text": "Leave Pallet Town north onto Route 1.",
+    "hint": "The north exit is a two-tile gap in the top tree line, north of the open ground between the two houses. Walk to it, then straight up. Do not walk south into the water.",
+    "heading": "up",
+    "target": {
+      "kind": "edge",
+      "dir": "up"
+    }
+  },
+  "12": {
+    "id": "to_viridian",
+    "text": "Walk north through Route 1 to Viridian City.",
+    "hint": "Route 1 runs straight north to Viridian City. Ledges only drop south.",
+    "heading": "up",
+    "target": {
+      "kind": "edge",
+      "dir": "up"
+    }
+  },
+  "1": {
+    "id": "buy_balls_city",
+    "text": "Enter the Viridian Mart to buy POKé BALLs.",
+    "hint": "The Mart is the building with the blue roof.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 42
+    }
+  },
+  "42": {
+    "id": "buy_balls",
+    "text": "Top up to ten capture balls: buy the best affordable stocked ball, Ultra then Great then Poké Ball.",
+    "hint": "The clerk stands behind the counter on the left. Face him across it and press A.",
+    "heading": null,
+    "target": {
+      "kind": "face",
+      "x": 2,
+      "y": 5,
+      "dir": "left"
+    }
+  },
+  "50": {
+    "id": "gate_for_balls",
+    "text": "Leave the gate south, back toward Viridian for POKé BALLs.",
+    "hint": "The exit is at the bottom of the gate.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "51": {
+    "id": "forest_for_balls",
+    "text": "Leave the forest by the south gate, back toward Viridian for POKé BALLs.",
+    "hint": "The south gate is at the bottom right.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 50
+    }
+  }
+}

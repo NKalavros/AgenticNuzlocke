@@ -45,6 +45,34 @@ SUPPORTED = {
     64,
     65,
 }
+# Bill, the S.S. Anne, both Underground Paths and the route to Erika.
+SUPPORTED.update(
+    {
+        4,
+        5,
+        6,
+        *range(16, 23),
+        46,
+        48,
+        67,
+        68,
+        71,
+        74,
+        77,
+        80,
+        81,
+        82,
+        85,
+        *range(88, 105),
+        119,
+        121,
+        133,
+        134,
+        141,
+        197,
+        232,
+    }
+)
 
 
 def read(path):
@@ -96,21 +124,30 @@ for file in sorted((ROOT / "data/maps/headers").glob("*.asm")):
     if not match:
         continue
     name, symbol, tileset = match.groups()
+    if name.endswith("Copy"):
+        continue  # unused aliases share their original's symbol and block data
     dims = constants[symbol]
     if dims["id"] not in SUPPORTED:
         continue
     width, height = dims["w"], dims["h"]
     blocks = (ROOT / f"maps/{name}.blk").read_bytes()
-    assert len(blocks) == width * height // 4, name
+    # The north-south tunnel's declared 4x24 layout stores only 4x23 blocks.
+    # Keep the declared dimensions, but mark the unstored bottom rows unknown.
+    missing_rows = 2 if symbol == "UNDERGROUND_PATH_NORTH_SOUTH" else 0
+    assert len(blocks) == width * (height - missing_rows) // 4, name
     bst, allowed = blocksets[tilesets[tileset]], collision[tilesets[tileset]]
     tile_ids = [
         [
             bst[blocks[(y // 2) * (width // 2) + x // 2] * 16 + (y % 2 * 2 + 1) * 4 + x % 2 * 2]
+            if y < height - missing_rows
+            else -1
             for x in range(width)
         ]
         for y in range(height)
     ]
     rows = ["".join("." if t in allowed else "#" for t in row) for row in tile_ids]
+    if missing_rows:
+        rows[-missing_rows:] = ["?" * width] * missing_rows
     grass_id = re.search(
         r"tileset " + tilesets[tileset] + r",\s*[^,]+,\s*[^,]+,\s*[^,]+,\s*\$([0-9A-Fa-f]+)",
         read("data/tilesets/tileset_headers.asm"),

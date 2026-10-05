@@ -45,10 +45,7 @@ def decision(obs: PlayerObservation, *, first_encounter: bool = False) -> Policy
     if special and ("evol" in special.reason):
         return PolicyDecision(legal_sequences={"evolution": special.actions}, required="evolution")
     if "shop_actions" in obs.policy:
-        return PolicyDecision(
-            legal_sequences={"shop": [GameAction(a) for a in obs.policy["shop_actions"]]},
-            required="shop",
-        )
+        return PolicyDecision(legal_sequences={"shop": [GameAction(a) for a in obs.policy["shop_actions"]]}, required="shop")
     from nuzlocke.knowledge.objects import fossil_question, has_fossil
 
     if not obs.in_battle and fossil_question(obs.map_id, obs.screen_rows) and not has_fossil(obs):
@@ -66,10 +63,7 @@ def decision(obs: PlayerObservation, *, first_encounter: bool = False) -> Policy
         return PolicyDecision(forbidden_actions=[GameAction.PRESS_A, GameAction.A_UNTIL_DIALOG_END])
     if "rotation_actions" in obs.policy:
         return PolicyDecision(
-            legal_sequences={
-                "rotate_lead": [GameAction(a) for a in obs.policy["rotation_actions"]]
-            },
-            required="rotate_lead",
+            legal_sequences={"rotate_lead": [GameAction(a) for a in obs.policy["rotation_actions"]]}, required="rotate_lead"
         )
     party_cursor = battle.party_cursor(obs)
     if obs.in_battle and party_cursor is not None:
@@ -78,16 +72,9 @@ def decision(obs: PlayerObservation, *, first_encounter: bool = False) -> Policy
         target = switch_target(obs)
         legal = {"back": [GameAction.PRESS_B]}
         for i, mon in enumerate(obs.party):
-            if (
-                mon.get("hp")
-                and not mon.get("dead")
-                and not mon.get("ineligible")
-                and i != (obs.active_party_slot or 0)
-            ):
+            if mon.get("hp") and not mon.get("dead") and not mon.get("ineligible") and i != (obs.active_party_slot or 0):
                 legal[f"party_{i}"] = menu_actions(f"choose_{i}", party_cursor)
-        return PolicyDecision(
-            legal_sequences=legal, required=f"party_{target}" if target is not None else None
-        )
+        return PolicyDecision(legal_sequences=legal, required=f"party_{target}" if target is not None else None)
     screen = battle.parse_battle(obs.screen_rows)
     if obs.in_battle and screen.kind:
         if screen.kind == "moves" and (
@@ -109,16 +96,30 @@ def decision(obs: PlayerObservation, *, first_encounter: bool = False) -> Policy
                 if forced is None:
                     return PolicyDecision(rejection="no legal battle participant")
             return PolicyDecision(legal_sequences=sequences, required=forced)
-        pp = battle._pp(obs)
         sequences = {
             f"move_{i}": battle.actions_for(screen, f"move_{i}")
             for i, name in enumerate(screen.options)
-            if pp.get(name.upper(), 1) > 0
+            if not battle.move_facts(obs, name)["unavailable_reason"]
         }
         if not sequences:
             # Back to FIGHT permits the game's automatic Struggle when every PP is exhausted.
             return PolicyDecision(legal_sequences={"back": [GameAction.PRESS_B]}, required="back")
+        # A conditional planner strategy may leave no useful move despite remaining PP.
+        sequences["back"] = [GameAction.PRESS_B]
         return PolicyDecision(legal_sequences=sequences)
+    from nuzlocke.agents.inventory import candy_bag_actions, cut_bag_actions, tm_party_choices
+
+    if actions := cut_bag_actions(obs):
+        return PolicyDecision(legal_sequences={"cut_bag": actions}, required="cut_bag")
+    choices = tm_party_choices(obs)
+    if choices is not None:
+        cursor = parse_screen(obs.screen_rows).cursor_row
+        legal = {key: menu_actions(key, cursor) for key in choices}
+        return PolicyDecision(legal_sequences={**legal, "back": [GameAction.PRESS_B]})
+
+    bag_actions = candy_bag_actions(obs)
+    if bag_actions is not None:
+        return PolicyDecision(legal_sequences={"candy_bag": bag_actions}, required="candy_bag")
     menu = parse_screen(obs.screen_rows)
     if menu.menu_rows and menu.cursor_row is not None:
         rows = menu.menu_rows
@@ -129,9 +130,7 @@ def decision(obs: PlayerObservation, *, first_encounter: bool = False) -> Policy
             legal = {"back": [GameAction.PRESS_B]}
             for i, row in enumerate(rows):
                 allowed = (obs.in_battle and first_encounter and "BALL" in row.upper()) or (
-                    not obs.in_battle
-                    and obs.policy.get("preparing")
-                    and "RARE CANDY" in row.upper()
+                    not obs.in_battle and obs.policy.get("preparing") and "RARE CANDY" in row.upper()
                 )
                 if allowed or row.upper() == "CANCEL":
                     legal[f"row_{i}"] = menu_actions(f"choose_{i}", menu.cursor_row)

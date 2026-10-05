@@ -1,0 +1,74 @@
+{
+  "2": [
+    "route3",
+    "Leave Pewter east onto Route 3.",
+    {
+      "kind": "edge",
+      "dir": "right"
+    }
+  ],
+  "14": [
+    "cross_route3",
+    "Cross Route 3 and leave north for Route 4 and Mt. Moon, resolving its encounter.",
+    {
+      "kind": "edge",
+      "dir": "up"
+    }
+  ],
+  "15": [
+    "enter_moon",
+    "Enter Mt. Moon from western Route 4.",
+    {
+      "kind": "warp",
+      "dest_map": 59
+    }
+  ],
+  "59": [
+    "moon_main_ladder",
+    "Cross Mt. Moon 1F to the northwest main-route ladder.",
+    {
+      "kind": "warp",
+      "dest_map": 60,
+      "x": 5,
+      "y": 5
+    }
+  ],
+  "60": [
+    "moon_lower",
+    "Follow the main passage down to Mt. Moon B2F.",
+    {
+      "kind": "warp",
+      "dest_map": 61,
+      "x": 17,
+      "y": 11
+    }
+  ],
+  "61": [
+    "moon_exit_ladder",
+    "Cross Mt. Moon B2F, defeat the blocking trainers, choose a fossil, and take the northwest ladder.",
+    {
+      "kind": "warp",
+      "dest_map": 60,
+      "x": 5,
+      "y": 7
+    }
+  ],
+  "3": [
+    "misty",
+    "Enter Cerulean Gym and challenge Misty after healing and preparation.",
+    {
+      "kind": "warp",
+      "dest_map": 65
+    }
+  ],
+  "65": [
+    "face_misty",
+    "Challenge Misty at the north end of the pool.",
+    {
+      "kind": "face",
+      "x": 4,
+      "y": 3,
+      "dir": "up"
+    }
+  ]
+}

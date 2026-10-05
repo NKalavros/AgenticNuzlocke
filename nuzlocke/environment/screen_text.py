@@ -9,10 +9,19 @@ pixel check (``screen.text_box_open`` / ``prompt_box_open``) sees a box.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 _CURSORS = "▶▷"
 _TEXT_TOP = 12
+
+
+def is_pokedex_page(rows: list[str]) -> bool:
+    """Recognize the measurement labels, not WT inside a name such as MEOWTH."""
+    if any("▶" in row for row in rows):
+        return False  # An active menu must retain its own action semantics.
+    labels = {match[1] for row in rows if (match := re.match(r"^(HT|WT)\b", row.strip(" │").upper()))}
+    return labels == {"HT", "WT"}
 
 
 @dataclass(frozen=True)
@@ -61,9 +70,7 @@ def find_boxes(rows: list[str]) -> list[Box]:
             if bottom is None:
                 continue
             title = row[left + 1 : right].replace("─", " ").strip()
-            lines = tuple(
-                rows[r][left + 1 : right].replace("▼", " ").rstrip() for r in range(top + 1, bottom)
-            )
+            lines = tuple(rows[r][left + 1 : right].replace("▼", " ").rstrip() for r in range(top + 1, bottom))
             boxes.append(Box(top, left, bottom, right, title, lines))
     return boxes
 
@@ -93,9 +100,7 @@ def parse_screen(rows: list[str] | None) -> ScreenText:
         and rows[17].endswith("┘")
         and all(len(row) == 20 and row.startswith("│") and row.endswith("│") for row in rows[13:17])
     ):
-        text_lines = [
-            row[1:-1].replace("▼", " ").strip() for row in rows[13:17] if row[1:-1].strip()
-        ]
+        text_lines = [row[1:-1].replace("▼", " ").strip() for row in rows[13:17] if row[1:-1].strip()]
 
     # ▶ starting a row is the active menu; ▷ marks the one behind it (BUY under the Mart's
     # item list). A box that only overlaps another box's cursor mid-line is not it.
@@ -104,6 +109,14 @@ def parse_screen(rows: list[str] | None) -> ScreenText:
 
     menu = next((b for b in menus if leads(b, "▶")), None)
     if menu is None:
+        question = re.sub(r"[^A-Z]", "", "".join(text_lines).upper().replace("É", "E"))
+        if question in {"USETMONWHICHPOKEMON", "USEHMONWHICHPOKEMON", "CHOOSEAPOKEMON"}:
+            pairs = [(rows[i], rows[i + 1]) for i in range(0, min(12, len(rows) - 1), 2) if rows[i].strip()]
+            pattern = r"\d+\s*/\s*\d+" if question == "CHOOSEAPOKEMON" else r"(?:NOT )?ABLE"
+            if pairs and all(re.fullmatch(pattern, status.replace("▶", "").strip()) for _, status in pairs):
+                labels = [f"{name.strip()} {status.replace('▶', '').strip()}" for name, status in pairs]
+                cursor = next((i for i, (_, status) in enumerate(pairs) if "▶" in status), None)
+                return ScreenText(text_lines, labels, cursor, "PARTY" if question == "CHOOSEAPOKEMON" else "TM_COMPATIBILITY")
         return ScreenText(text_lines=text_lines)
     menu_rows: list[str] = []
     cursor = None
@@ -119,6 +132,4 @@ def parse_screen(rows: list[str] | None) -> ScreenText:
             cursor = len(menu_rows)
             label = label[1:].strip()
         menu_rows.append(label)
-    return ScreenText(
-        text_lines=text_lines, menu_rows=menu_rows, cursor_row=cursor, menu_title=menu.title
-    )
+    return ScreenText(text_lines=text_lines, menu_rows=menu_rows, cursor_row=cursor, menu_title=menu.title)

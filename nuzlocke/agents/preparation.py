@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from nuzlocke.agents.system1 import _special_page, menu_actions
 from nuzlocke.agents.system3 import current_beat
-from nuzlocke.environment.screen_text import parse_screen
+from nuzlocke.environment.screen_text import is_pokedex_page, parse_screen
 from nuzlocke.state.models import GameAction as A
 
 
@@ -16,7 +16,7 @@ def preparation_turn(loop, obs):
     if rows == ["YES", "NO"] and "NICKNAME" in text:
         return menu_actions("choose_1", cursor), "nickname: NO"
     if obs.in_battle:
-        if "HT" in text and "WT" in text:
+        if is_pokedex_page(obs.screen_rows):
             return [A.PRESS_A, A.WAIT_60], "caught Pokémon's Pokédex page"
         return [], ""
     from nuzlocke.knowledge.objects import fossil_question, has_fossil
@@ -27,21 +27,15 @@ def preparation_turn(loop, obs):
         return [A.WAIT_60], "wait for the fossil YES/NO; B would decline it"
     if obs.map_id == 61 and has_fossil(obs) and "GOT THE" in text and "FOSSIL" in text:
         return [A.PRESS_A, A.WAIT_60], "acknowledge fossil receipt"
-    if not obs.party and "WT" in text and "HT" in text:
-        loop._starter_seen = next(
-            (s for s in ("BULBASAUR", "CHARMANDER", "SQUIRTLE") if s in text), None
-        )
-        return (
-            [A.PRESS_A, A.WAIT_60] if loop._starter_seen else [A.WAIT_60]
-        ), "read starter species"
+    if not obs.party and is_pokedex_page(obs.screen_rows):
+        loop._starter_seen = next((s for s in ("BULBASAUR", "CHARMANDER", "SQUIRTLE") if s in text), None)
+        return ([A.PRESS_A, A.WAIT_60] if loop._starter_seen else [A.WAIT_60]), "read starter species"
     if not obs.party and rows == ["YES", "NO"] and loop._starter_seen:
         yes = loop._starter_seen == "BULBASAUR"
         if not yes:
             # Remember the rejected ball and select another on the next overworld cycle.
             loop._rejected_starters = getattr(loop, "_rejected_starters", set()) | {(obs.x, obs.y)}
-        return menu_actions(
-            "choose_0" if yes else "choose_1", cursor
-        ), "confirm Bulbasaur" if yes else "decline other starter"
+        return menu_actions("choose_0" if yes else "choose_1", cursor), "confirm Bulbasaur" if yes else "decline other starter"
     if not obs.party:
         return [], ""
     if obs.battle_style == "SHIFT":
@@ -74,17 +68,10 @@ def preparation_turn(loop, obs):
                     return menu_actions(f"choose_{index}", cursor), "open storage for dead Pokémon"
             for mon in dead:
                 index = next(
-                    (
-                        i
-                        for i, row in enumerate(rows)
-                        if str(mon.get("nickname") or mon.get("species")).upper() in row
-                    ),
-                    None,
+                    (i for i, row in enumerate(rows) if str(mon.get("nickname") or mon.get("species")).upper() in row), None
                 )
                 if index is not None:
-                    return menu_actions(
-                        f"choose_{index}", cursor
-                    ), "deposit permanently dead Pokémon"
+                    return menu_actions(f"choose_{index}", cursor), "deposit permanently dead Pokémon"
             return [A.PRESS_B], "close unrelated menu before using storage"
         if "DEPOSIT" in text and "POK" in text and obs.menu_index is not None:
             slot = next(i for i, m in enumerate(obs.party) if m.get("dead"))
@@ -93,9 +80,7 @@ def preparation_turn(loop, obs):
     from nuzlocke.agents.gym_preparation import at_leader
 
     gym_top_up = at_leader(obs)
-    if (obs.map_id not in {40, 41, 58, 64, 68} and not gym_top_up) or any(
-        m.get("dead") for m in obs.party
-    ):
+    if (obs.map_id not in {40, 41, 58, 64, 68} and not gym_top_up) or any(m.get("dead") for m in obs.party):
         return [], ""
     if obs.map_id == 40 and (len(obs.party) != 1 or obs.party[0].get("species") != "Bulbasaur"):
         return [], ""
@@ -103,15 +88,9 @@ def preparation_turn(loop, obs):
     setting = (
         ("misty_level" if obs.map_id == 64 else "post_brock_level")
         if "Boulder" in obs.badges
-        else {40: "rival_level", 41: "first_center_level", 58: "brock_level"}.get(
-            obs.map_id, "brock_level"
-        )
+        else {40: "rival_level", 41: "first_center_level", 58: "brock_level"}.get(obs.map_id, "brock_level")
     )
-    default = (
-        (21 if obs.map_id == 64 else 18)
-        if "Boulder" in obs.badges
-        else {40: 8, 41: 12, 58: 14}.get(obs.map_id, 14)
-    )
+    default = (21 if obs.map_id == 64 else 18) if "Boulder" in obs.badges else {40: 8, 41: 12, 58: 14}.get(obs.map_id, 14)
     from nuzlocke.agents.level_buffer import preparation_limit
 
     target = min(
@@ -129,23 +108,30 @@ def preparation_turn(loop, obs):
             loop._closing_preparation = True
             return [A.PRESS_B], "preparation complete; close menu"
         return [], ""
-    healthy = all(
-        m.get("hp") == m.get("max_hp") and m.get("status", "OK") == "OK" for m in obs.party
-    )
+    healthy = all(m.get("hp") == m.get("max_hp") and m.get("status", "OK") == "OK" for m in obs.party)
     if not loop._preparing_target:
         if not healthy or screen.text_lines or rows:
             return [], ""
         if not (loop.run_cfg.get("rare_candy") or {}).get("enabled"):
             if gym_top_up:
-                raise RuntimeError(
-                    "Gym leader requires party at the cap; enable Rare Candy preparation"
-                )
+                raise RuntimeError("Gym leader requires party at the cap; enable Rare Candy preparation")
             return [], ""
         result = loop.env._post_json("/nuzlocke/prepare", {"target": target})
         loop.store.append("candy_grant", result)
         loop._preparing_target = target
+        loop._preparation_wait_cycles = 0
         obs.policy["preparing"] = True
         return [A.PRESS_START, A.WAIT_60], "open bag for preparation"
+    loop._preparation_wait_cycles = getattr(loop, "_preparation_wait_cycles", 0) + 1
+    if loop._preparation_wait_cycles > 60:
+        raise RuntimeError("Candy preparation made no level progress for 60 cycles; paused for inspection")
+    from nuzlocke.agents.inventory import candy_bag_actions
+
+    bag_actions = candy_bag_actions(obs)
+    if bag_actions is not None:
+        if bag_actions == [A.WAIT_60]:
+            raise RuntimeError("Audited Rare Candies are missing from the bag before preparation finished")
+        return bag_actions, "scroll bag to audited Rare Candy" if bag_actions != [A.PRESS_A] else "select audited Rare Candy"
     if cursor is not None and rows:
         for name in ("RARE CANDY", "PACK", "ITEM"):
             index = next((i for i, r in enumerate(rows) if name in r), None)
@@ -154,18 +140,9 @@ def preparation_turn(loop, obs):
         if "USE" in rows:
             return menu_actions(f"choose_{rows.index('USE')}", cursor), "use candy"
         for slot, mon in candidates:
-            index = next(
-                (
-                    i
-                    for i, r in enumerate(rows)
-                    if str(mon.get("nickname") or mon.get("species")).upper() in r
-                ),
-                None,
-            )
+            index = next((i for i, r in enumerate(rows) if str(mon.get("nickname") or mon.get("species")).upper() in r), None)
             if index is not None:
-                return menu_actions(
-                    f"choose_{index}", cursor
-                ), f"prepare party slot {slot} to {target}"
+                return menu_actions(f"choose_{index}", cursor), f"prepare party slot {slot} to {target}"
     if ("HP" in text or "USE ITEM ON WHICH" in text) and any(
         str(m.get("nickname") or m.get("species")).upper() in text for m in obs.party
     ):

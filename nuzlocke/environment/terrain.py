@@ -5,15 +5,7 @@ These are cliff/room boundaries, not the overworld's two-tile ledge jumps.
 """
 
 LAND_PAIRS = {
-    3: {
-        (0x30, 0x2E),
-        (0x52, 0x2E),
-        (0x55, 0x2E),
-        (0x56, 0x2E),
-        (0x20, 0x2E),
-        (0x5E, 0x2E),
-        (0x5F, 0x2E),
-    },
+    3: {(0x30, 0x2E), (0x52, 0x2E), (0x55, 0x2E), (0x56, 0x2E), (0x20, 0x2E), (0x5E, 0x2E), (0x5F, 0x2E)},
     17: {(0x20, 0x05), (0x41, 0x05), (0x2A, 0x05), (0x05, 0x21)},
 }
 
@@ -30,9 +22,7 @@ def ledge_pair(first, second, direction):
 
 
 def step_delta(step):
-    dx, dy = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}[
-        step.removeprefix("jump_")
-    ]
+    dx, dy = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}[step.removeprefix("jump_")]
     scale = 2 if step.startswith("jump_") else 1
     return dx * scale, dy * scale
 

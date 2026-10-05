@@ -42,18 +42,13 @@ def free_port(host: str = "127.0.0.1", start: int = SANDBOX_PORT, tries: int = 5
 
 def source_savestate(run_dir: Path, state: str = CHECKPOINT_NAME) -> Path:
     """The savestate a run left behind, wherever that run wrote it."""
-    for candidate in (
-        savestate_path(run_dir, state),
-        run_dir / "pokemon-agent-data" / "saves" / f"{state}.state",
-    ):
+    for candidate in (savestate_path(run_dir, state), run_dir / "pokemon-agent-data" / "saves" / f"{state}.state"):
         if candidate.is_file():
             return candidate
     raise FileNotFoundError(f"no {state}.state under {run_dir}")
 
 
-def new_sandbox(
-    source: str | None, *, state: str = CHECKPOINT_NAME, root: Path | None = None
-) -> tuple[str, Path]:
+def new_sandbox(source: str | None, *, state: str = CHECKPOINT_NAME, root: Path | None = None) -> tuple[str, Path]:
     """Make ``runs/sandbox-*`` and copy ``source``'s savestate in as its continue point."""
     runs = (root or project_root()) / "runs"
     run_id = "sandbox-" + time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:4]
@@ -67,11 +62,7 @@ def new_sandbox(
         shutil.copy2(src, dest)
         meta["savestate"] = str(src)
         source_dir = runs / source
-        record_path = (
-            source_dir
-            / "checkpoints"
-            / ("current.json" if state == CHECKPOINT_NAME else f"{state}.json")
-        )
+        record_path = source_dir / "checkpoints" / ("current.json" if state == CHECKPOINT_NAME else f"{state}.json")
         if record_path.exists():
             record = json.loads(record_path.read_text())
             if record.get("state_sha256") == hashlib.sha256(src.read_bytes()).hexdigest():
@@ -101,9 +92,7 @@ def parse_script(text: str) -> list[str]:
     return tokens
 
 
-def run_script(
-    env: NousRedEnvironment, tokens: list[str], frames_dir: Path
-) -> list[dict[str, Any]]:
+def run_script(env: NousRedEnvironment, tokens: list[str], frames_dir: Path) -> list[dict[str, Any]]:
     """Press each token and record where the player is and what is on screen.
 
     A GameAction goes through ``execute`` (burst stops, ``skip_dialog``); any
@@ -124,12 +113,7 @@ def run_script(
 
 
 def _row(
-    index: int,
-    token: str,
-    obs: Any,
-    frames_dir: Path,
-    executed: list[str] | None = None,
-    stopped: str | None = None,
+    index: int, token: str, obs: Any, frames_dir: Path, executed: list[str] | None = None, stopped: str | None = None
 ) -> dict[str, Any]:
     path = None
     if obs.screenshot_path and Path(obs.screenshot_path).is_file():
@@ -180,9 +164,7 @@ def _spread(values: list[float]) -> dict[str, float] | None:
 def summarize(run_dir: Path) -> dict[str, Any]:
     """What the last session of a run did, read back from ``events.jsonl``."""
     path = run_dir / "events.jsonl"
-    events = [
-        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
-    ]
+    events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     starts = [i for i, event in enumerate(events) if event["kind"] == "run_start"]
     session = events[starts[-1] :] if starts else events
     buttons: Counter[str] = Counter()
@@ -214,7 +196,7 @@ def summarize(run_dir: Path) -> dict[str, Any]:
                 rule_alerts += 1
         elif kind == "plan" and payload.get("latency_s") is not None:
             planner.append(float(payload["latency_s"]))
-        elif kind == "jev_call":
+        elif kind in {"jev_call", "actor_call"}:
             jev_calls.append(payload)
         elif kind == "jev":
             reasons[str(payload.get("reason") or "").split(";")[0][:40]] += 1
@@ -228,26 +210,15 @@ def summarize(run_dir: Path) -> dict[str, Any]:
     cycles = sum(stops.values())
     return {
         "cycles": cycles,
-        "completed_brock": any(
-            e["kind"] == "milestone_complete" and e["payload"].get("milestone") == "brock"
-            for e in session
-        ),
-        "completed_misty": any(
-            e["kind"] == "milestone_complete" and e["payload"].get("milestone") == "misty"
-            for e in session
-        ),
+        "completed_brock": any(e["kind"] == "milestone_complete" and e["payload"].get("milestone") == "brock" for e in session),
+        "completed_misty": any(e["kind"] == "milestone_complete" and e["payload"].get("milestone") == "misty" for e in session),
         "wiped": any(e["kind"] == "nuzlocke_wipe" for e in session),
         "rule_alerts": rule_alerts,
         "eligibility_alerts": eligibility_alerts,
         "policy_rejections": sum(e["kind"] == "policy_rejection" for e in session),
-        "candy_grants": sum(
-            e["payload"].get("granted", 0) for e in session if e["kind"] == "candy_grant"
-        ),
+        "candy_grants": sum(e["payload"].get("granted", 0) for e in session if e["kind"] == "candy_grant"),
         "candy_uses": sum(e["kind"] == "candy_use" for e in session),
-        "casualties": max(
-            (len(e["payload"].get("deaths", [])) for e in session if e["kind"] == "ledger_commit"),
-            default=0,
-        ),
+        "casualties": max((len(e["payload"].get("deaths", [])) for e in session if e["kind"] == "ledger_commit"), default=0),
         "planner_looks": sum(1 for e in session if e["kind"] == "plan"),
         "looks_by_reason": dict(looks.most_common()),
         "planner_s": _spread(planner),
@@ -259,7 +230,13 @@ def summarize(run_dir: Path) -> dict[str, Any]:
         "buttons": dict(buttons.most_common(10)),
         "stops": dict(stops.most_common()),
         "reasons": dict(reasons.most_common(8)),
-        "jev": _jev_stats(jev_calls),
+        "jev": _jev_stats([call for call in jev_calls if call.get("provider", "jev") == "jev"]),
+        "actor": {
+            "calls": len(jev_calls),
+            "by_provider": dict(Counter(call.get("provider", "jev") for call in jev_calls)),
+            "latency_s": _spread([call["latency_s"] for call in jev_calls if "latency_s" in call]),
+            "abstentions": sum(bool(call.get("abstain")) for call in jev_calls),
+        },
     }
 
 
@@ -282,7 +259,15 @@ def _jev_stats(calls: list[dict[str, Any]]) -> dict[str, Any] | None:
     }
 
 
-def benchmark(*, trials: int = 5, steps: int = 1500, rom: Path | None = None) -> dict[str, Any]:
+def benchmark(
+    *,
+    trials: int = 5,
+    steps: int = 1500,
+    rom: Path | None = None,
+    provider_override: str | None = None,
+    agents_config: Path | None = None,
+    agent_overrides: dict | None = None,
+) -> dict[str, Any]:
     """Independent fresh boots; failures are retained, never retried into the success count."""
     from nuzlocke.orchestration.loop import RunLoop
 
@@ -294,7 +279,15 @@ def benchmark(*, trials: int = 5, steps: int = 1500, rom: Path | None = None) ->
         loop = None
         error = None
         try:
-            loop = RunLoop(rom_path=rom, run_id=run_id, port=free_port(), headless=True)
+            loop = RunLoop(
+                rom_path=rom,
+                run_id=run_id,
+                port=free_port(),
+                headless=True,
+                provider_override=provider_override,
+                agents_config=agents_config,
+                agent_overrides=agent_overrides,
+            )
             loop.run_cfg["stop_after"] = "brock"  # This benchmark still measures the first badge.
             loop.run(max_steps=steps)
         except Exception as exc:  # noqa: BLE001 — retain failed trials of every kind
@@ -310,10 +303,6 @@ def benchmark(*, trials: int = 5, steps: int = 1500, rom: Path | None = None) ->
         "trials": reports,
         "passed": len(reports) == trials
         and all(
-            r.get("completed_brock")
-            and not r.get("wiped")
-            and not r.get("error")
-            and not r.get("rule_alerts")
-            for r in reports
+            r.get("completed_brock") and not r.get("wiped") and not r.get("error") and not r.get("rule_alerts") for r in reports
         ),
     }

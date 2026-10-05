@@ -1,0 +1,305 @@
+{
+  "fragments": {
+    "title": "fragments/title.md",
+    "bedroom": "fragments/bedroom.md",
+    "home": "fragments/home.md",
+    "pallet": "fragments/pallet.md",
+    "starter": "fragments/starter.md",
+    "parcel": "fragments/parcel.md",
+    "forest": "fragments/forest.md",
+    "brock": "fragments/brock.md",
+    "misty": "fragments/misty.md",
+    "surge-intro": "fragments/surge-intro.md",
+    "surge-1": "fragments/surge-1.md",
+    "surge-2": "fragments/surge-2.md",
+    "surge-3": "fragments/surge-3.md",
+    "surge-4": "fragments/surge-4.md",
+    "surge-5": "fragments/surge-5.md",
+    "surge-6": "fragments/surge-6.md",
+    "surge-notes": "fragments/surge-notes.md",
+    "erika-intro": "fragments/erika-intro.md",
+    "erika-1": "fragments/erika-1.md",
+    "erika-2": "fragments/erika-2.md",
+    "erika-3": "fragments/erika-3.md",
+    "erika-4": "fragments/erika-4.md",
+    "erika-5": "fragments/erika-5.md",
+    "erika-6": "fragments/erika-6.md",
+    "erika-7": "fragments/erika-7.md",
+    "erika-8": "fragments/erika-8.md",
+    "erika-notes": "fragments/erika-notes.md",
+    "stuck": "fragments/stuck.md",
+    "rules": "fragments/rules.md",
+    "introduction": "fragments/introduction.md",
+    "surge-access": "fragments/surge-access.md",
+    "healing": "fragments/healing.md"
+  },
+  "bundles": {
+    "surge": [
+      "surge-intro",
+      "surge-1",
+      "surge-2",
+      "surge-3",
+      "surge-4",
+      "surge-5",
+      "surge-access",
+      "surge-6",
+      "surge-notes"
+    ],
+    "erika": [
+      "erika-intro",
+      "erika-1",
+      "erika-2",
+      "erika-3",
+      "erika-4",
+      "erika-5",
+      "erika-6",
+      "erika-7",
+      "erika-8",
+      "erika-notes"
+    ],
+    "all": [
+      "introduction",
+      "title",
+      "bedroom",
+      "home",
+      "pallet",
+      "starter",
+      "parcel",
+      "forest",
+      "brock",
+      "misty",
+      "surge",
+      "erika",
+      "stuck",
+      "healing",
+      "rules"
+    ],
+    "surge.bill": [
+      "surge-intro",
+      "surge-1",
+      "surge-2",
+      "surge-notes"
+    ],
+    "surge.captain": [
+      "surge-intro",
+      "surge-2",
+      "surge-3",
+      "surge-4",
+      "surge-notes"
+    ],
+    "surge.teach_cut": [
+      "surge-intro",
+      "surge-5",
+      "surge-notes"
+    ],
+    "surge.gym": [
+      "surge-intro",
+      "surge-access",
+      "surge-6",
+      "surge-notes"
+    ],
+    "erika.return_cerulean": [
+      "erika-intro",
+      "erika-1",
+      "erika-2",
+      "erika-notes"
+    ],
+    "erika.route9": [
+      "erika-intro",
+      "erika-2",
+      "erika-3",
+      "erika-notes"
+    ],
+    "erika.rock_tunnel": [
+      "erika-intro",
+      "erika-2",
+      "erika-4",
+      "erika-notes"
+    ],
+    "erika.lavender": [
+      "erika-intro",
+      "erika-5",
+      "erika-notes"
+    ],
+    "erika.underground_west": [
+      "erika-intro",
+      "erika-6",
+      "erika-notes"
+    ],
+    "erika.celadon": [
+      "erika-intro",
+      "erika-7",
+      "erika-8",
+      "erika-notes"
+    ],
+    "erika.gym": [
+      "erika-intro",
+      "erika-7",
+      "erika-8",
+      "erika-notes"
+    ],
+    "surge.gym_access": [
+      "surge-intro",
+      "surge-access",
+      "surge-notes"
+    ]
+  },
+  "matches": [
+    {
+      "keywords": [
+        "name",
+        "keyboard",
+        "letter",
+        "rival name",
+        "your name",
+        "title",
+        "new game"
+      ],
+      "include": [
+        "title"
+      ]
+    },
+    {
+      "keywords": [
+        "2f",
+        "bedroom",
+        "stairs"
+      ],
+      "include": [
+        "bedroom"
+      ]
+    },
+    {
+      "keywords": [
+        "1f",
+        "mom",
+        "living",
+        "door mat",
+        "doormat"
+      ],
+      "include": [
+        "home"
+      ]
+    },
+    {
+      "keywords": [
+        "lab",
+        "starter",
+        "pok\u00e9 ball",
+        "poke ball",
+        "ball table",
+        "aide"
+      ],
+      "include": [
+        "starter"
+      ]
+    },
+    {
+      "keywords": [
+        "pallet",
+        "fence",
+        "post"
+      ],
+      "include": [
+        "pallet"
+      ]
+    },
+    {
+      "keywords": [
+        "parcel",
+        "pokedex",
+        "pok\u00e9dex",
+        "mart",
+        "aide"
+      ],
+      "include": [
+        "parcel"
+      ]
+    },
+    {
+      "keywords": [
+        "route 1",
+        "viridian forest",
+        "forest",
+        "ledge",
+        "viridian"
+      ],
+      "include": [
+        "forest"
+      ]
+    },
+    {
+      "keywords": [
+        "pewter",
+        "brock"
+      ],
+      "include": [
+        "brock"
+      ]
+    },
+    {
+      "keywords": [
+        "route 3",
+        "route 4",
+        "moon",
+        "cerulean",
+        "misty",
+        "route 24",
+        "route 25"
+      ],
+      "include": [
+        "misty"
+      ]
+    },
+    {
+      "keywords": [
+        "bill",
+        "route 5",
+        "route 6",
+        "underground",
+        "vermilion",
+        "surge",
+        "anne"
+      ],
+      "include": [
+        "surge"
+      ]
+    },
+    {
+      "keywords": [
+        "erika",
+        "celadon",
+        "lavender",
+        "rock tunnel",
+        "route 7",
+        "route 8",
+        "route 9",
+        "route 10",
+        "diglett",
+        "flash"
+      ],
+      "include": [
+        "erika"
+      ]
+    },
+    {
+      "keywords": [
+        "stuck",
+        "noop",
+        "oscillat",
+        "bounce",
+        "loop"
+      ],
+      "include": [
+        "stuck"
+      ]
+    }
+  ],
+  "stage_hints": {
+    "surge.gym": "CUT is learned and you are inside Vermilion Gym: solve the switch locks, then earn Thunder.",
+    "surge.teach_cut": "HM01 is held but no living party member has CUT: teach it to a compatible living member through the menus.",
+    "surge.captain": "S.S. Ticket is held but HM01 is missing: reach Vermilion via the Underground Path, then visit the S.S. Anne captain.",
+    "surge.bill": "S.S. Ticket, HM01 and learned CUT are missing: visit Bill on Route 25 BEFORE trying to reach Vermilion.",
+    "surge.gym_access": "CUT is learned: approach the gym tree, use the field move, verify the opening, then enter Vermilion Gym."
+  }
+}

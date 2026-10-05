@@ -22,9 +22,7 @@ from nuzlocke.state.models import GameAction
 
 @pytest.fixture
 def env(tmp_path: Path) -> NousRedEnvironment:
-    e = NousRedEnvironment(
-        base_url="http://127.0.0.1:8765", run_dir=tmp_path, auto_start=False, press_interval_s=0.0
-    )
+    e = NousRedEnvironment(base_url="http://127.0.0.1:8765", run_dir=tmp_path, auto_start=False, press_interval_s=0.0)
     e._client = MagicMock()
     e.observe = MagicMock(return_value=None)  # type: ignore[method-assign]
     return e
@@ -32,11 +30,7 @@ def env(tmp_path: Path) -> NousRedEnvironment:
 
 def _state(*, facing: str = "up", x: int = 5, y: int = 5) -> dict:
     return {
-        "player": {
-            "position": {"x": x, "y": y, "map_name": "Pallet Town"},
-            "facing": facing,
-            "name": "RED",
-        },
+        "player": {"position": {"x": x, "y": y, "map_name": "Pallet Town"}, "facing": facing, "name": "RED"},
         "map": {"map_name": "Pallet Town", "map_id": 0},
         "dialog": {"active": False, "joy_ignore": 0, "text": None},
         "battle": {"in_battle": False, "type": "none"},
@@ -47,19 +41,13 @@ def _state(*, facing: str = "up", x: int = 5, y: int = 5) -> dict:
 
 
 def _posted_actions(post: MagicMock) -> list[list[str]]:
-    return [
-        c.kwargs["json"]["actions"] for c in post.call_args_list if c.args[0].endswith("/action")
-    ]
+    return [c.kwargs["json"]["actions"] for c in post.call_args_list if c.args[0].endswith("/action")]
 
 
 def _wire(env: NousRedEnvironment, facing: str) -> None:
     state = _state(facing=facing)
-    env._client.get = MagicMock(
-        return_value=MagicMock(status_code=200, json=lambda: state, raise_for_status=lambda: None)
-    )
-    env._client.post = MagicMock(
-        return_value=MagicMock(content=b"{}", json=dict, raise_for_status=lambda: None)
-    )
+    env._client.get = MagicMock(return_value=MagicMock(status_code=200, json=lambda: state, raise_for_status=lambda: None))
+    env._client.post = MagicMock(return_value=MagicMock(content=b"{}", json=dict, raise_for_status=lambda: None))
 
 
 @pytest.mark.parametrize("facing", ["up", "down", "left", "right"])
@@ -93,3 +81,28 @@ def test_multi_tile_macro_is_one_press_per_tile(env: NousRedEnvironment):
 
     assert _posted_actions(env._client.post) == [["walk_right"], ["walk_right"], ["walk_right"]]
     assert result.executed == [GameAction.WALK_RIGHT] * 3
+
+
+@pytest.mark.parametrize("button,opcode", [(GameAction.PRESS_A, "press_a"), (GameAction.PRESS_START, "press_start")])
+def test_facing_a_blocker_preserves_the_following_interaction(env, button, opcode):
+    facing = {"value": "up"}
+
+    def get(url, **kwargs):
+        return MagicMock(status_code=200, json=lambda: _state(facing=facing["value"]), raise_for_status=lambda: None)
+
+    def post(url, json=None, **kwargs):
+        if (json or {}).get("actions") == ["walk_right"]:
+            facing["value"] = "right"
+        return MagicMock(content=b"{}", json=dict, raise_for_status=lambda: None)
+
+    env._client.get = MagicMock(side_effect=get)
+    env._client.post = MagicMock(side_effect=post)
+    result = env.execute([GameAction.WALK_RIGHT, button])
+    assert result.executed == [GameAction.WALK_RIGHT, button]
+    assert _posted_actions(env._client.post) == [["walk_right"], [opcode, "wait_30"]]
+
+
+def test_failed_facing_does_not_open_the_field_menu(env):
+    _wire(env, "up")
+    result = env.execute([GameAction.WALK_RIGHT, GameAction.PRESS_START])
+    assert result.executed == [GameAction.WALK_RIGHT]

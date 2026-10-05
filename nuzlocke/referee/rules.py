@@ -4,20 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from nuzlocke.assets import data as asset_data
 from nuzlocke.state.models import PlayerObservation
 
 # Matches config/rules_red.yaml's level_caps keys, in badge-earned order.
-MILESTONE_ORDER: tuple[str, ...] = (
-    "brock",
-    "misty",
-    "lt_surge",
-    "erika",
-    "koga",
-    "saber",
-    "blaine",
-    "giovanni",
-    "elite_four",
-)
+MILESTONE_ORDER = tuple(asset_data("milestones.json"))
 FAINT_STATUSES = {"faint", "fainted", "dead"}
 
 
@@ -58,17 +49,9 @@ class NuzlockeReferee:
     def note_faint(self, mon: dict[str, Any], context: dict[str, Any]) -> None:
         nickname = mon.get("nickname") or mon.get("species")
         identity = mon.get("capture_id") or nickname
-        if all(
-            (entry.get("capture_id") or entry.get("nickname")) != identity
-            for entry in self.death_ledger
-        ):
+        if all((entry.get("capture_id") or entry.get("nickname")) != identity for entry in self.death_ledger):
             self.death_ledger.append(
-                {
-                    "species": mon.get("species"),
-                    "nickname": nickname,
-                    "capture_id": mon.get("capture_id"),
-                    **context,
-                }
+                {"species": mon.get("species"), "nickname": nickname, "capture_id": mon.get("capture_id"), **context}
             )
 
     def note_wipe(self, reason: str, party: list[dict[str, Any]], context: dict[str, Any]) -> None:
@@ -116,8 +99,7 @@ class NuzlockeReferee:
             mon["capture_id"] = match
             mon["dead"] = self.is_dead(mon)
             mon["ineligible"] = mon["dead"] or (
-                (mon.get("level") or 0) > self.current_cap
-                and not (obs.in_battle and match in self.battle_eligible)
+                (mon.get("level") or 0) > self.current_cap and not (obs.in_battle and match in self.battle_eligible)
             )
             self.roster[match].update(species=mon.get("species"), nickname=mon.get("nickname"))
             pp_ceiling = self.roster[match].setdefault("observed_max_pp", {})

@@ -11,12 +11,7 @@ from nuzlocke.state.store import EventStore
 
 class ActionArbiter:
     def __init__(
-        self,
-        env: GameEnvironment,
-        store: EventStore,
-        *,
-        active_owner: AgentRole | None = None,
-        max_actions: int = 8,
+        self, env: GameEnvironment, store: EventStore, *, active_owner: AgentRole | None = None, max_actions: int = 8
     ) -> None:
         self.env = env
         self.store = store
@@ -50,29 +45,18 @@ class ActionArbiter:
             policy = self.policy(obs)
             rejection = policy.validate(proposal.actions)
             if rejection:
-                self.store.append(
-                    "policy_rejection",
-                    {"reason": rejection, "actions": [a.value for a in proposal.actions]},
-                )
+                self.store.append("policy_rejection", {"reason": rejection, "actions": [a.value for a in proposal.actions]})
                 legal = policy.legal_sequences
                 actions = legal.get(policy.required) if policy.required else None
                 actions = actions or [GameAction.WAIT_60]
-                proposal = proposal.model_copy(
-                    update={"actions": actions, "reason": f"System 3: {rejection}"}
-                )
+                proposal = proposal.model_copy(update={"actions": actions, "reason": f"System 3: {rejection}"})
                 rejection = policy.validate(actions)
-        self.store.append(
-            "proposal", {"proposal_id": proposal_id, **proposal.model_dump(mode="json")}
-        )
+        self.store.append("proposal", {"proposal_id": proposal_id, **proposal.model_dump(mode="json")})
         if rejection:
-            result = ArbiterResult(
-                proposal_id=proposal_id, status="rejected", rejection_reason=rejection
-            )
+            result = ArbiterResult(proposal_id=proposal_id, status="rejected", rejection_reason=rejection)
         else:
             action_result = self.env.execute(proposal.actions)
-            state_ref = self.store.append(
-                "observation", action_result.observation.model_dump(mode="json")
-            )
+            state_ref = self.store.append("observation", action_result.observation.model_dump(mode="json"))
             result = ArbiterResult(
                 proposal_id=proposal_id,
                 status="partial" if action_result.stopped_early_because else "approved",

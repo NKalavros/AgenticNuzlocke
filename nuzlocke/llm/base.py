@@ -9,6 +9,10 @@ from typing import Any
 from nuzlocke.state.models import AgentRole, LLMResponse
 
 
+class ProviderError(RuntimeError):
+    """Sanitized backend failure; the orchestrator must pause before more input."""
+
+
 class LLMProvider(ABC):
     name: str
 

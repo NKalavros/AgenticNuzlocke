@@ -8,30 +8,22 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from typing import Any
 
 import httpx
 
+from nuzlocke.llm.decisions import DecisionError, DecisionResult
 
-class JevDecisionError(RuntimeError):
-    """The decisions endpoint refused the call or returned an unusable answer."""
-
-
-@dataclass(frozen=True)
-class JevAnswers:
-    action: str
-    confidence: float
-    plan_stale: float
-    objective_done: float
-    model: str
-    # The whole distribution over the menu. Confidence is its spread, not the top value.
-    probabilities: dict[str, float] = field(default_factory=dict)
-    latency_s: float = 0.0
+# Compatibility names for existing callers and stored-event readers.
+JevDecisionError = DecisionError
+JevAnswers = DecisionResult
 
 
 class JevClient:
     """One decisions call per prompt cycle. Retries 429 and 529 with backoff."""
+
+    name = "jev"
 
     def __init__(
         self,
@@ -50,18 +42,11 @@ class JevClient:
         self.max_retries = max(1, int(max_retries))
         self._sleep = sleep or time.sleep
         self._client = httpx.Client(
-            base_url=base_url.rstrip("/"),
-            timeout=timeout_s,
-            headers={"Authorization": f"Bearer {api_key}"},
-            transport=transport,
+            base_url=base_url.rstrip("/"), timeout=timeout_s, headers={"Authorization": f"Bearer {api_key}"}, transport=transport
         )
 
     def decide(
-        self,
-        *,
-        state: dict[str, Any] | str | list[Any],
-        questions: dict[str, Any],
-        allowed: set[str] | None = None,
+        self, *, state: dict[str, Any] | str | list[Any], questions: dict[str, Any], allowed: set[str] | None = None
     ) -> JevAnswers:
         body = {"model": self.model, "state": state, "questions": questions}
         delay = 0.25

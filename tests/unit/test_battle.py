@@ -59,6 +59,182 @@ def _obs(rows: list[str], kind: str = "trainer") -> PlayerObservation:
     )
 
 
+def _butterfree(status="SLP"):
+    obs = _obs([r.replace("SCRATCH", "SLEEP POWDER").replace("GROWL", "CONFUSION") for r in MOVES])
+    obs.battle["enemy"] = {
+        "species": "Starmie",
+        "level": 21,
+        "hp": 59,
+        "max_hp": 59,
+        "status": status,
+    }
+    obs.party = [
+        {
+            "species": "Butterfree",
+            "hp": 24,
+            "max_hp": 58,
+            "status": "OK",
+            "moves": [
+                {"id": 79, "name": "SLEEP POWDER", "pp": 5},
+                {"id": 93, "name": "CONFUSION", "pp": 25},
+            ],
+        }
+    ]
+    return obs
+
+
+def test_sleep_powder_has_effect_information_and_no_damage_matchup():
+    obs = _butterfree("OK")
+    criteria = battle.move_questions(obs, ("SLEEP POWDER", "CONFUSION"), {})["action"]["criteria"]
+    assert "puts the opponent to sleep" in criteria["move_0"]
+    assert "no direct damage" in criteria["move_0"]
+    assert "accuracy 75%" in criteria["move_0"]
+    assert "super effective" not in criteria["move_0"]
+    assert "not very effective" in criteria["move_1"]
+    assert "power 50" in criteria["move_1"]
+
+
+def test_battle_handoff_keeps_strategy_and_blocks_repeated_sleep_even_on_fallback():
+    from nuzlocke.agents.policy import decision
+    from nuzlocke.agents.roles import _battle_plan
+    from nuzlocke.orchestration.loop import RunLoop
+    from nuzlocke.state.models import PlanCard, PlanScene
+
+    obs = _butterfree()
+    loop = RunLoop.__new__(RunLoop)
+    loop.move_types = {}
+    loop.plan = PlanCard(
+        scene=PlanScene.BATTLE,
+        see="Starmie sleeps",
+        plan="Attack while it sleeps",
+        do_not=["Do not use Sleep Powder while asleep"],
+        battle_plan=_battle_plan(
+            {
+                "moves": ["SLEEP POWDER", "CONFUSION"],
+                "opening_moves": ["SLEEP POWDER"],
+                "notes": "Use Confusion until it wakes up.",
+                "move_rules": [
+                    {"move": "SLEEP POWDER", "enemy_status": ["OK"], "reason": "Sleep once"}
+                ],
+            }
+        ),
+    )
+    received = []
+
+    def decide(state, questions):
+        received.append((state, questions))
+        # Even a confident invalid choice must not bypass the status or plan restriction.
+        return JevAnswers("move_0", 0.95, 0, 0, "jev", {"move_0": 0.95})
+
+    args, _ = _turn_args(jev_decide=decide, battle_plan=loop._battle_plan(obs))
+    turn = system1_turn(obs=obs, **args)
+    state, questions = received[0]
+    assert state["system2"]["notes"] == "Use Confusion until it wakes up."
+    assert state["system2"]["do_not"] == loop.plan.do_not
+    assert state["system2"]["intent"] == loop.plan.plan
+    assert state["battle"]["enemy"]["status"] == "SLP"
+    assert "move_0" not in questions["action"]["criteria"]
+    assert turn.choice == "move_1"
+    assert turn.actions == [GameAction.WALK_DOWN, GameAction.PRESS_A]
+    assert decision(obs).validate(turn.actions) is None
+    assert decision(obs).validate([GameAction.PRESS_A]) is not None
+    assert loop._battle_brief(obs)["our_moves"][0]["unavailable_reason"]
+    # Sleep counter ticks are the same condition; waking requires a fresh strategy.
+    obs.battle["enemy"]["status"] = "SLP(2)"
+    assert loop._battle_plan(obs)
+    obs.battle["enemy"]["status"] = "OK"
+    assert loop._battle_plan(obs) is None
+
+
+def test_plan_conditions_and_bans_apply_with_unknown_status_and_to_fallback():
+    obs = _butterfree(None)
+    plan = {
+        "moves": ["SLEEP POWDER", "CONFUSION"],
+        "move_rules": [
+            {"move": "Sleep Powder", "enemy_status": ["OK"], "reason": "Only if healthy"}
+        ],
+    }
+    screen = battle.parse_battle(obs.screen_rows)
+    assert battle.fallback(screen, obs, plan=plan) == "move_1"
+    obs.battle["enemy"]["status"] = "OK"
+    criteria = battle.move_questions(obs, screen.options, {}, plan)["action"]["criteria"]
+    assert "condition met" in criteria["move_0"]
+    plan["avoid_moves"] = ["sleep powder"]
+    assert battle.fallback(screen, obs, plan=plan) == "move_1"
+
+
+def test_status_moves_do_not_block_damaging_moves_with_secondary_effects():
+    obs = _butterfree("PSN")
+    for name in ("SLEEP POWDER", "STUN SPORE", "POISONPOWDER"):
+        assert battle.move_facts(obs, name)["unavailable_reason"]
+    for name in ("CONFUSION", "EMBER", "THUNDERBOLT", "NIGHT SHADE"):
+        assert not battle.move_facts(obs, name)["unavailable_reason"]
+    assert battle.move_facts(obs, "NIGHT SHADE")["category"] == "special damage"
+
+
+def test_only_blocked_moves_can_back_out_then_switch():
+    obs = _butterfree()
+    obs.screen_rows = [r.replace("CONFUSION", "-") for r in obs.screen_rows]
+    obs.party[0]["moves"] = obs.party[0]["moves"][:1]
+    obs.party.append({"species": "Pidgeotto", "hp": 50, "max_hp": 50})
+    args, _ = _turn_args(battle_plan={"moves": ["SLEEP POWDER"]})
+    turn = system1_turn(obs=obs, **args)
+    assert turn.actions == [GameAction.PRESS_B]
+    assert "fight" not in battle.menu_questions(obs)["action"]["criteria"]
+    from nuzlocke.agents.policy import decision
+
+    assert decision(obs).validate(turn.actions) is None
+
+
+def test_invalid_plan_condition_is_not_silently_discarded():
+    from nuzlocke.agents.roles import _battle_plan
+
+    assert (
+        _battle_plan(
+            {
+                "moves": ["SLEEP POWDER"],
+                "move_rules": [{"move": "SLEEP POWDER", "enemy_status": ["SOMETHING"]}],
+            }
+        )
+        == {}
+    )
+
+
+def test_no_applicable_move_or_switch_stops_instead_of_reopening_the_move_menu():
+    import pytest
+
+    from nuzlocke.llm.jev import JevDecisionError
+
+    obs = _butterfree()
+    obs.party[0]["moves"] = obs.party[0]["moves"][:1]
+    obs.screen_rows = MENU
+    args, _ = _turn_args(battle_plan={"moves": ["SLEEP POWDER"]})
+    with pytest.raises(JevDecisionError, match="No applicable battle choices"):
+        system1_turn(obs=obs, **args)
+    # Exhausted PP is different: FIGHT must remain available for automatic Struggle.
+    obs.party[0]["moves"][0]["pp"] = 0
+    assert "fight" in battle.menu_questions(obs)["action"]["criteria"]
+
+
+def test_completed_growl_openers_are_not_repeatable_choices():
+    obs = _obs(MOVES)
+    obs.party[0]["moves"][1]["pp"] = 40
+    plan = {"moves": ["SCRATCH"], "opening_moves": ["GROWL", "GROWL"]}
+    args, _ = _turn_args(battle_plan=plan)
+    for remaining in (2, 1):
+        assert len(plan["opening_moves"]) == remaining
+        assert system1_turn(obs=obs, **args).choice == "move_1"
+        # Controller consumes each opening only after an observed PP decrease.
+        obs.party[0]["moves"][1]["pp"] -= 1
+        plan["opening_moves"].pop(0)
+    choices = battle.move_questions(obs, ("SCRATCH", "GROWL"), {}, plan)["action"]["criteria"]
+    assert list(choices) == ["move_0"]
+    assert system1_turn(obs=obs, **args).choice == "move_0"
+    # An explicitly repeatable conditional status move remains available.
+    plan["moves"].append("GROWL")
+    assert not battle.move_facts(obs, "GROWL", plan=plan)["unavailable_reason"]
+
+
 def test_reads_the_battle_menu_and_the_move_list():
     menu = battle.parse_battle(MENU)
     assert (menu.kind, menu.cursor) == ("menu", 0)
@@ -236,9 +412,10 @@ def test_mart_quantity_respects_money_and_existing_ball_supply():
 
 def test_exhausted_move_menu_requires_return_to_fight():
     from nuzlocke.agents.policy import decision
+
     obs = _obs(MOVES)
-    for move in obs.party[0]['moves']:
-        move['pp'] = 0
+    for move in obs.party[0]["moves"]:
+        move["pp"] = 0
     policy = decision(obs)
-    assert policy.required == 'back'
-    assert policy.legal_sequences['back'] == [GameAction.PRESS_B]
+    assert policy.required == "back"
+    assert policy.legal_sequences["back"] == [GameAction.PRESS_B]

@@ -125,11 +125,21 @@ class PlanScene(str, Enum):
     MENU = "menu"
 
 
+class BattleMoveRule(BaseModel):
+    """A move is offered only in these observed enemy status conditions."""
+
+    move: str = Field(min_length=1)
+    enemy_status: list[Literal["OK", "SLP", "PSN", "BRN", "FRZ", "PAR", "UNKNOWN"]] = Field(min_length=1)
+    reason: str = ""
+
+
 class BattlePlan(BaseModel):
     """Conditional trainer strategy, with an opening consumed only on observed PP use."""
 
     moves: list[str] = Field(default_factory=list)
     opening_moves: list[str] = Field(default_factory=list)
+    move_rules: list[BattleMoveRule] = Field(default_factory=list)
+    avoid_moves: list[str] = Field(default_factory=list)
     switch_to: str | None = None
     switch_below: float = Field(default=0.3, ge=0, le=1)
     notes: str = ""

@@ -23,6 +23,22 @@ class Journal:
         self.lines: list[str] = []
         self._mark = 0
 
+    def restore_recent(self) -> None:
+        """Seed a new planner conversation from the run's persisted journal."""
+        from collections import deque
+
+        if not self.path.exists():
+            return
+        with self.path.open() as source:
+            rows = deque(source, maxlen=_CAP)
+        for row in rows:
+            try:
+                entry = json.loads(row)
+                self.lines.append(entry.get("line") or format_line(entry))
+            except (ValueError, TypeError, AttributeError):
+                continue
+        self._mark = 0
+
     def add(self, entry: dict[str, Any]) -> str:
         line = format_line(entry)
         self.lines.append(line)
@@ -66,9 +82,7 @@ def _squash(actions: list[str]) -> str:
     return ", ".join(out)
 
 
-def outcome(
-    before: Any, after: Any, *, moved_tiles: int, text: str | None, stopped: str | None
-) -> str:
+def outcome(before: Any, after: Any, *, moved_tiles: int, text: str | None, stopped: str | None) -> str:
     """One phrase for what a cycle's presses did."""
     if after.in_battle and not before.in_battle:
         return "a battle started"

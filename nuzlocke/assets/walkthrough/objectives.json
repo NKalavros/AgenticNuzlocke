@@ -1,0 +1,167 @@
+{
+  "erika.return_cerulean": {
+    "default": {
+      "primary": "Return to Cerulean via Route 6 and the north-south Underground Path; keep CUT available.",
+      "secondary": "Keep a living CUT user; prepare legal party members for Erika's level-29 cap.",
+      "tertiary": "Defeat Erika and verify the Rainbow Badge."
+    },
+    "variants": []
+  },
+  "erika.route9": {
+    "default": {
+      "primary": "Use CUT east of Cerulean; cross Route 9 to Route 10's Center and Rock Tunnel.",
+      "secondary": "Keep a living CUT user; prepare legal party members for Erika's level-29 cap.",
+      "tertiary": "Defeat Erika and verify the Rainbow Badge."
+    },
+    "variants": []
+  },
+  "erika.rock_tunnel": {
+    "default": {
+      "primary": "Traverse Rock Tunnel to southern Route 10; use FLASH if available and track the ladder sequence.",
+      "secondary": "Keep a living CUT user; prepare legal party members for Erika's level-29 cap.",
+      "tertiary": "Defeat Erika and verify the Rainbow Badge."
+    },
+    "variants": []
+  },
+  "erika.lavender": {
+    "default": {
+      "primary": "Continue south to Lavender Town and heal before heading west.",
+      "secondary": "Keep a living CUT user; prepare legal party members for Erika's level-29 cap.",
+      "tertiary": "Defeat Erika and verify the Rainbow Badge."
+    },
+    "variants": []
+  },
+  "erika.underground_west": {
+    "default": {
+      "primary": "Take Route 8's Underground Path west to Route 7, then enter Celadon.",
+      "secondary": "Keep a living CUT user; prepare legal party members for Erika's level-29 cap.",
+      "tertiary": "Defeat Erika and verify the Rainbow Badge."
+    },
+    "variants": []
+  },
+  "erika.celadon": {
+    "default": {
+      "primary": "Heal in Celadon, then use CUT to enter the southwest gym.",
+      "secondary": "Keep a living CUT user; prepare legal party members for Erika's level-29 cap.",
+      "tertiary": "Defeat Erika and verify the Rainbow Badge."
+    },
+    "variants": []
+  },
+  "erika.gym": {
+    "default": {
+      "primary": "Clear a route through Celadon Gym, heal as needed, then challenge Erika.",
+      "secondary": "Keep a living CUT user; prepare legal party members for Erika's level-29 cap.",
+      "tertiary": "Defeat Erika and verify the Rainbow Badge."
+    },
+    "variants": []
+  },
+  "surge.bill": {
+    "default": {
+      "primary": "Visit Bill via Route 24 and Route 25; obtain the S.S. Ticket.",
+      "secondary": "Reach Vermilion via the robbed house and Underground Path; obtain HM01 on the S.S. Anne.",
+      "tertiary": "Challenge Lt. Surge in Vermilion Gym."
+    },
+    "variants": [
+      {
+        "maps": [
+          35
+        ],
+        "objectives": {
+          "primary": "Head east to Route 25, then visit Bill for the S.S. Ticket.",
+          "secondary": "Reach Vermilion via the robbed house and Underground Path; obtain HM01 on the S.S. Anne.",
+          "tertiary": "Challenge Lt. Surge in Vermilion Gym."
+        }
+      },
+      {
+        "maps": [
+          36
+        ],
+        "objectives": {
+          "primary": "Reach Bill's cottage at the east end of Route 25 for the S.S. Ticket.",
+          "secondary": "Reach Vermilion via the robbed house and Underground Path; obtain HM01 on the S.S. Anne.",
+          "tertiary": "Challenge Lt. Surge in Vermilion Gym."
+        }
+      },
+      {
+        "maps": [
+          88
+        ],
+        "objectives": {
+          "primary": "Help Bill use the separation machine, then obtain the S.S. Ticket.",
+          "secondary": "Reach Vermilion via the robbed house and Underground Path; obtain HM01 on the S.S. Anne.",
+          "tertiary": "Challenge Lt. Surge in Vermilion Gym."
+        }
+      }
+    ]
+  },
+  "surge.captain": {
+    "default": {
+      "primary": "Reach Vermilion via Cerulean's robbed house, Route 5's Underground Path, and Route 6.",
+      "secondary": "Visit the S.S. Anne captain and obtain HM01 CUT.",
+      "tertiary": "Challenge Lt. Surge in Vermilion Gym."
+    },
+    "variants": [
+      {
+        "maps": [
+          5,
+          89,
+          90,
+          91,
+          92,
+          93,
+          94,
+          95,
+          96,
+          97,
+          98,
+          99,
+          100,
+          101,
+          102,
+          103,
+          104
+        ],
+        "objectives": {
+          "primary": "Visit the S.S. Anne captain and obtain HM01 CUT.",
+          "secondary": "Teach CUT to a compatible living party member; open the gym entrance.",
+          "tertiary": "Challenge Lt. Surge in Vermilion Gym."
+        }
+      }
+    ]
+  },
+  "surge.teach_cut": {
+    "default": {
+      "primary": "Teach HM01 CUT to a compatible living party member.",
+      "secondary": "Use CUT to open Vermilion Gym; solve its switch locks.",
+      "tertiary": "Challenge Lt. Surge in Vermilion Gym."
+    },
+    "variants": []
+  },
+  "surge.gym": {
+    "default": {
+      "primary": "Solve Vermilion Gym's switch locks; verify the barrier opens.",
+      "secondary": "Heal and prepare the party for Lt. Surge within the current level cap.",
+      "tertiary": "Challenge Lt. Surge and verify the Thunder Badge before continuing."
+    },
+    "variants": []
+  },
+  "surge.gym_access": {
+    "default": {
+      "primary": "Reach Vermilion Gym's entrance; approach its blocking tree before targeting the gym door.",
+      "secondary": "Face the tree and use the living CUT user's POK\u00e9MON menu; verify the opening, then enter the gym.",
+      "tertiary": "Solve the switch locks, prepare safely, and defeat Lt. Surge; verify Thunder."
+    },
+    "variants": [
+      {
+        "maps": [
+          5
+        ],
+        "objectives": {
+          "primary": "Approach the gym tree at (15,18) from (14,18); face right and use CUT from the living user's POK\u00e9MON menu.",
+          "secondary": "Verify the entrance is open, then enter Vermilion Gym at (12,19).",
+          "tertiary": "Solve the switch locks, prepare safely, and defeat Lt. Surge; verify Thunder."
+        }
+      }
+    ]
+  }
+}

@@ -1,4 +1,4 @@
-# Trainers and bosses on the way to Misty, from vanilla Pokemon Red (map ids are pokered's,
+# Early trainers and bosses through Erika, from vanilla Pokemon Red (map ids are pokered's,
 # see nuzlocke/environment/maps.py). Red Star is a ROM hack and may change teams: in battle the
 # enemy read from RAM (wEnemyMon) is the truth, and a mismatch is worth correcting here.
 # `avoidable`: whether the path can go around the trainer's line of sight (false = must fight,
@@ -88,3 +88,39 @@
   team: [[Staryu, 18], [Starmie, 21]]
   avoidable: false
   note: "Water/Psychic. Grass and Electric are strong. Starmie is fast and uses BUBBLEBEAM."
+
+- map_id: 96
+  map: S.S. Anne 2F
+  trainer: Rival (Bulbasaur starter branch)
+  team: [[Pidgeotto, 19], [Raticate, 16], [Kadabra, 18], [Charmeleon, 20]]
+  avoidable: false
+  note: "Captain corridor. Other starter choices change his starter; observed enemy data overrides this vanilla prior. Heal before approaching."
+- map_id: 92
+  map: Vermilion Gym
+  trainer: Gentleman
+  team: [[Pikachu, 23]]
+  avoidable: null
+- map_id: 92
+  map: Vermilion Gym
+  trainer: Rocker
+  team: [[Voltorb, 20], [Magnemite, 20], [Voltorb, 20]]
+  avoidable: null
+- map_id: 92
+  map: Vermilion Gym
+  trainer: Sailor
+  team: [[Pikachu, 21], [Pikachu, 21]]
+  avoidable: null
+- map_id: 92
+  map: Vermilion Gym
+  trainer: Lt. Surge
+  boss: lt_surge
+  team: [[Voltorb, 21], [Pikachu, 18], [Raichu, 24]]
+  avoidable: false
+  note: "Electric damage threatens Flying/Water members. Ground is immune to Electric damage, but check the actual moves, HP and legal roster. No battle healing items."
+- map_id: 134
+  map: Celadon Gym
+  trainer: Erika
+  boss: erika
+  team: [[Victreebel, 29], [Tangela, 24], [Vileplume, 29]]
+  avoidable: false
+  note: "Grass with Poison on Victreebel/Vileplume. Consider legal healthy Flying/Fire/Psychic attackers; account for status and trapping, and trust live enemy data. No battle healing items."

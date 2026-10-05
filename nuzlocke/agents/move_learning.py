@@ -14,6 +14,7 @@ from pathlib import Path
 import yaml
 
 from nuzlocke.agents.jev_policy import accepts
+from nuzlocke.assets import data as asset_data
 from nuzlocke.environment.screen_text import parse_screen
 from nuzlocke.state.models import GameAction as A
 
@@ -88,9 +89,7 @@ def learning_phase(obs, pending=None):
 def legal_choices(mon, new_id):
     moves = mon.get("moves", [])
     new = move_data().get(new_id, {})
-    damaging = [
-        i for i, move in enumerate(moves) if move_data().get(move.get("id"), {}).get("power", 0) > 1
-    ]
+    damaging = [i for i, move in enumerate(moves) if move_data().get(move.get("id"), {}).get("power", 0) > 1]
     choices = {"keep": "Keep the existing moves and decline the new move."}
     for i, move in enumerate(moves):
         if move.get("id") in HM:
@@ -105,27 +104,7 @@ def legal_choices(mon, new_id):
 
 def fallback_choice(mon, new_id, choices):
     # Conservative utility ordering for an unsure Jev answer. Not a damage calculation.
-    status = {
-        14: 65,
-        45: 10,
-        73: 65,
-        74: 35,
-        77: 35,
-        78: 65,
-        79: 90,
-        81: 8,
-        92: 65,
-        95: 80,
-        104: 30,
-        105: 80,
-        106: 4,
-        110: 4,
-        113: 50,
-        115: 50,
-        116: 0,
-        135: 80,
-        147: 100,
-    }
+    status = {int(key): value for key, value in asset_data("move_preferences.json").items()}
 
     def score(mid):
         m = move_data().get(mid, {})
@@ -133,11 +112,7 @@ def fallback_choice(mon, new_id, choices):
             return 40 + m["power"] * m.get("accuracy", 100) / 100
         return status.get(mid, 20)
 
-    options = [
-        (score(m.get("id")), i)
-        for i, m in enumerate(mon.get("moves", []))
-        if f"replace_{i}" in choices
-    ]
+    options = [(score(m.get("id")), i) for i, m in enumerate(mon.get("moves", [])) if f"replace_{i}" in choices]
     if not options:
         return "keep"
     old, i = min(options)
@@ -164,14 +139,7 @@ class MoveLearner:
         p = self.pending
         if not p or p.get("verified"):
             return
-        mon = next(
-            (
-                m
-                for m in obs.party
-                if p.get("capture_id") and m.get("capture_id") == p["capture_id"]
-            ),
-            None,
-        )
+        mon = next((m for m in obs.party if p.get("capture_id") and m.get("capture_id") == p["capture_id"]), None)
         if mon is None and p["slot"] < len(obs.party):
             mon = obs.party[p["slot"]]
         if mon is None:
@@ -189,17 +157,11 @@ class MoveLearner:
             p["verified"] = True
             record("move_declined", dict(p))
 
-    def turn(self, obs, *, decide=None, record=lambda *_: None, confidence_floor=0.55):
+    def turn(self, obs, *, decide=None, record=lambda *_: None, confidence_floor=0.55, goal=None):
         self.observe(obs, record)
-        if (
-            self.pending
-            and self.pending.get("verified")
-            and obs.learning_move_id != self.pending["new_id"]
-        ):
+        if self.pending and self.pending.get("verified") and obs.learning_move_id != self.pending["new_id"]:
             self.pending = None
-        phase = learning_phase(
-            obs, self.pending if not (self.pending or {}).get("verified") else None
-        )
+        phase = learning_phase(obs, self.pending if not (self.pending or {}).get("verified") else None)
         if phase is None:
             if self.pending and self.pending.get("verified"):
                 self.pending = None
@@ -235,26 +197,27 @@ class MoveLearner:
                         "party": obs.party,
                         "goal": "Improve this Pokémon's permanent moveset for the Nuzlocke. Preserve strong attacks; prefer useful sleep/paralysis and coverage over redundant weak stat moves.",
                         "suggested_choice": fallback,
+                        "objective": goal,
                     }
-                    questions = {
-                        "action": {
-                            "type": "choice",
-                            "instructions": state["goal"],
-                            "criteria": choices,
-                        }
-                    }
+                    questions = {"action": {"type": "choice", "instructions": state["goal"], "criteria": choices}}
                     read = decide(state=state, questions=questions, allowed=set(choices))
                     accepted = accepts(read, confidence_floor) and read.action in choices
                     if accepted:
                         choice = read.action
                     record(
-                        "jev_call",
+                        "jev_call" if getattr(read, "provider", "jev") == "jev" else "actor_call",
                         {
+                            "provider": getattr(read, "provider", "jev"),
+                            "model": getattr(read, "model", ""),
+                            "abstain": getattr(read, "abstain", False),
+                            "decision_mode": getattr(read, "decision_mode", "probabilities"),
                             "scene": "move_learning",
                             "menu": choices,
                             "state_bytes": len(json.dumps(state)),
                             "choice": read.action,
-                            "confidence": read.confidence,
+                            "confidence": read.confidence
+                            if getattr(read, "decision_mode", "probabilities") == "probabilities"
+                            else None,
                             "probabilities": read.probabilities,
                             "accepted": accepted,
                             "latency_s": read.latency_s,
@@ -292,9 +255,7 @@ class MoveLearner:
             if slot is None:
                 return [A.WAIT_60]
             expected = normalized(move_data()[p["before"][slot]]["name"])
-            row = next(
-                (i for i, name in enumerate(screen.menu_rows) if normalized(name) == expected), None
-            )
+            row = next((i for i, name in enumerate(screen.menu_rows) if normalized(name) == expected), None)
             if row is None:
                 return [A.WAIT_60]  # Never delete a different move on a stale/partial menu.
             return _toward(screen.cursor_row, row)

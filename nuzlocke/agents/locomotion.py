@@ -14,12 +14,7 @@ from typing import NamedTuple
 from nuzlocke.state.models import GameAction, PlayerObservation
 
 _DELTA = {"up": (-1, 0), "down": (1, 0), "left": (0, -1), "right": (0, 1)}
-_LATERAL = {
-    "up": ("left", "right"),
-    "down": ("left", "right"),
-    "left": ("up", "down"),
-    "right": ("up", "down"),
-}
+_LATERAL = {"up": ("left", "right"), "down": ("left", "right"), "left": ("up", "down"), "right": ("up", "down")}
 _OPPOSITE = {"up": "down", "down": "up", "left": "right", "right": "left"}
 _ACTION = {name: GameAction(f"walk_{name}") for name in _DELTA}
 
@@ -32,10 +27,7 @@ class TileStep(NamedTuple):
 
 def _parsed_grid(text: str | None) -> tuple[list[list[str]], tuple[int, int]] | None:
     """Walk-grid rows and the ``@`` cell. None when the grid cannot be read."""
-    rows = [
-        [part for part in line.split() if part in {".", "#", "@"}]
-        for line in (text or "").splitlines()
-    ]
+    rows = [[part for part in line.split() if part in {".", "#", "@"}] for line in (text or "").splitlines()]
     rows = [row for row in rows if row]
     for row_index, row in enumerate(rows):
         if "@" in row:
@@ -55,10 +47,7 @@ def neighbors_from_ascii(text: str | None) -> dict[str, bool]:
     if parsed is None:
         return {}
     rows, (row, col) = parsed
-    return {
-        name: _cell(rows, row + d_row, col + d_col) == "."
-        for name, (d_row, d_col) in _DELTA.items()
-    }
+    return {name: _cell(rows, row + d_row, col + d_col) == "." for name, (d_row, d_col) in _DELTA.items()}
 
 
 def tile_at(text: str | None, d_col: int, d_row: int) -> str | None:
@@ -88,9 +77,7 @@ def next_tile(*, heading: str | None, grid: str | None, blocked: set[str]) -> Ti
         return None
     tiles = neighbors_from_ascii(grid)
     if not tiles:
-        return (
-            None if _closed(heading, blocked) else TileStep(_ACTION[heading], f"heading {heading}")
-        )
+        return None if _closed(heading, blocked) else TileStep(_ACTION[heading], f"heading {heading}")
     open_dirs = {name for name, open_ in tiles.items() if open_ and not _closed(name, blocked)}
     if heading in open_dirs:
         return TileStep(_ACTION[heading], f"grid open {heading}")
@@ -170,9 +157,7 @@ class GridTrust:
             return obs
         return obs.model_copy(update={"collision_ascii": None})
 
-    def record(
-        self, before: PlayerObservation, after: PlayerObservation, actions: list[str]
-    ) -> bool:
+    def record(self, before: PlayerObservation, after: PlayerObservation, actions: list[str]) -> bool:
         """Score one step. True when this step just made the map untrusted."""
         if len(actions) != 1:
             return False
@@ -206,11 +191,7 @@ class GridTrust:
                 continue
             if step.get("map_name") and before.map_name and step["map_name"] != before.map_name:
                 break
-            if (
-                before.map_id is not None
-                and step.get("map_id") is not None
-                and step["map_id"] != before.map_id
-            ):
+            if before.map_id is not None and step.get("map_id") is not None and step["map_id"] != before.map_id:
                 break
             x0, y0, x1, y1 = (step.get(key) for key in ("x0", "y0", "x1", "y1"))
             if None in (x0, y0, x1, y1):

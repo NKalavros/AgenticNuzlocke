@@ -1,0 +1,1 @@
+3. **Route 5 → Vermilion:** use the small Underground Path building on the eastern side (vanilla door `(17,27)`, destination 71), descend, traverse the north-south tunnel, ascend at the Route 6 end, then head south through Route 6 to Vermilion. The central Saffron gate is blocked by a thirsty guard; it is not the route for this objective.

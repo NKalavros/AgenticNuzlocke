@@ -4,9 +4,17 @@ These are local development results for Red Star; run artifacts are gitignored a
 
 ## Automated checks
 
-- `uv run --no-sync pytest -q`: **401 passed** after Mart transactions and final gym preparation; previously 381 after ledge routing, 357 after Mt. Moon terrain and ladder regressions, 348 after known-map guidance, 338 after move learning, 330 after evolution/encounter continuation and 317 at `96a35b7`.
+- `uv run --no-sync pytest -q`: **422 passed** after the Growl opener, hidden Oak, and thinking-stream regressions; previously 409 after off-screen candies, 401 after Mart transactions and final gym preparation, 381 after ledge routing, 357 after Mt. Moon terrain and ladder regressions, 348 after known-map guidance, 338 after move learning, 330 after evolution/encounter continuation and 317 at `96a35b7`.
 - `nuzlocke run --help` and `nuzlocke benchmark --help` checked against the documented flags.
 - Unit tests cover policy, preparation guards, active battle state, navigation trust, duplicate families, persistent deaths, battle-entry eligibility, paired checkpoints, and rule-event chains.
+
+## Battle handoff and DIRECTOR display regression checks
+
+- The watched Misty battle showed repeated Sleep Powder after “already asleep.” Jev's old options called it “super effective,” omitted enemy status, and passed only planner priority labels despite a later Confusion-only strategy.
+- Regression tests reproduce Butterfree versus sleeping Starmie. They check planner parsing → loop handoff → Jev state/options → fallback → final policy, including a deliberately confident invalid Sleep Powder choice. The resulting action selects Confusion. Notes, intent, and `do_not` survive the handoff; structured rules/ban lists also restrict choices.
+- Additional checks cover healthy/unknown/status-afflicted opponents, no-effect openers, sleep-counter normalization, waking invalidation, malformed conditions, special damage moves, secondary effects, and backing out when every move is unavailable. Memory-reader tests cover both combatants' major-status bits.
+- The served Field Log JavaScript is exercised under Node with live and replay-shaped events. Multiple reasoning chunks share one THINK element; DECIDE/ACT start a new group, silent updates do not split it, clearing history detaches the old block, and text is inserted without HTML interpretation.
+- These are automated regression checks. The live run was not restarted, and this change has not yet been validated in a fresh real planner/Jev battle or visually inspected in a browser.
 
 ## Historical five-run snapshot
 
@@ -147,3 +155,208 @@ Validation on 2026-09-29, after the acceptance snapshot above:
 - Final gym preparation now tops the living under-cap party to 14 before Brock / 21 before Misty at the leader's approach tile. Earlier trainers and travel retain the XP buffer. Tests cover all-member completion, withheld interaction, actor/arbiter agreement, healthy-party grants at exact unbeaten-leader positions, badge/position/cap rejection, and unchanged over-cap ineligibility.
 
 - The watched run resumed its own paired checkpoint and independently recorded the same verified one-ball purchase before leaving the Mart and reaching the Cerulean rival battle. No private replay state replaced the live run.
+
+- Focused private gym probe `sandbox-20260930-010133-e3c0`, continued through `sandbox-20260930-010842-aa35` and `sandbox-20260930-011133-c768`, used a diagnostic gym objective instead of scheduling Route 24/25 encounters. Normal battle, healing, candy, and move-learning controllers remained active. After both gym trainers and Center healing, the final replay reached Misty's approach tile `(4,3)`, granted exactly **10 candies**, and verified five party members **19 → 21**. Pidgeotto learned Whirlwind; Beedrill replaced Focus Energy with Twineedle. Existing level-22 Ivysaur remained ineligible and received no candy. The probe stopped before challenging Misty; this verifies preparation, not a Misty win or full-route acceptance.
+- The watched run was stopped from the dashboard at checkpoint `18830`, then resumed again at the user's request with both changes loaded. Its checkpoint and ledgers were retained throughout.
+
+- The final 124-cycle gym replay recorded 10 candy grants/uses, zero casualties, rule alerts, or policy rejections, and two planner looks. Existing over-cap alerts persisted (125). Automated suite: **401 passed**; targeted Ruff checks and `git diff --check` passed.
+
+
+## Stale Route 1 objective on Route 24
+
+- Live dashboard showed “Resolve the first legal Route 1 encounter” as tertiary while the encounter ledger already recorded Pidgey caught there. Route 24 had no story beat, triggering a reset to the initial milestone list; partial planner updates left its third slot unchanged.
+- Completed configured milestones are now filtered using badge progression and encounter outcomes both when seeding and publishing. Encounter overrides own the displayed primary and planner beat context on maps without story beats. Northern encounters still precede Misty; no encounter outcome or routing priority was changed.
+- Regression tests cover a caught Route 1 followed by a partial planner update, unresolved Route 1 remaining pending after Brock, and Route 24/Cerulean actor/dashboard/context agreement. **403 tests pass**.
+
+
+## Capture counter includes the PC
+
+- The upstream Field Log assigned `caught = party.length`, so six party slots capped the displayed count. The capture ledger correctly recorded nine wild catches, including Zubat, Rattata, Oddish and Abra sent to storage.
+- Field Log state now carries a ledger-based `nuzlocke.caught`; the route monitor uses the same `capture_count`. The in-repo JavaScript override replaces the dependency's proxy without modifying site-packages. Successful wild captures remain counted after deaths/storage changes; the starter and evolutions do not add wild captures. Nine catches plus the starter means ten acquired Pokémon.
+- **405 tests pass**. Counter regressions cover more catches than party slots, engaged/forfeited exclusion, and legacy Mt. Moon floor deduplication. Node checks verify the served JavaScript syntax and rendering 9 with six party members, resetting to 0 for a new run, and showing “—” for missing telemetry.
+
+- Live verification after reloading checkpoint `20288`: `/state` reports six party members and `nuzlocke.caught: 9`; navigation also reports nine. The served Field Log script returns HTTP 200 with `Cache-Control: no-store` and the party-size proxy removed. The original run is running; no ledger entries or PC data were modified.
+
+
+## Off-screen Rare Candy preparation
+
+- The watched run's bag contained Poké Ball, TM34, Helix Fossil, Nugget, then Rare Candy. Only four rows were visible. Preparation opened PACK, could not find the fifth item, then delegated to Jev, which backed out; the preparation routine reopened PACK indefinitely. The earlier gym test save did not contain the Nugget and did not exercise this layout.
+- A shared inventory selector locates the current visible item in the full bag and scrolls toward Rare Candy. Both preparation and the arbiter require that exact action. A checkpointed watchdog pauses after 60 preparation-menu attempts without verified level progress.
+- Private replay `sandbox-20260930-020100-8af8` used the real stuck checkpoint. Across 65 cycles it scrolled to the fifth item, consumed all six existing candies, verified all five eligible party members at level 21, handled Beedrill's Twineedle and Pidgeotto's Whirlwind, and closed all menus. No extra grants, deaths, rule alerts, policy rejections, or planner calls. Existing level-22 Ivysaur stayed ineligible (66 alerts). The probe stopped before challenging Misty.
+- **409 tests pass**. Regression coverage includes the actual off-screen menu, selection after scrolling, CANCEL, actor/arbiter agreement, battle/Mart exclusion, missing candies and the finite watchdog. Ruff and `git diff --check` pass.
+
+- Live confirmation after reloading the original checkpoint: by cycle `20535`, all six candies had been consumed, all five eligible party members were level 21, the menus were closed, and the run had entered the gym leader battle. Ivysaur remained level 22 and ineligible; no diagnostic state replaced the run.
+
+## Growl openers, hidden Oak, and thinking presentation
+
+- Watched run `20260930-090535-29aae4` received two opening Growls followed by repeatable Tackle. After the openers, Growl was still an offered option and Jev repeatedly chose it. Nonempty repeatable move lists now restrict the offered set, including fallback choices; consumed openers no longer leak into later turns.
+- The same run targeted `talk_8` at `(5,10)` while carrying Oak's Parcel. The [vanilla lab object table](https://github.com/pret/pokered/blob/master/data/maps/objects/OaksLab.asm) includes both Oak objects; the [lab script](https://github.com/pret/pokered/blob/master/scripts/OaksLab.asm) hides the entrance copy and shows the northern one. The reader now distinguishes the [toggleable-object flags](https://github.com/pret/pokered/blob/master/engine/overworld/toggleable_objects.asm) from screen visibility.
+- Private replay `sandbox-20260930-091414-5a57` from the paused checkpoint reached Oak at `(5,2)` and opened dialogue in two cycles. It delivered the parcel, left the lab at cycle 14, reached Viridian, and entered the Mart within 45 cycles. It recorded zero deaths, rule alerts, policy rejections, or recoveries; one planner look handled stalled dialogue. The real run and its saved history were untouched.
+- Field Log tests now use actual routine director message patterns, suppress repeated routing/metadata/response JSON, strip repeated source tags, and replace cumulative thinking snapshots in one text node. Provider tests verify fast deltas and long text survive throttling and final flush. Browser visual inspection was unavailable; the served JavaScript and Node renderer tests are checked.
+- Private rival replay `sandbox-20260930-091646-a4d2` from `commit-00000113` used exactly two opening Growls followed by four Tackles, won, and left the lab. Across 65 cycles it recorded zero planner calls, deaths, rule alerts, policy rejections, or recoveries. This validates the move allowlist with the real Jev actor and emulator.
+- The original server served the revised thinking helper successfully; `node --check` passed on that HTTP response. A refreshed dashboard was opened without touching gameplay controls; the original run remained paused. Gameplay/provider changes still require a new process.
+
+## Independent model providers (2026-10-01)
+
+- `uv run pytest -q`: **458 passed**. Ruff checks passed for the new provider modules, CLI, and tests; `git diff --check` passed. `nuzlocke llm doctor` reports the default Jev/Codex setup ready.
+- Added mocked protocol tests for Codex app-server, Claude stream JSON, Gemini ACP, OpenAI Responses and compatible Chat Completions. They check actual image payloads, session reuse, disabled tools, authentication rejection, malformed output, legal-choice/abstention validation, HTTP retries, and subprocess timeout cleanup. Resume coverage checks planner invalidation while retaining map observations and journal context.
+- Native screenshot probes succeeded with Codex CLI 0.159.3 (`gpt-6.1-sol`) and Claude Code 2.1.283 (`claude-opus-5-5`) using their existing subscription logins. No OAuth token was read or copied.
+- Private two-cycle replay `sandbox-20261001-101458-eb96` used Codex + Jev; `sandbox-20261001-101709-7002` used Claude + Jev. Both started from a copy of `sandbox-20260929-115032-4b71`, refreshed the planner after its configuration changed, made one planner call and two Jev calls, moved through three Route 2 tiles, and wrote paired checkpoints. Both reported zero deaths, rule alerts, recoveries, and policy rejections. Source files and live gameplay were not modified. These are integration checks, not Nuzlocke acceptance trials.
+- Gemini CLI 0.46.0 advertised image support but rejected session creation: personal-account Code Assist CLI access has been retired. Google's [deprecation notice](https://developers.google.com/gemini-code-assist/docs/deprecations/code-assist-individuals) confirms the limitation. Standard/Enterprise eligibility remains unverified on this machine; Gemini wire behavior is covered with mocks. Antigravity support was added in the follow-up below.
+- API System 1 transports are validated with mocked HTTP responses; a paid API actor has not been exercised in the emulator.
+
+## Antigravity Gemini subscription integration (2026-10-01)
+
+- Full regression suite: **472 passed**. Ruff checks for the added/changed provider code and tests, plus `git diff --check`, passed.
+- `antigravity` is now a System 2 backend using the installed `agy` client and its existing Google login. `llm doctor --system2-provider antigravity` verified model access; the client reported version 1.2.14. The explicit default model is `gemini-3.8-flash-low`; `agy models` lists other available Gemini models.
+- Two native screenshot calls succeeded in one persistent conversation in `runs/antigravity-probe/`. Each turn copied its image to a unique run-local path and required a successful `view_file` read, attested through the vendor's post-tool hook. Pre-tool policy permits only those exact screenshot paths and denies commands, writes, MCP, and other tools. No OAuth token was read or copied by the runner.
+- Private replay `sandbox-20261001-114841-4e4e`, copied from `sandbox-20260929-115032-4b71`, completed two cycles with one Antigravity planner call (12.31 s) and two Jev calls. It visited three Route 2 tiles and reported zero deaths, rule alerts, recoveries, and policy rejections. Source files and live gameplay were untouched. This is an integration check, not full-game acceptance.
+- Regression coverage includes model-list diagnostics, persistent conversations, actual image copies, per-turn screenshot-read verification, malformed/failed results, unexpected models, subprocess hooks, denied operations, and symlink substitution.
+- Native denial probe `runs/antigravity-deny-probe/` requested an unrelated harmless text file through `view_file`. The CLI returned a tool error confirming the pre-tool hook denied the read; no successful-read attestation was created.
+
+## Sol 6.1 planner + Luna decisions quick probe (2026-10-01)
+
+- Private run `sandbox-20261001-115259-60ac` copied `sandbox-20260929-115032-4b71`. Effective config is `runs/sol-luna-probe.yaml`: System 2 `codex/gpt-6.1-sol`, System 1 `codex/gpt-6-luna`, both low reasoning effort. The existing ChatGPT login provided both models; no OpenAI API key was configured. Added Codex System 1 support using its own app-server process/conversation and per-turn `outputSchema`, with the existing legal-choice/abstention validator.
+- Completed **20 cycles in 46.8 s**, visiting **14 distinct tiles**. Sol made one plan in **11.45 s**: enter Route 2 grass to search for its first legal encounter while rerolling duplicates. Luna made **13 decisions**, all accepted, with **zero abstentions**; median **1.77 s**, p90 **3.88 s**, total **32.9 s**, and one **9.89 s** outlier. The reported values cover this tiny trial, not a performance guarantee.
+- At cycle 5 a wild Pidgey appeared. System 3 recognized the duplicate family and forced RUN at cycle 11; dialog paging and that rule decision required no Luna call. The remaining Luna choices all selected the executable current objective. Thus this run checks model integration, navigation, and deterministic rule ownership; it does not assess Luna's trainer-battle strategy quality.
+- Zero deaths, rule alerts, policy rejections, recoveries, or provider errors. The private process wrote its final paired checkpoint and closed. The live run was untouched.
+- Regression suite after the adapter: **473 passed**; targeted Ruff checks and `git diff --check` passed.
+
+## Nidoran lead-rotation pause (2026-10-01)
+
+- Live Sol/Luna run `sandbox-20261001-115259-60ac` paused at paired checkpoint 859 in Viridian Forest `(27,19)`. Its screen showed the cursor on Nidoran♂, but the RAM nickname was `NIDORAN?` and the tilemap label was `NIDORAN`. Exact name matching failed, so rotation emitted 40 waits. The generic fallback incorrectly called this “Planning unavailable.” An earlier, separate model timeout appears in the history; it is not the cause of this repeated pause.
+- Party cursor matching now compares visible letters/digits while retaining the HP-row and party-slot checks. Rotation counts cycles without recognizable menu progress, preserves that count in checkpoints, and can finish an old timed-out transaction once the corrected parser sees an actionable menu. A still-unreadable or unchanged menu remains bounded. Typed lead-rotation errors are reported as controller errors and pause every orchestration mode.
+- Private replay `sandbox-20261001-133537-fbf9` copied the exact paused checkpoint. It selected Nidoran, chose SWITCH, moved it to slot zero, verified capture identity `capture-0005`, and closed the menus in ten cycles. Two further cycles resumed walking to `(30,16)`. All 12 cycles completed in 6.1 seconds, with zero deaths, rule alerts, recoveries, or policy rejections. No source-run state was changed by the replay.
+
+## Forest item targeting and automatic collection (2026-10-01)
+
+- The live run repeatedly targeted encounter grass `(1,31)`, occupied by item slot 7. Cycles 1227, 1235–36, 1245 and 1250–51 show unsuccessful entry from the east/north, separated by exploration detours. `Routes.onto()` allowed a blocked final tile for doors; the encounter selector incorrectly reused this exception. Grass selection now requires a walkable destination, uncollected static objects remain obstacles off screen, and route identity includes the destination coordinate.
+- The server decodes field item IDs from `wMapSpriteExtraData` at `D504`. [pret/pokered's map loader](https://github.com/pret/pokered/blob/master/home/overworld.asm) writes item ID/zero for items and zero/zero for ordinary scripted objects. Sprite 74 plus this data distinguishes field pickups from starters. Labels reach the planner/object context, goal journal and dashboard map/item list.
+- Scripted private replay `sandbox-20261001-140847-14f9`, from immutable source checkpoint 1236, verified that walking down into the ball is blocked but A from the north picks it up. Screenshot `frames/002_press_a.png` reads “RED found POKé BALL!” Ordinary items now allow interaction from any reachable side; starter/fossil handling is unchanged.
+- Automatic replay `sandbox-20261001-140927-0197` ran 25 cycles with Sol/Luna. Cycle 0 picked up the Poké Ball; cycles 2–12 traversed the Forest and picked up Antidote `(25,11)` from the east; encounter search resumed at cycle 14. Independent savestate reads verified Poké Balls increased **5 → 6**, **Antidote ×1** appeared, and both objects became hidden. The Potion at `(12,29)` remained available but lacked a fully observed reachable approach; it was not falsely marked collected.
+- Tests cover item decoding, side interaction without an LLM call, hidden/off-screen objects, starter/fossil exclusion, full bags and stack limits, safety/menu priority, unavailable routes, repeated failures, grass obstacles, and changed-target cache invalidation. **486 tests passed**; targeted Ruff, dashboard JavaScript syntax, and whitespace checks passed. These are diagnostic replays, not fresh-run acceptance trials. The live run was not restarted.
+
+
+## Post-Misty prerequisite guidance (2026-10-01)
+
+- The continued live run repeatedly sought Cerulean's southern edge while its bag held neither S.S. Ticket nor HM01. Its last plan said to route around the southern buildings; the existing walkthrough ended at Cascade and was supplied only during stuck recovery.
+- Added a progression hint to every post-Cascade/pre-Thunder overworld planning context. It selects Bill, the ship/captain, teaching CUT, or using CUT from current inventory and living-party moves. System 3 still owns legality and priority; this is advice rather than a scripted completion route.
+- Verified the dependency chain against pret/pokered's [Bill script](https://github.com/pret/pokered/blob/master/scripts/BillsHouse.asm), [Cerulean object/warp table](https://github.com/pret/pokered/blob/master/data/maps/objects/CeruleanCity.asm), [Route 5 warps](https://github.com/pret/pokered/blob/master/data/maps/objects/Route5.asm), and [captain script](https://github.com/pret/pokered/blob/master/scripts/SSAnneCaptainsRoom.asm). Coordinates are vanilla hints requiring live confirmation.
+- Corrected relevant map labels using [map constants](https://github.com/pret/pokered/blob/master/constants/map_constants.asm), including Bill's House (88), Vermilion Gym (92), the S.S. Anne floors/captain and the north-south Underground Path (119). The dependency had incorrectly called map 88 Pokemon Fan Club.
+- **489 tests passed**, including prerequisite selection, dead-party CUT exclusion, badge/battle gating and map-ID regressions. The controller was resumed from stable paired checkpoint **6425** to load the guidance. This does not establish complete post-Misty navigation or gym-preparation support.
+- Live verification: Sol changed its objective to visit Bill for the ticket, then selected Cerulean’s north **edge** rather than a door. By cycle **6443** it had reached **Route 24 `(10,6)`**, where automatic item collection targeted TM45. This verifies uptake of the hint and departure from the city loop, not completion of the Bill/ship/Surge sequence.
+
+
+## Post-Misty Objectives panel (2026-10-01)
+
+- Guidance previously changed the planner's route while the Objectives panel retained the configured Surge/Erika/Koga milestone list. `progression_objectives` now derives a primary prerequisite, following step and Surge goal from the same `surge_stage` helper as the guide. A generic planner objective update cannot replace that window; code-owned safety, preparation, item and encounter objectives retain priority.
+- The window is recomputed from a live observation at controller startup, each planning cycle and after actions. Bill's House entry alone does not imply ticket receipt; inventory and a living party member's learned CUT advance stages. Existing paired checkpoint files are not rewritten for presentation changes.
+- Updated the existing server's `/objectives` list from its current snapshot: Bill's S.S. Ticket → reach Vermilion/obtain HM01 → Lt. Surge. Read-back confirmed the three rows, unchanged control state and unchanged emulator frame count. The controller had exited after dashboard STOP; this display repair did not restart it. Runtime synchronization loads on the next resume.
+- **491 tests passed**, including stage progression, location-sensitive wording, partial planner updates, post-action receipt updates, and safety-objective precedence. Targeted Ruff and whitespace checks passed.
+
+## 2026-10-04 — continuation guidance through Erika
+
+- Fixed the post-Cascade Route 24/25 reversal: the pre-Misty return circuit no longer owns travel after Cascade. Unresolved local encounter searches remain active; no caught/forfeited ledger entries are rewritten.
+- Extended the injected walkthrough and observed-stage Objectives panel through Thunder → Cerulean/CUT → Route 9 → Rock Tunnel → Lavender → east–west Underground Path → Celadon/Erika. Includes optional FLASH acquisition, exact ladder chain, HM use, healing and battle guidance, with source links to pret/pokered. Later leader candy top-ups and comprehensive healing routes remain outside the implemented deterministic script.
+- Expanded the vanilla advisory atlas from 31 to 76 maps. Existing map data is unchanged except Cerulean's connections gaining matched boundary tiles for the newly included adjacent maps. The north-south tunnel's two unstored block rows remain unknown, not invented floor. Verified reference paths connect both tunnels and every forward Rock Tunnel chamber in the guide. Corrected later map labels and added Surge/Erika plus S.S. Anne rival/gym trainer briefing data.
+- Rock Tunnel 1F/B1F share one encounter slot, including legacy records keyed to B1F. Added regression coverage for this, post-Cascade travel, stage/badge transitions and advisory paths.
+- `uv run pytest -q`: **496 passed**. Scoped Ruff check passes with the existing `BLE001` broad-catch warnings excluded; `git diff --check` passes.
+- Private replay `sandbox-20261004-221502-adae`, copied from the existing run's immutable `commit-00006832`, ran 30 cycles with Codex `gpt-6.1-sol` / `gpt-6-luna`. Crossed Cerulean → Route 24 → Route 25 and advanced to a trainer encounter without the prior immediate return south. One Sol plan used incorrect warp ID 86 for Bill (live/reference ID 88); the next look corrected it, so planner errors remain possible. This replay validates the reversal fix, not completion of Bill, Surge or Erika. Its outcomes were not copied into the watched run.
+- The watched continuation resumes the same original run `sandbox-20261001-115259-60ac` at checkpoint 6832, with per-run `stop_after: erika`; the project default remains Misty. Resume performs the existing ROM/rules/state/event integrity checks. No outcome rollback or pending-marker removal.
+- Live verification: Sol planning and Luna decisions succeeded after restart; the original journal records Route 24 entry at cycle 6833, followed by movement north and an east-exit plan at cycle 6838, rather than immediate return to Cerulean. Checkpoints continued beyond 6840. Surge/Erika completion remains unverified.
+
+## 2026-10-04 — TM19 off-screen trainer blockage
+
+- A surgical change to `goals.collision_map` blocks every available NPC at its latest live coordinates, regardless of screen visibility. Hidden NPCs release their tile; moved NPCs block only their new location. No map-specific item blacklist, catch-rule change or permanent obstacle is added.
+- Regression test covers a trainer-blocked enclosure while visibility toggles, retaining the Bill objective and planner card; movement/hiding of the trainer makes the item reachable again. Full suite: **497 passed**; scoped Ruff and `git diff --check` pass.
+- Re-evaluating 50 recorded Route 25 observations at 20 distinct positions no longer selects TM19. Private replay `sandbox-20261004-225149-9791` from immutable `commit-00007579` ran 18 cycles with Sol 6.1/Luna: **zero `talk_10` pickup choices**, moved east from `(26,6)` to the next trainer near `(37,4)`, and began that battle. Replay outcomes remain isolated.
+- The watched run was paused between cycles and restarted from its latest complete paired checkpoint **7579**, preserving its outcomes and model selection. No pending marker was deleted and no earlier state was substituted.
+- After restart, the live checkpoint advanced past 7582, the player reached `(34,4)` east of the blocked enclosure, and the Objectives panel retained the Bill prerequisite instead of switching back to TM19.
+
+## 2026-10-04 — Route 5 encounter re-entry
+
+- The watched run progressed past TM19, obtained S.S. Ticket/TM28 and reached Route 5, then oscillated in the eastern lane. The encounter override could not reach central grass locally and kept issuing generic exploration; actual movement repeatedly reset failure counts.
+- Scripted private replay `sandbox-20261004-232009-b92a` from checkpoint 8080 verified the detour in 16 button presses: Route 5 `(15,2)` → Cerulean `(25,35)` → `(25,31)` → `(23,31)` → ledge landing `(23,34)` → `(23,35)` → Route 5 `(13,0)` → ledge landing `(13,4)` in grass.
+- Scoped encounter routing now returns north when Route 5 has no local grass path and the north exit is reachable. On Cerulean's southern apron, observed pending Route 5 grass selects the central entry. Existing learned map data carries this across checkpoints; no new timer, consumed encounter or ledger rewrite is involved. Existing safety beats retain priority.
+- Automated private replay `sandbox-20261004-232121-064b` from the same checkpoint reached grass in five cycles and continued searching there. The Route 5/Cerulean transition regression also verifies release after encounter resolution. Full suite: **498 passed**; scoped Ruff and `git diff --check` passed.
+- Live continuation reloads from its latest completed checkpoint **8080**, with the same Sol 6.1/Luna configuration and Erika stopping milestone. Private replay outcomes are not transferred.
+- Live verification: checkpoint advanced past 8087; the original run re-entered Route 5 at `(13,0)`, jumped to grass `(13,4)`, then searched at `(12,4)` and `(11,4)` with the pending encounter objective.
+
+## 2026-10-04 — MEOWTH battle bag misclassified as Pokédex
+
+- At paused checkpoint 8188, the active bag displayed `MEOWTH` above a highlighted Poké Ball. System 1's instant-text branch matched the substring `WT` in the species name and proposed the Pokédex sequence `press_a, wait_60`. The bag policy rejected that sequence and substituted `wait_60`, repeating without consuming a ball.
+- Added shared Pokédex recognition requiring separate HT/WT labels and no active menu cursor. System 1 and starter/capture preparation use it. No battle-item permission was relaxed.
+- Added the recorded screen/observation fixture and regression coverage: a legal first-encounter ball selects `press_a` without an LLM, the policy accepts it, a non-first encounter still rejects it, and genuine Pokédex pages remain recognized. Full suite: **500 passed**; scoped Ruff and `git diff --check` pass.
+- Private replay `sandbox-20261004-232544-520d` from immutable checkpoint 8188 ran 16 cycles: the bag advanced, a Poké Ball was consumed (10 → 9), and battle narration/command handling resumed. This demonstrates menu recovery, not a claimed capture outcome. Reloading the original paused checkpoint preserves its own outcomes; private results are not transferred.
+- Live verification after reload: checkpoint advanced past 8220, three balls were consumed (10 → 7), and the battle ended with the safety controller fleeing as the lead became low on HP. The bag stall is resolved; no successful capture is claimed.
+
+
+## 2026-10-04 — preserve healing after the Route 6 encounter
+
+- Root cause: `needs_heal` was true for Pidgeotto at 16/65, but `heal_beat` returned None on Route 5/6 because its route table stopped at Cerulean. The same None meant healthy, allowing story/encounter objectives to replace healing. Unknown routes now retain a mandatory healing beat for System 2; a stale story plan is cleared, and planner objective updates cannot replace that beat.
+- Added the Route 5 → north–south Underground Path → Route 6 → Vermilion Center healing chain and nurse targets in Vermilion, Rock Tunnel, Lavender and Celadon Centers. Candy grants and deposit automation retain their existing scope. Later unmapped routes still require director planning.
+- For an eligible first encounter with capture balls and an active member below 25% HP, System 3 switches to an alternative passing the existing health, legality, reserve, status, damaging PP and matchup checks, otherwise flees. The party actor and arbiter share the replacement target. Other wild flee rules retain priority. This is a survival heuristic, not a guarantee against damage or a promise of capture.
+- Full suite: **523 passed**. Scoped Ruff and `git diff --check` pass. Regression tests cover the route chain, later nurses, unknown-map priority, planner-update locking, switch/party-policy agreement, unsafe alternatives, and capture after switching.
+- Private replay `sandbox-20261004-233749-18f7`, copied from immutable live checkpoint **8268**, switched Pidgeotto to Nidorino and reached the caught Mankey nickname prompt. Continuation `sandbox-20261004-233904-2425` resolved the capture and immediately routed south under the healing objective; a trainer battle interrupted travel. Diagnostic outcomes were not copied into the watched run.
+- Resumed the original paired checkpoint 8268 with Sol 6.1 / Luna. Another local application acquired port 8766 during the restart; this continuation uses **http://127.0.0.1:8767/navigation**. No pending marker removal or outcome rollback.
+- Live verification: checkpoint **8313** records Route 6 Mankey **caught**, with no deaths. The next overworld decision published **Heal first: head south to Vermilion's Center** and executed the southbound route. Healing at the nurse is still pending; the run remains active on port 8767.
+
+## Core simplification and composable guidance (2026-10-05)
+
+The agreed metric counts every Python source line under `nuzlocke/` and `apps/`, excluding blank lines, comments, and actual docstrings. It includes delimiter-only lines, runtime strings, imports, walkthrough selectors, and loaders. Tests, tools, Markdown, and JSON data are outside this metric. At this validation point, `tools/core_loc.py --check` and `test_core_loc.py` failed at 10,000 lines or more. The user subsequently raised the limit to strictly below 12,000; the counting rules are unchanged.
+
+The pre-refactor working-tree baseline measured **12,702** source lines. The resulting core measures **9,980**. This reduction includes shared role/context and policy handling, removal of unused checkpoint scheduling code, extraction of static prompts/reference/story data, and Ruff formatting at 132 columns. It does not represent 2,722 lines of deleted game behavior. Seven tests for the unused legacy checkpoint cadence were removed; tests of the active paired checkpoint path remain.
+
+Walkthrough fragments and ordered bundles are canonical. Nested bundles deduplicate fragments and reject cycles or paths outside the skill root. Surge and Erika prompts select the current stage. The complete composition preserves the existing compatibility guide's text, ignoring whitespace; the compatibility file was left intact for existing readers. The Python selection code remains in the counted core.
+
+Verification:
+
+- **524 tests passed**, including new composition and source-budget tests. Ruff lint and format checks passed for the core and new tools/tests. `git diff --check` passed.
+- Differential comparison with the pre-refactor working-tree copy preserved all exported prompt constants and representative prompt-context payloads. Story beats, healing beats, and progression objectives matched across **40,960 sampled observations** spanning 256 maps, five badge states, eight positions, and four party/inventory cases. This is sampled parity, not exhaustive game verification.
+- Existing checkpoint `sandbox-20261001-115259-60ac/commit-00008316` restored and serialized every saved controller field unchanged, after normalizing set ordering. The check read the source record without starting its controller or writing to it.
+- Private replay `sandbox-20261005-003744-88db` copied that checkpoint and executed `wait_60*3` on port 8791. All rows remained at Route 6 `(16,24)`, facing down; frame digests changed with animation. Its private server shut down after the script. No model calls or live-run actions were made.
+- A wheel build included every file under `nuzlocke/assets/`. Prompt and data imports succeeded from the unpacked wheel outside the source checkout. CLI and sandbox help commands passed. Local links in the rewritten documentation resolve.
+
+The README uses ASD-STE100 writing principles with project-specific technical names. AGENTS.md is a short entry point; detailed controller mechanics, operational procedures, provider contracts, and historical pitfalls remain in linked documents. No fresh-run acceptance benchmark was performed for this refactor.
+
+## CUT menu execution (2026-10-05)
+
+The watched run owned HM01 but repeated PACK entry and exit at Vermilion `(9,15)`. The latest inspected paired checkpoint was `sandbox-20261001-115259-60ac/commit-00009696`. Its plan requested teaching Raticate CUT, with no map target. Inspection found that the menu actor discarded that plan text, HM01 was below the visible bag rows, and the final item policy rejected attempted selections. The journal alternated PACK, rejected A/wait, and B.
+
+Private replay also established two further menu mechanics: the TM/HM compatibility list is unframed and was mistaken for ordinary speech; its instruction pages require A, while B leaves “Booted up an HM!” / “It contained CUT!” unchanged. The actual compatibility list marks **Raticate NOT ABLE**, and **Beedrill and Ivysaur ABLE**. The live screen, not a vanilla species assumption, determines the choices.
+
+The fix shares HM01 scrolling/selection between actor and arbiter, retains planner text through menus, recognizes the compatibility list, excludes incompatible/dead/fainted targets, pages the TM/HM instructions with A, and supplies the field objective to move replacement. Battle item restrictions remain in force.
+
+Replay `sandbox-20261005-005958-0a41` started from checkpoint 9696. It used the real System 1, move learner, emulator adapter, and Action Arbiter, with scripted model choices (USE → YES → Beedrill → replace Fury Attack). At observation 27 the party data and learning result confirmed **Beedrill learned Cut**, replacing Fury Attack and retaining Poison Sting, String Shot, and Twineedle. The stage selector changed to `gym`, and the move learner verified the result. This proves the menu path with those choices; no claim is made about fresh model decisions or cutting the gym tree. No paid model calls or live-run mutations were made.
+
+Retained diagnostic failures `sandbox-20261005-005815-144c` and `sandbox-20261005-005928-352c` demonstrated the two B-insensitive instruction pages before their handlers were corrected. Source fixtures `cut_bag.json` and `cut_party.json` preserve the relevant real observations. **531 tests pass**, including seven new CUT regression cases; Ruff and the source-budget check pass. Core Python remains below the limit at **9,999** source lines. The live process still requires an authorized restart to load the changed Python code.
+
+## Gym access objectives and field CUT (2026-10-05)
+
+The watched continuation had learned CUT but kept a gym-exit target while the entrance was blocked. Its partial routes wandered through Vermilion's dock area. The revised walkthrough separates teaching, gym access, and the interior switch puzzle. Access requires approaching the tree, using the living CUT user's party menu, verifying clearance, then entering map 92. Only Thunder completes Surge. The planner can now express a map-scoped absolute tile target; arrival and the end of a buttons-only interaction request the next subgoal without the exploration cooldown.
+
+Private source: `sandbox-20261001-115259-60ac`, immutable `commit-00009796`, at `(19,26)` in Vermilion with Beedrill already knowing CUT. A scripted geometry probe, `sandbox-20261005-011154-3e33`, reached `(14,18)`. Separate facing probes established that the tree is to the **right**, at `(15,18)` (tile `0x3D`): facing down produces “anything to CUT!”, while facing right produces “BEEDRILL hacked away with CUT!”. The guide was corrected from the failed downward-facing assumption before the final replay.
+
+Retained autonomous failures: `sandbox-20261005-011359-8424` exposed the wrong facing and the party prompt being treated as speech; `sandbox-20261005-011626-babf` showed that a turn toward a blocking tile discarded the following START. The shared screen parser now recognizes the visible “Choose a POKéMON” list as a menu while preserving nested field-menu ownership. A blocked turn that achieves the requested facing may be followed by A or START; final START receives settling frames.
+
+`sandbox-20261005-011756-ed0a` used Sol 6.1 / Luna to clear the tree and enter Vermilion Gym in 20 cycles, but still explored during the post-interaction cooldown. The final replay, **`sandbox-20261005-011946-d8fd`**, started from the same immutable dock checkpoint, used the real Sol 6.1 planner and Luna decisions, and entered Vermilion Gym in **14 cycles**, with no exploration choices. The models chose all route and menu actions; the test supplied no button script, target override, or chosen Pokémon. It requested a fresh planner look and stopped the private server after observing map 92. Cycle 6 turned right and opened START, 7 chose POKéMON, 8 chose Beedrill, 9 used CUT, and 13 entered the gym. The paired checkpoint's displayed primary then became “Solve Vermilion Gym's switch locks; verify the barrier opens.” This verifies access, not the switch puzzle or a Surge victory.
+
+Validation: **544 tests passed**, Ruff lint/format passed, walkthrough composition matched its generated reference, and `git diff --check` passed. Core Python remains **9,999 executable source lines**. After explicit user approval, the live run was restarted from `commit-00009808` (cycle 9806), preserving Sol 6.1 / Luna, the rule-event history, and Lt. Surge as its next milestone.
+
+Live confirmation: the resumed controller autonomously used Beedrill's CUT and entered Vermilion Gym at cycle **9822** (map 92, entry `(4,17)`). Dashboard control remained running. No manual game buttons or objective overrides were supplied during the continuation.
+
+## Mandatory healing through field obstacles (2026-10-05)
+
+Source: the paused live continuation `sandbox-20261001-115259-60ac`, immutable `commit-00009959` (cycle 9957). The party was enclosed on the gym side of the respawned Vermilion tree, at `(10,22)`. Nidorino was paralyzed at 56/64 HP, Raticate was at 54/60, and living Beedrill knew CUT. The previous healing target repeatedly sought a partial path to Center map 89 while overriding possible obstacle subgoals.
+
+The mandatory parent objective now permits temporary planner route/field-move steps. A healing exit without a complete observed path requests planning instead of partial-route wandering. The healing fragment explains observed prerequisites, either side of an obstacle, verification, and returning to care. The briefing reports actually learned CUT/Strength/Rock Smash on living members; it does not infer a learned move from HM inventory or claim field permission. A complete observed path to the healing exit automatically retires the temporary plan. Nurse/Mom interactions and the dashboard healing priority remain code-owned. Normal progression and stuck-story excerpts are withheld while the healing beat is active.
+
+Retained trials:
+
+- `sandbox-20261005-013555-0468` reached the Center and healed, but first inspected members to find CUT because the briefing lacked observed field-move users.
+- `sandbox-20261005-013844-3b1c` selected Beedrill directly and cleared the tree, but a stale planner floor-tile target at the Center door caused oscillation. This exposed the need to resume the actual healing exit automatically once its full path was available.
+- **`sandbox-20261005-014202-c711`** used real Sol 6.1 / Luna decisions from the same immutable source. It reached `(15,19)`, used Beedrill's CUT facing up, resumed the Center route, entered map 89 at cycle 11, and accepted nurse healing. At the cycle-16 checkpoint, all six party members had full HP and status OK, including Nidorino at 64/64 with paralysis cleared. The test stopped after observing recovery; the healing dialog was still active, so it did not test subsequent story resumption. Unit coverage checks retirement of the temporary plan after settled recovery. No manual game buttons, target overrides or selected-member overrides were supplied to the autonomous replay, and the live run was left paused.
+
+Validation: **550 tests passed**, Ruff lint/format and walkthrough composition checks passed, and `git diff --check` passed. CUT traversal and healing are measured in this ROM; Strength and Rock Smash are conditional guidance, not demonstrated emulator capabilities.
+
+The user raised the source budget from strictly below 10,000 to **strictly below 12,000**. `tools/core_loc.py`, its help text, README and AGENTS now use that threshold, with all prior inclusion/exclusion rules preserved. Current core: **9,999** source lines. The nine source-budget and healing-subgoal tests passed again after the threshold update.

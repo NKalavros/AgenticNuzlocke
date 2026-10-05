@@ -82,8 +82,7 @@ def desired_exit(obs, objective):
         matches = [
             w
             for w in warps
-            if w["dest_map"] == wanted
-            and ("x" not in objective or (w["x"], w["y"]) == (objective["x"], objective["y"]))
+            if w["dest_map"] == wanted and ("x" not in objective or (w["x"], w["y"]) == (objective["x"], objective["y"]))
         ]
         if matches:
             resolved = obs.return_map if wanted == 255 and obs.return_map is not None else wanted
@@ -182,8 +181,7 @@ def briefing(obs, objective, room):
         path[i]
         for i in range(len(path))
         if i in {0, len(path) - 1}
-        or (path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1])
-        != (path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1])
+        or (path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1]) != (path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1])
     ]
     return {
         "available": True,
@@ -194,10 +192,7 @@ def briefing(obs, objective, room):
         "connections": [{**c, "destination": map_name(c["dest_map"])} for c in data["connections"]],
         "warps": [{**w, "destination": map_name(w["dest_map"])} for w in data["warps"]],
         "terrain_blocked_edges": [list(e) for e in sorted(room.terrain_edges(obs))],
-        "ledge_jumps": [
-            {"from": [x, y], "direction": d, "to": list(t)}
-            for (x, y, d), t in ledge_jumps(obs, room).items()
-        ],
+        "ledge_jumps": [{"from": [x, y], "direction": d, "to": list(t)} for (x, y, d), t in ledge_jumps(obs, room).items()],
         "grass": data.get("grass", []),
         "objective": objective,
         "desired_exit": desired,

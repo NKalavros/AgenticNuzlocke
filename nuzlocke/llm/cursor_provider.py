@@ -181,22 +181,14 @@ class CursorProvider(LLMProvider):
         self._agent = self._create_agent()
         self._est_context_tokens = len(self._session_summary) // 4
 
-    def _build_prompt(
-        self, *, role: AgentRole, system: str, user: str, schema_hint: dict[str, Any] | None
-    ) -> str:
-        schema_text = (
-            json.dumps(schema_hint, separators=(",", ":")) if schema_hint else "a JSON object"
-        )
+    def _build_prompt(self, *, role: AgentRole, system: str, user: str, schema_hint: dict[str, Any] | None) -> str:
+        schema_text = json.dumps(schema_hint, separators=(",", ":")) if schema_hint else "a JSON object"
         if '"walkthrough_hint"' in user:
             skill_rule = (
-                "- A walkthrough_hint is already in the user payload — follow it. "
-                "Do NOT Read skill files or browse the repo."
+                "- A walkthrough_hint is already in the user payload — follow it. Do NOT Read skill files or browse the repo."
             )
         else:
-            skill_rule = (
-                "- Do NOT browse the repo. Stay JSON-only "
-                "(orchestrator injects walkthrough excerpts when stuck)."
-            )
+            skill_rule = "- Do NOT browse the repo. Stay JSON-only (orchestrator injects walkthrough excerpts when stuck)."
         summary = self._session_summary.strip()
         summary_block = f"\nSession summary (compacted earlier):\n{summary}\n" if summary else ""
         return f"""You are the Nuzlocke '{role.value}' role agent.
@@ -215,9 +207,7 @@ User / observation:
 {user}
 """
 
-    def _run_send(
-        self, message: Any, *, role: AgentRole, force: bool = False
-    ) -> tuple[Any, list[str]]:
+    def _run_send(self, message: Any, *, role: AgentRole, force: bool = False) -> tuple[Any, list[str]]:
         if self._agent is None:
             self._agent = self._create_agent()
         if force:
@@ -225,18 +215,24 @@ User / observation:
         else:
             run = self._agent.send(message)
         chunks: list[str] = []
+        thinking = ""
+        last_published = ""
         for event in run.stream():
             text = _stream_text(event)
             if not text:
                 continue
             chunks.append(text)
             now = time.time()
-            if self.on_stream and text.strip() and now - self._last_stream_push >= 0.5:
+            if getattr(event, "type", None) != "thinking":
+                continue  # Final response JSON is rendered as the parsed plan/decision.
+            # Keep every delta, including those arriving within the publish throttle.
+            thinking = text if text.startswith(thinking) else thinking + text
+            if self.on_stream and thinking.strip() and now - self._last_stream_push >= 0.5:
                 self._last_stream_push = now
-                snippet = text.strip().replace("\n", " ")
-                if len(snippet) > 220:
-                    snippet = snippet[:217] + "…"
-                self.on_stream(f"[{role.value}] {snippet}")
+                self.on_stream(f"[{role.value}:thinking] {thinking}")
+                last_published = thinking
+        if self.on_stream and thinking.strip() and thinking != last_published:
+            self.on_stream(f"[{role.value}:thinking] {thinking}")
         return run.wait(), chunks
 
     def _send_with_retries(self, message: Any, role: AgentRole) -> tuple[Any, list[str]]:
@@ -278,12 +274,12 @@ User / observation:
             if summary:
                 self._session_summary = summary[:500]
                 self._emit(f"[cursor] compacted: {self._session_summary[:120]}")
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001 — optional compaction must not discard the live session
             self._emit(f"[cursor] compact failed (keeping agent): {err}")
             return
         try:
             self._recreate_agent()
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001 — report SDK recreation failure without losing run state
             self._emit(f"[cursor] recreate after compact failed: {err}")
 
     def complete(
@@ -306,9 +302,7 @@ User / observation:
             "session_summary": self._session_summary or None,
         }
         (inbox / "request.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        prompt_text = self._build_prompt(
-            role=role, system=system, user=user, schema_hint=schema_hint
-        )
+        prompt_text = self._build_prompt(role=role, system=system, user=user, schema_hint=schema_hint)
         images = [_sdk_image(p) for p in image_paths or [] if p and Path(p).exists()]
         message: Any = UserMessage(text=prompt_text, images=images) if images else prompt_text
         params = ",".join(f"{k}={v}" for k, v in self.model_params.items())
@@ -321,14 +315,7 @@ User / observation:
         usage = None
         if getattr(result, "usage", None) is not None:
             usage = {key: getattr(result.usage, key, None) for key in _USAGE_KEYS}
-        resp = LLMResponse(
-            role=role,
-            raw_text=text,
-            parsed=extract_json_object(text),
-            model=label,
-            provider=self.name,
-            usage=usage,
-        )
+        resp = LLMResponse(role=role, raw_text=text, parsed=extract_json_object(text), model=label, provider=self.name, usage=usage)
 
         try:
             context_tokens = int((usage or {}).get("input_tokens"))
@@ -340,10 +327,7 @@ User / observation:
             self._est_context_tokens += len(prompt_text) // 4 + 1120 * len(images)
             context_tokens = self._est_context_tokens
         if context_tokens > 0:
-            self._emit(
-                f"[cursor] context≈{context_tokens} tokens "
-                f"(compact≥{self.compact_at_tokens or 'off'})"
-            )
+            self._emit(f"[cursor] context≈{context_tokens} tokens (compact≥{self.compact_at_tokens or 'off'})")
         if 0 < self.compact_at_tokens <= context_tokens:
             self._compact_and_reset()
         return resp
@@ -360,7 +344,7 @@ def _sdk_image(path: Path | str) -> SDKImage:
 
         with Image.open(path) as img:
             width, height = img.size
-    except Exception:
+    except Exception:  # noqa: BLE001 — optional image metadata fallback for the SDK
         width, height = 160, 144
     return SDKImage.from_file(str(path), dimension=SDKImageDimension(width=width, height=height))
 
@@ -369,11 +353,7 @@ def _stream_text(event: Any) -> str:
     etype = getattr(event, "type", None)
     if etype == "assistant":
         content = getattr(getattr(event, "message", None), "content", None) or []
-        return "".join(
-            getattr(block, "text", "") or ""
-            for block in content
-            if getattr(block, "type", None) == "text"
-        )
+        return "".join(getattr(block, "text", "") or "" for block in content if getattr(block, "type", None) == "text")
     if etype == "thinking":
         return getattr(event, "text", "") or ""
     if etype == "tool_call":

@@ -1,5 +1,6 @@
 """Change the lead through the ordinary party menu before it can share unwanted XP."""
 
+import json
 import re
 
 from nuzlocke.agents.battle import party_cursor
@@ -7,6 +8,10 @@ from nuzlocke.agents.level_buffer import switch_target
 from nuzlocke.environment.evolution import evolution_phase
 from nuzlocke.environment.screen_text import find_boxes, parse_screen
 from nuzlocke.state.models import GameAction as A
+
+
+class LeadRotationError(RuntimeError):
+    """A deterministic party-menu intervention needs inspection."""
 
 
 def key(text):
@@ -65,11 +70,25 @@ class LeadRotation:
         if actions is None:
             self.pending = None
             return [], ""
+        screen = parse_screen(obs.screen_rows)
+        progress = json.dumps(
+            [
+                screen.menu_rows,
+                screen.cursor_row,
+                party_cursor(obs),
+                "MOVEPOKEMON" in key(" ".join(screen.text_lines)),
+                self.pending["verified"],
+            ]
+        )
+        # Bound stalls, rather than the whole valid menu transaction. In particular,
+        # a corrected parser can continue a saved timeout when it now recognizes
+        # an actionable menu. An unreadable WAIT screen never renews its budget.
+        if actions != [A.WAIT_60] and self.pending.get("progress") != progress:
+            self.pending["cycles"] = 0
+            self.pending["progress"] = progress
         self.pending["cycles"] = self.pending.get("cycles", 0) + 1
         if self.pending["cycles"] > 40:
-            raise RuntimeError(
-                "Lead rotation did not finish after 40 cycles; paused for inspection"
-            )
+            raise LeadRotationError("Lead rotation made no menu progress for 40 cycles; paused for inspection")
         return actions, f"reserve XP: rotate lead to {self.pending['species']}"
 
     def actions(self, obs):
@@ -77,16 +96,10 @@ class LeadRotation:
             return None
         p = self.pending
         if obs.party and obs.party[0].get("capture_id") == p["target"]:
-            return (
-                [A.PRESS_B, A.WAIT_60]
-                if find_boxes(obs.screen_rows) or party_cursor(obs) is not None
-                else None
-            )
-        slot = next(
-            (i for i, m in enumerate(obs.party) if m.get("capture_id") == p["target"]), None
-        )
+            return [A.PRESS_B, A.WAIT_60] if find_boxes(obs.screen_rows) or party_cursor(obs) is not None else None
+        slot = next((i for i, m in enumerate(obs.party) if m.get("capture_id") == p["target"]), None)
         if slot is None:
-            raise RuntimeError("lead rotation lost its target Pokémon")
+            raise LeadRotationError("lead rotation lost its target Pokémon")
         screen = parse_screen(obs.screen_rows)
         rows = [key(row) for row in screen.menu_rows]
         if "SWITCH" in rows:

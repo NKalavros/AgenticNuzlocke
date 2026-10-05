@@ -1,0 +1,8 @@
+{
+  "overworld": "Pick the button that carries out `plan`.",
+  "battle": "Pick the button that carries out `plan` in this battle. walk_* move the cursor on FIGHT / PKMN / ITEM / RUN or the move list, press_a confirms the highlight, skip_dialog pages battle text.",
+  "menu": "Move the highlight to the row `plan` names, then press_a. press_b backs out.",
+  "naming": "Follow `plan` on the letter grid: walks move the cursor, press_a types the letter.",
+  "dialog": "Page the text unless `plan` says to answer something.",
+  "title": "Get past the title and intro screens the way `plan` says."
+}
