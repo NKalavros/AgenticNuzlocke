@@ -155,11 +155,60 @@ def test_waypoint_must_be_reachable_and_match_objective():
     nav = Navigator()
     plan = {"map_id": 51, "objective_key": "exit_47", "waypoints": [[999, 999]]}
     selected = nav.select(obs, room, [goal()], objective_text="Go north", plan=plan)
-    assert selected.path == ["right"] * 12
+    assert selected is None and not nav.route
+    assert nav.reason == "Route waypoint rejected"
+    assert nav.context(obs, room)["route"]["rejected_waypoint"] == [999, 999]
     assert nav.rejected_waypoints == 1
     nav2 = Navigator()
-    nav2.select(obs, room, [goal()], objective_text="Go north", plan={**plan, "map_id": 13})
-    assert nav2.plan == {}
+    assert nav2.select(obs, room, [goal()], objective_text="Go north", plan={**plan, "map_id": 13}) is None
+    assert nav2.plan == {} and nav2.reason == "Route waypoint rejected"
+    assert nav2.brief["map_id"] == 51 and nav2.brief["objective_key"] == "exit_47"
+
+
+def test_rejected_waypoint_can_be_reconsidered_after_new_geometry():
+    obs, room = scene()
+    room.known[51] = {(1, 1): True}
+    nav = Navigator()
+    plan = {"map_id": 51, "objective_key": "exit_47", "waypoints": [[2, 1]]}
+    assert nav.select(obs, room, [goal()], objective_text="Leave", plan=plan) is None
+    room.known[51][2, 1] = True
+    assert nav.select(obs, room, [goal()], objective_text="Leave", plan=plan).actions == [A.WALK_RIGHT]
+
+
+def test_planner_context_omits_route_from_the_previous_map():
+    obs, room = scene()
+    nav = Navigator()
+    nav.select(obs, room, [goal()], objective_text="Leave")
+    assert nav.context(obs.model_copy(update={"map_id": 200}), room)["route"] == {}
+
+
+def test_identical_waypoints_are_read_again_after_objective_changes():
+    obs, room = scene()
+    nav = Navigator()
+    plan = {"map_id": 51, "objective_key": "exit_47", "waypoints": [[2, 1]]}
+    nav.select(obs, room, [goal()], objective_text="Heal", plan=plan)
+    other = goal()
+    other.key = "exit_50"
+    nav.select(obs, room, [other], objective_text="Other destination")
+    selected = nav.select(obs, room, [goal()], objective_text="Heal", plan=plan)
+    assert selected.actions == [A.WALK_RIGHT]
+    assert nav.reason == "Following System 2 waypoint"
+
+
+def test_unknown_probe_never_becomes_a_verified_cached_exit_route():
+    from nuzlocke.agents.goals import build_goals
+
+    obs, room = scene()
+    room.known[51] = {(1, 1): True}
+    obs.warps = [{"x": 3, "y": 1, "dest_map": 47}]
+    goals = build_goals(obs, room, objective={"kind": "warp", "dest_map": 47})
+    nav = Navigator()
+    for _ in range(2):
+        selected = nav.select(obs, room, goals, objective_text="Leave")
+        assert selected.actions == [A.WALK_RIGHT]
+        assert nav.reason != "Continuing verified route"
+        nav.route["terminal"] = True  # Old checkpoints need current evidence for this exception too.
+    assert not next(g for g in goals if g.objective).complete
 
 
 def test_waypoint_completion_resumes_final_destination():

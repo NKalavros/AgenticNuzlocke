@@ -131,8 +131,8 @@ def map_context(obs: PlayerObservation) -> dict[str, object] | None:
 class GridTrust:
     """Whether each map's walk grid has matched where the player really went.
 
-    The grid comes from vanilla pokered collision tables, which Red Star's maps
-    do not always follow. A walk that lands on a tile the grid called ``#`` is
+    The grid reads the active ROM collision list, with vanilla tables as fallback.
+    A walk that lands on a tile the grid called ``#`` is
     a strike; after ``strikes`` of them the map's grid is withheld from prompts
     and from the step picker until eight corroborating open-tile walks. A press into ``#`` that
     does not move is the grid being right, and a door mat that reads ``#``

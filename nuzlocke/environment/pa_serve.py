@@ -260,6 +260,25 @@ def correct_type_decoder() -> None:
     TYPE_NAMES.update({6: "Bird", 7: "Bug", 8: "Ghost", 24: "Psychic", 25: "Ice"})
 
 
+def build_collision_grid(emu: Any) -> dict:
+    """Use the active Red/Blue collision list, including ROM-specific tilesets.
+
+    wTilesetCollisionPtr (D530) points to an FF-terminated list in fixed ROM.
+    This is the list CheckTilePassable reads, independent of the graphics bank.
+    Directional restrictions and live NPCs remain the controller's responsibility.
+    """
+    from pokemon_agent.collision import ADDR_TILESET, PLAYER_COL, PLAYER_ROW, TILESET_WALKABLE, cell_label, read_block_tile_ids
+
+    tileset = emu.read_u8(ADDR_TILESET)
+    pointer = emu.read_u16(0xD530)
+    data = emu.read_range(pointer, min(256, 0x4000 - pointer)) if 0 < pointer < 0x4000 else b""
+    walk_set = frozenset(data[: data.index(0xFF)]) if 0xFF in data else TILESET_WALKABLE.get(tileset, frozenset())
+    tile_ids = read_block_tile_ids(emu)
+    walkable = [[tile in walk_set for tile in row] for row in tile_ids]
+    walkable[PLAYER_ROW][PLAYER_COL] = True
+    return {"tileset": tileset, "walkable": walkable, "tile_ids": tile_ids, "player_cell": cell_label(PLAYER_COL, PLAYER_ROW)}
+
+
 def _mount() -> None:
     import asyncio
     import base64
@@ -268,9 +287,10 @@ def _mount() -> None:
 
     from fastapi import HTTPException
     from fastapi.responses import JSONResponse
-    from pokemon_agent import server
+    from pokemon_agent import collision, server
 
     correct_type_decoder()
+    collision.build_collision_grid = build_collision_grid
 
     lock = asyncio.Lock()
     writer = os.environ.get("NUZLOCKE_WRITER_TOKEN")

@@ -370,7 +370,61 @@ def test_recovery_advice_becomes_the_plan(monkeypatch, tier):
     assert loop._low_confidence_streak == 0
 
 
-def test_a_goal_that_ends_in_the_same_text_again_counts_as_failed():
+@pytest.mark.parametrize("map_changed,beat_changed,expected_looks", [(False, False, 0), (True, False, 1), (False, True, 1)])
+def test_planner_cooldown_is_scoped_to_map_and_mandatory_objective(monkeypatch, map_changed, beat_changed, expected_looks):
+    from nuzlocke.agents.system1 import S1Turn
+
+    loop = _fast_loop(None, recent=[])
+    obs = _obs().model_copy(update={"map_id": 41 if map_changed else 40})
+    loop._beat_id = "heal" if beat_changed else "story"
+    loop._last_look = 0
+    loop._last_look_context = (40, obs.map_name, "story")
+    loop._goal_fails = {"talk_1": 2}
+    loop._goal_texts = {"talk_1": "Go ahead and go!"}
+    looks = []
+
+    def refresh(*args, **kwargs):
+        looks.append(kwargs["trigger"])
+        return PlanCard(scene=PlanScene.OVERWORLD, see="stairs", plan="Leave the floor")
+
+    def actor(*args, **kwargs):
+        if not looks and not kwargs.get("explore"):
+            return S1Turn([], "Need next step", "look", trigger="no objective")
+        return S1Turn([GameAction.WAIT_60], "wait", "wait")
+
+    loop._system1 = actor
+    loop._objective = lambda obs: (None, None, False)
+    monkeypatch.setattr("nuzlocke.orchestration.loop.propose_plan", refresh)
+    loop._fast_proposal(task=make_task(_decision()), obs=obs, context=_context())
+    assert len(looks) == expected_looks
+    assert loop._goal_fails == {"talk_1": 2} and loop._goal_texts == {"talk_1": "Go ahead and go!"}
+    if looks:
+        assert loop._last_look_context == (obs.map_id, obs.map_name, loop._beat_id)
+
+
+def test_a_partly_successful_walk_burst_still_counts_its_blocked_goal():
+    from nuzlocke.agents.goals import Goal
+    from nuzlocke.agents.system1 import S1Turn
+
+    loop = _fast_loop(None, recent=[])
+    before = PlayerObservation(map_name="Rocket Hideout B3F", map_id=201, x=26, y=9)
+    after = before.model_copy(update={"y": 8})
+    result = SimpleNamespace(
+        walks=[
+            {"action": "walk_up", "x0": 26, "y0": 9, "x1": 26, "y1": 8, "map_id": 201},
+            {"action": "walk_left", "x0": 26, "y0": 8, "x1": 26, "y1": 8, "map_id": 201, "blocked": True},
+        ],
+        stopped_early_because="no_move",
+    )
+    goal = Goal(key="exit_200", kind="exit", label="stairs", actions=[GameAction.WALK_UP, GameAction.WALK_LEFT])
+    loop._goal_fails = {"exit_200": 1}
+    loop._s1 = S1Turn(goal.actions, "route", "goal", goal=goal)
+    loop._after_system1(before, after, result, ["walk_up", "walk_left"], False, 1)
+    assert loop._goal_fails == {"exit_200": 2}
+
+
+@pytest.mark.parametrize("blocked_facing", [False, True])
+def test_a_goal_that_ends_in_the_same_text_again_counts_as_failed(blocked_facing):
     from nuzlocke.agents.goals import Goal
     from nuzlocke.agents.system1 import S1Turn
 
@@ -390,6 +444,9 @@ def test_a_goal_that_ends_in_the_same_text_again_counts_as_failed():
         walks=[{"action": "walk_up", "x0": 19, "y0": 10, "x1": 19, "y1": 9, "map_id": 1}],
         stopped_early_because="text_box",
     )
+    if blocked_facing:
+        walk.walks.append({"action": "walk_up", "x0": 19, "y0": 9, "x1": 19, "y1": 9, "map_id": 1, "blocked": True})
+        walk.stopped_early_because = None  # A facing press into the NPC followed by successful speech.
     for _ in range(2):
         loop._s1 = S1Turn([GameAction.WALK_UP], "jev", "goal", goal=goal, choice="edge_up")
         loop._after_system1(before, after, walk, ["walk_up"], True, 1)

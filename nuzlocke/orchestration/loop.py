@@ -266,6 +266,7 @@ class RunLoop:
         self._goal_texts: dict[str, str] = {}
         self._s1: S1Turn | None = None
         self._last_look = -S2_COOLDOWN_CYCLES
+        self._last_look_context: tuple | None = None
         self._last_direction: str | None = None
         # Move -> type, read from the battle TYPE/ box as each move is highlighted.
         self.move_types: dict[str, str] = {}
@@ -679,7 +680,7 @@ class RunLoop:
             console.print("[dim]speech on screen[/dim]" if speech else f"[dim]map={obs.map_name} battle={obs.in_battle}[/dim]")
             self.store.append("observation", raw_obs.model_dump(mode="json"))
             self._publish_navigation(obs)
-            if obs.cutscene or self._cutscene_screen(obs):
+            if self._cutscene_screen(obs):
                 self.stuck.pause_for_cutscene()
             self.stuck.update_position(obs)
             self.referee.advance(len(obs.badges))
@@ -1059,6 +1060,9 @@ class RunLoop:
                 },
             )
             self.env.push_event("reasoning", f"[planner] {card.see} → {card.plan}")
+            self._last_look = len(self.journal.lines)
+            self._last_look_context = (obs.map_id, obs.map_name, getattr(self, "_beat_id", None))
+            self.journal.looked()
             return card
 
         def jev_decide(state: dict[str, Any], questions: dict[str, Any]) -> Any:
@@ -1097,8 +1101,6 @@ class RunLoop:
         if getattr(self, "_force_planner_refresh", False) and (not signals.text_box or signals.prompt_box):
             self.plan = reconcile_plan(refresh("provider changed on resume"), obs)
             self._force_planner_refresh = False
-            self._last_look = len(self.journal.lines)
-            self.journal.looked()
 
         # System 1 first. System 2's steps are for screens System 1 cannot read (the naming
         # keyboard); pressed ahead of it, they kept a battle bag from System 3's POKé BALL.
@@ -1109,7 +1111,13 @@ class RunLoop:
             # System 2 already answered with buttons for this screen: press them, no new look.
             s1 = None
         looked = False
-        if s1 is not None and s1.trigger in _COOLDOWN_TRIGGERS and len(self.journal.lines) - self._last_look < S2_COOLDOWN_CYCLES:
+        same_context = getattr(self, "_last_look_context", None) == (obs.map_id, obs.map_name, getattr(self, "_beat_id", None))
+        if (
+            s1 is not None
+            and s1.trigger in _COOLDOWN_TRIGGERS
+            and same_context
+            and len(self.journal.lines) - self._last_look < S2_COOLDOWN_CYCLES
+        ):
             # Healing must retain its objective during the planning cooldown.
             if current_beat(obs) and current_beat(obs).id.startswith("heal"):
                 return ActionProposal(
@@ -1120,9 +1128,6 @@ class RunLoop:
         if s1 is not None and s1.trigger:
             # A decision System 1 cannot make: System 2 looks once, then System 1 tries again.
             self.plan = reconcile_plan(refresh(s1.trigger), obs)
-            self._last_look = len(self.journal.lines)
-            self.journal.looked()
-            self._goal_fails.clear()
             self._low_confidence_streak = 0
             looked = True
             self.store.append("jev", {"actions": [], "reason": s1.reason, "looks": [s1.trigger]})
@@ -1205,7 +1210,7 @@ class RunLoop:
             beat and beat.id.startswith(("heal", "gym_route")) and beat.target.get("kind") in {"warp", "edge"} and self.plan
         )
         if delegated_heal and any(g.objective and g.complete for g in build_goals(obs, self.room, objective=beat.target)):
-            delegated_heal = self.plan = None
+            delegated_heal = False  # Restore the destination without discarding execution intent or bans.
         if beat is not None and beat.target and not delegated_heal:
             return beat.target, beat.text, True
         card = self.plan
@@ -1345,7 +1350,8 @@ class RunLoop:
             # No move, or the same line as last time (the old man's "You can't go through
             # here!" nudging the player back): either way the goal went nowhere.
             repeated = bool(text) and self._goal_texts.get(goal.key) == text
-            if repeated or not (moved or text or after.in_battle):
+            blocked = result.stopped_early_because in {"immobile", "no_move"}
+            if repeated or blocked or not (moved or text or after.in_battle):
                 self._goal_fails[goal.key] = self._goal_fails.get(goal.key, 0) + 1
             elif moved:
                 self._goal_fails.pop(goal.key, None)
@@ -1392,11 +1398,11 @@ class RunLoop:
         self.store.append("plan", self.plan.model_dump(mode="json"))
 
     def _cutscene_screen(self, obs: PlayerObservation) -> bool:
-        """Title splash or an open narrative box. Not a battle, not a menu."""
+        """Suspend recovery for titles or script-held movement, not ordinary speech."""
         scene = self.plan.scene if self.plan is not None else None
         if obs.in_battle or scene == PlanScene.MENU:
             return False
-        return scene == PlanScene.TITLE or text_box_open(obs.screenshot_path)
+        return scene == PlanScene.TITLE or (obs.cutscene and not text_box_open(obs.screenshot_path))
 
     def _frame_signals(self, obs: PlayerObservation) -> FrameSignals:
         world, dialog = digests_from_path(obs.screenshot_path)

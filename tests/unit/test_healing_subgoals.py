@@ -10,7 +10,7 @@ from nuzlocke.environment.screen_text import parse_screen
 from nuzlocke.knowledge.walkthrough import compose
 from nuzlocke.orchestration.loop import _COOLDOWN_TRIGGERS, RunLoop
 from nuzlocke.referee.rules import NuzlockeReferee
-from nuzlocke.state.models import ActionProposal, AgentRole, ObjectivesUpdate, PlanCard, PlanScene, PlayerObservation
+from nuzlocke.state.models import ActionProposal, AgentRole, GameAction, ObjectivesUpdate, PlanCard, PlanScene, PlayerObservation
 
 
 def setup():
@@ -137,6 +137,38 @@ def test_partial_healing_exit_requests_a_plan_before_walking_an_enclosed_area():
     assert turn.trigger not in _COOLDOWN_TRIGGERS
 
 
+def test_valid_waypoint_can_approach_a_blocked_healing_exit_without_releasing_healing():
+    from nuzlocke.llm.decisions import DecisionResult
+
+    loop, obs = setup()
+    obs.warps = [{"x": 11, "y": 3, "dest_map": 89}]
+    obs.policy["healing_route"] = True
+    loop.room.known[5] = {(15, 19): True, (15, 18): True}
+    turn = system1_turn(
+        obs=obs,
+        screen=parse_screen([]),
+        text_box=False,
+        mash_stalled=False,
+        room=loop.room,
+        objective={"kind": "warp", "dest_map": 89},
+        objective_text="Heal first: enter Vermilion's Center.",
+        objective_from_code=True,
+        heading=None,
+        fails={},
+        last_direction=None,
+        low_confidence_streak=0,
+        confidence_floor=0.55,
+        stale_noul=0.7,
+        journal=[],
+        constraints=[],
+        jev_decide=lambda state, questions: DecisionResult("exit_89", 1, 0, 0, "luna", decision_mode="choice"),
+        navigator=loop.navigator,
+        route_plan={"map_id": 5, "objective_key": "exit_89", "waypoints": [[15, 18]]},
+    )
+    assert turn.actions == [GameAction.WALK_UP] and not turn.trigger
+    assert turn.goal.key == "exit_89" and obs.policy["healing_route"]
+
+
 def test_healing_guide_requires_real_capabilities_and_both_sides_of_a_blocker():
     guide = compose("healing")
     assert "HM ownership alone is insufficient" in guide
@@ -163,12 +195,17 @@ def test_field_capabilities_are_observed_not_inferred_from_hm_inventory():
     assert len(facts) == 3 and "Strength" in facts[1] and "Rock Smash" in facts[2]
 
 
-def test_open_healing_route_retires_a_stale_obstacle_or_door_tile_plan():
+def test_open_healing_route_restores_destination_and_preserves_execution_card():
     loop, obs = setup()
     loop._sync_beats(obs, controllable=True)
     obs.warps = [{"x": 15, "y": 17, "dest_map": 89}]
     obs.collision_ascii = "\n".join(["   A B C D E F G H I J"] + [f" {i} . . . . . . . . . ." for i in range(1, 10)])
+    obs.collision_ascii = obs.collision_ascii.replace(" 5 . . . . .", " 5 . . . . @")
     loop.plan = card({"kind": "tile", "map_id": 5, "x": 15, "y": 17})
+    loop.plan.do_not = ["Talk to the trainer"]
+    loop.plan.route_plan = {"map_id": 5, "objective_key": "exit_89", "waypoints": [[15, 18]]}
+    original = loop.plan.model_dump()
     assert loop._objective(obs) == ({"kind": "warp", "dest_map": 89}, "Heal first: enter Vermilion's Center.", True)
-    assert loop.plan is None
+    assert loop._objective(obs)[0] == {"kind": "warp", "dest_map": 89}
+    assert loop.plan.model_dump() == original
     assert loop._beat_locked and loop.objectives["primary"].startswith("Heal")

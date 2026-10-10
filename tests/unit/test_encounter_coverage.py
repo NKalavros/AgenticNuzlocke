@@ -11,6 +11,8 @@ from nuzlocke.state.models import PlayerObservation as O
 
 def fixture():
     ref = NuzlockeReferee({"clauses": {"duplicates_clause": True}})
+    room = RoomMap()
+    room.known = {mid: {(1, 1): True, (2, 1): True} for mid in (51, 36)}
     return SimpleNamespace(
         referee=ref,
         _encounter_tables={},
@@ -18,7 +20,7 @@ def fixture():
         _grass_visits={},
         _cycle=102,
         navigator=Navigator(),
-        room=RoomMap(),
+        room=room,
     )
 
 

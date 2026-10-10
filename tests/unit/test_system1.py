@@ -129,8 +129,9 @@ def test_an_untrusted_grid_learns_from_bumps():
     room.record_walks(
         obs, [{"action": "walk_down", "x0": 10, "y0": 10, "x1": 10, "y1": 10, "map_id": 37}]
     )
-    after = next(g for g in build_goals(obs, room) if g.kind == "exit")
+    after = next(g for g in build_goals(obs, room) if g.kind == "explore")
     assert after.path[0] != "down"
+    assert len(after.actions) == 1
 
 
 def test_jev_picks_a_goal_and_code_walks_it():
@@ -161,6 +162,37 @@ def test_a_goal_that_failed_twice_yields_to_the_runner_up():
     goals = build_goals(_obs(), RoomMap())
     chosen = pick(goals, "exit_255", {"exit_255": 0.6, "talk_1": 0.3}, {"exit_255": 2})
     assert chosen.key == "talk_1"
+
+
+def test_overworld_actor_receives_planner_execution_text_and_bans():
+    decide, calls = _jev("exit_255")
+    _turn(jev_decide=decide, execution_plan="Use the east path.\nDo not talk to Oak.")
+    assert calls[0][0]["plan"] == "Use the east path.\nDo not talk to Oak."
+    assert "Follow `plan` and its bans" in calls[0][1]["action"]["instructions"]
+
+
+def test_choice_only_actor_replans_after_two_failures_without_inventing_runner_up():
+    from nuzlocke.llm.decisions import DecisionResult
+
+    def decide(state, questions):
+        return DecisionResult("exit_255", 1, 0, 0, "luna", decision_mode="choice")
+
+    turn = _turn(jev_decide=decide, fails={"exit_255": 2})
+    assert turn.trigger == "goal keeps failing" and not turn.actions
+
+
+def test_rejected_waypoint_requests_system2_before_actor_or_old_route():
+    from nuzlocke.agents.navigation import Navigator
+
+    decide, calls = _jev("exit_255")
+    nav = Navigator()
+    turn = _turn(
+        jev_decide=decide,
+        navigator=nav,
+        route_plan={"map_id": 37, "objective_key": "exit_255", "waypoints": [[99, 99]]},
+    )
+    assert turn.trigger == "route waypoint rejected" and not turn.actions
+    assert calls == [] and not nav.route
 
 
 def test_menus_text_and_title_need_no_look():
@@ -292,7 +324,8 @@ def test_a_grid_that_boxes_the_player_in_is_ignored():
     exit_goal = next(
         g for g in build_goals(_obs(collision_ascii=boxed), RoomMap()) if g.kind == "exit"
     )
-    assert "path open" in exit_goal.facts[0]
+    assert "no known path" in exit_goal.facts[0]
+    assert len(exit_goal.actions) == 1 and not exit_goal.complete
 
 
 def test_a_cutscene_waits_without_asking_anyone():

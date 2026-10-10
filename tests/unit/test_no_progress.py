@@ -127,6 +127,29 @@ def test_dialogue_loop_is_no_progress_even_though_it_is_not_a_noop():
     assert tracker.needs_recovery()
 
 
+@pytest.mark.parametrize("cutscene", [False, True])
+def test_outer_loop_does_not_reset_recovery_for_an_open_narrative_box(monkeypatch, cutscene):
+    from nuzlocke.orchestration.loop import RunLoop
+    from nuzlocke.state.models import PlanCard, PlanScene
+
+    loop = RunLoop.__new__(RunLoop)
+    loop.plan = PlanCard(scene=PlanScene.DIALOG, see="Rocket", plan="Leave after speech")
+    monkeypatch.setattr("nuzlocke.orchestration.loop.text_box_open", lambda path: True)
+    obs = PlayerObservation(map_id=201, map_name="Rocket Hideout B3F", x=26, y=9, screenshot_path="speech.png", cutscene=cutscene)
+    tracker = StuckTracker()
+    for i in range(NO_PROGRESS_RECOVERY):
+        if loop._cutscene_screen(obs):
+            tracker.pause_for_cutscene()
+        tracker.update_position(obs)
+        tracker.record_result(_fp(dialog=f"page{i}"), _fp(dialog=f"page{i + 1}"), executed=True, actions=["skip_dialog"])
+    assert tracker.no_progress_streak == NO_PROGRESS_RECOVERY and tracker.needs_recovery()
+    loop.plan.scene = PlanScene.TITLE
+    assert loop._cutscene_screen(obs)
+    loop.plan.scene = PlanScene.OVERWORLD
+    monkeypatch.setattr("nuzlocke.orchestration.loop.text_box_open", lambda path: False)
+    assert loop._cutscene_screen(obs) is cutscene
+
+
 def test_real_movement_clears_the_no_progress_streak():
     tracker = StuckTracker()
     for i in range(5):

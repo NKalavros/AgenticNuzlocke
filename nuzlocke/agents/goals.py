@@ -8,9 +8,8 @@ and how often it already failed on this visit.
 
 Paths run over the best map knowledge there is: the tilemap walk grid when it
 is trusted, plus verified floor from this visit with unchanged terrain (``RoomMap``),
-minus tiles a walk bumped into and tiles an NPC stands on. On a map whose grid
-is withheld (Oak's Lab), unknown tiles are tried optimistically and each bump
-is remembered, so the room is learned by walking it.
+minus tiles a walk bumped into and tiles an NPC stands on. When the grid is
+withheld, probe one unknown tile at a time and learn from the resulting movement.
 """
 
 from __future__ import annotations
@@ -247,11 +246,6 @@ def collision_map(obs: PlayerObservation, room: RoomMap) -> dict[Tile, bool] | N
     if obs.x is None or obs.y is None:
         return None
     walkable = room.floor(obs)
-    if not _grid_tiles(obs):
-        # No trusted grid: every on-screen tile is worth one try.
-        for dx in range(-4, 6):
-            for dy in range(-4, 5):
-                walkable.setdefault((obs.x + dx, obs.y + dy), True)
     from nuzlocke.knowledge.map_reference import ledge_jumps
 
     for x, y, d in ledge_jumps(obs, room):
@@ -549,6 +543,14 @@ def build_goals(
             "explore",
             "explore: walk to the nearest tile not visited yet",
             routes.frontier(room.seen(obs)),
+            fallback=next(
+                (
+                    routes.step(d)
+                    for d, (dx, dy) in DIRS.items()
+                    if (start[0] + dx, start[1] + dy) not in routes.walkable and routes.step(d)
+                ),
+                None,
+            ),
             more=[f"{len(room.seen(obs))} tiles of this map visited"],
         )
     )
@@ -856,7 +858,7 @@ def goal_questions(goals: list[Goal], *, judged: bool = True) -> dict[str, Any]:
                 "Pick the goal to pursue now. The option marked CURRENT OBJECTIVE is what the "
                 "story needs next; take it when its path is open. Code walks the path for you. "
                 "Pick another option only when the objective's path is blocked, it keeps failing, "
-                "or `text` shows something to handle first. Avoid options that already failed."
+                "or `text` shows something to handle first. Follow `plan` and its bans. Avoid options that already failed."
             ),
             "criteria": {goal.key: goal.criterion() for goal in goals},
         }

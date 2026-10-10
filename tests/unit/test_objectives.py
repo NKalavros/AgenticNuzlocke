@@ -1,9 +1,4 @@
-from nuzlocke.agents.roles import (
-    merge_objectives,
-    objectives_for_dashboard,
-    parse_landmarks,
-    parse_objectives,
-)
+from nuzlocke.agents.roles import merge_objectives, objectives_for_dashboard, parse_landmarks, parse_objectives
 from nuzlocke.state.models import LandmarkNote, ObjectivesUpdate
 
 
@@ -117,6 +112,7 @@ def test_encounter_override_is_shared_by_actor_dashboard_and_planner_context():
         bag=[{"item": "Poke Ball", "quantity": 10}],
         party=[{"species": "Pidgeotto", "level": 19, "hp": 53, "max_hp": 53, "status": "OK"}],
         grass_tiles=[{"x": 2, "y": 1}],
+        collision_ascii="\n".join([". . . . . . . . . ."] * 4 + [". . . . @ . . . . ."]),
     )
     loop._sync_beats(obs, controllable=True)
     target, text, owned = loop._objective(obs)

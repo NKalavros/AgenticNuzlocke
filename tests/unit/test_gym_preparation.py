@@ -77,7 +77,7 @@ def test_leader_path_stops_before_interaction_until_team_is_ready():
     o = obs()
     o.y = 4
     room = RoomMap()
-    room.visited[65] = {(4, 3), (4, 4)}
+    room.known[65] = {(4, 3): True, (4, 4): True}
     target = {"kind": "face", "x": 4, "y": 3, "dir": "up"}
     goals = build_goals(o, room, objective=target)
     goal = next(g for g in goals if g.objective)

@@ -43,6 +43,17 @@ def scene():
     return obs, SimpleNamespace(room=room, _goal_fails={})
 
 
+def test_unknown_floor_cannot_start_item_pickup_but_verified_walks_can():
+    obs, loop = scene()
+    obs.npcs[0].update(x=3, y=30)
+    loop.room.known.clear()
+    assert item_objective(loop, obs, None) is None
+    assert obs.policy["item_pickup"] is None
+    loop.room.record_walks(obs, [{"map_id": 51, "x0": 1, "y0": 30, "x1": 2, "y1": 30, "action": "walk_right"}])
+    target, _, owned = item_objective(loop, obs, None)
+    assert target == {"kind": "npc", "slot": 7} and owned
+
+
 def test_live_item_decode_does_not_mislabel_starter_or_trainer():
     memory = {W_NUM_SPRITES: 3}
     for slot in (1, 2, 3):

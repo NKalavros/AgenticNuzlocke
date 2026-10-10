@@ -134,7 +134,7 @@ class StuckTracker:
         self._loop_unique_max = max(2, int(loop_unique_max))
 
     def pause_for_cutscene(self) -> None:
-        """A title splash or an open text box is not a stuck overworld.
+        """Suspend recovery during a title splash or scripted movement.
 
         Same-tile dwell is kept: a name list sits on one tile and should still force an early
         replan. Blocked directions are retried: a scripted scene holds the player still, so walks

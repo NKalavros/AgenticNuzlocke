@@ -159,8 +159,7 @@ def system1_turn(
         last_direction=last_direction,
         last_texts=last_texts,
     )
-    if obs.policy.get("healing_route") and any(g.objective and g.kind == "exit" and not g.complete for g in goals):
-        return _look("healing route blocked")
+    healing_blocked = obs.policy.get("healing_route") and any(g.objective and g.kind == "exit" and not g.complete for g in goals)
     if not any(goal.objective for goal in goals):
         # A code-owned beat whose target is not on screen still has its story heading.
         heading_goal = next((g for g in goals if g.kind == "heading"), None)
@@ -183,6 +182,10 @@ def system1_turn(
                 (obs.policy.get("item_pickup") is not None or obs.policy.get("surge_switch_assist")) and objective_from_code
             ):
                 return S1Turn(routed.actions, f"route: {routed.label}", "goal", goal=routed, choice=routed.key)
+        if navigator.reason == "Route waypoint rejected":
+            return _look("route waypoint rejected")
+    if healing_blocked and not (navigator and navigator.plan.get("waypoints")):
+        return _look("healing route blocked")
     if any(goal.objective and not goal.actions for goal in goals):
         if navigator is not None and navigator.reason == "Route waypoint reached":
             return _look("route waypoint reached")
@@ -190,6 +193,7 @@ def system1_turn(
     state = {
         "navigation": navigator.brief if navigator else None,
         "goal": goal_text,
+        "plan": execution_plan,
         "where": {"map": obs.map_name, "x": obs.x, "y": obs.y, "facing": obs.facing},
         "recent": journal[-6:],
         "constraints": constraints,
@@ -200,6 +204,8 @@ def system1_turn(
     streak = 0
     if accepts(read, confidence_floor):
         assert read is not None
+        if not read.probabilities and fails.get(read.action, 0) >= 2:
+            return _look("goal keeps failing")
         chosen = pick(goals, read.action, read.probabilities, fails)
         probability = read.probabilities.get(read.action)
         why = f"{getattr(read, 'provider', 'jev')} {read.action}{confidence_note(read)}"
@@ -214,7 +220,7 @@ def system1_turn(
     wait = next(g for g in goals if g.key == "wait")
     if routed is not None and objective_from_code and not fails.get(routed.key, 0):
         chosen = routed
-        why = "follow verified objective route"
+        why = "follow objective route"
     chosen = chosen or next((g for g in goals if g.objective and g.actions), wait)
     if fails.get(chosen.key, 0) >= _GOAL_FAILS_FOR_LOOK:
         return _look("goal keeps failing")

@@ -78,6 +78,11 @@ If movement repeats without progress, the program starts recovery.
 System 2 reviews the scene at the first recovery stage.
 The message **automatic recovery routing** describes this control step.
 
+System 1 receives the route instructions and restrictions from System 2.
+Repeated speech can start recovery.
+The program tests one unknown tile at a time.
+It collects an item only when the full approach path is known.
+
 Select **PAUSE** to pause the run.
 Select **START** to continue it.
 Select **STOP** to end the run.
