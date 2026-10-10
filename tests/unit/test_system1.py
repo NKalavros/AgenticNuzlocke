@@ -195,6 +195,40 @@ def test_rejected_waypoint_requests_system2_before_actor_or_old_route():
     assert calls == [] and not nav.route
 
 
+def test_blocked_encounter_asks_for_access_then_follows_a_validated_approach():
+    from nuzlocke.agents.navigation import Navigator
+
+    decide, calls = _jev("explore")
+    nav = Navigator()
+    obs = _obs(policy={"encounter_phase": "blocked", "encounter_search": True})
+    args = {
+        "obs": obs,
+        "navigator": nav,
+        "objective": {"kind": "tile", "x": 30, "y": 10},
+        "objective_text": "Resolve the encounter",
+        "jev_decide": decide,
+    }
+    turn = _turn(**args)
+    assert turn.trigger == "encounter route blocked" and not turn.actions and not calls
+    assert nav.brief["objective_key"] == "objective"
+    route = {"map_id": 37, "objective_key": "objective", "waypoints": [[11, 10]]}
+    turn = _turn(**args, route_plan=route, fails={"objective": 1})
+    assert turn.actions == [GameAction.WALK_RIGHT] and turn.goal.objective
+    assert not calls  # A validated mandatory approach cannot turn into arbitrary exploration.
+    obs.x = 11
+    turn = _turn(**args, route_plan=route)
+    assert turn.trigger == "route waypoint reached" and not turn.actions
+
+
+def test_blocked_encounter_does_not_interrupt_field_menus_or_speech():
+    decide, calls = _jev("choose_1")
+    obs = _obs(policy={"encounter_phase": "blocked"})
+    screen = ScreenText([], ["POKéDEX", "POKéMON", "EXIT"], 0, "START")
+    turn = _turn(obs, screen=screen, jev_decide=decide, execution_plan="Use Beedrill's CUT.")
+    assert turn.kind == "menu" and calls[0][0]["plan"] == "Use Beedrill's CUT."
+    assert _turn(obs, text_box=True, jev_decide=decide).actions == [GameAction.SKIP_DIALOG]
+
+
 def test_menus_text_and_title_need_no_look():
     screen = ScreenText(["First, what is", "your name?"], ["NEW NAME", "RED", "ASH"], 0, "NAME")
     decide, calls = _jev("choose_1")

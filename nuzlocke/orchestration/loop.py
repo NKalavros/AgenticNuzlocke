@@ -44,7 +44,7 @@ from nuzlocke.config import ensure_relay_routing, load_agents_config, load_proje
 from nuzlocke.environment.joypad import is_naming_lock
 from nuzlocke.environment.nous_red import NousRedEnvironment
 from nuzlocke.environment.screen import digests_from_path, prompt_box_open, text_box_open
-from nuzlocke.environment.screen_text import parse_screen
+from nuzlocke.environment.screen_text import find_boxes, parse_screen
 from nuzlocke.knowledge.walkthrough import compose, excerpt_for_context, progression_hint, skill_dir
 from nuzlocke.llm.factory import create_jev, create_provider
 from nuzlocke.llm.settings import preflight, provider_identity, resolve_agents_config
@@ -118,6 +118,7 @@ _COOLDOWN_TRIGGERS = {
     "no objective",
     "objective not on this map",
     "objective path blocked",
+    "encounter route blocked",
     "jev unsure twice",
     "goal keeps failing",
 }
@@ -1119,9 +1120,9 @@ class RunLoop:
             and len(self.journal.lines) - self._last_look < S2_COOLDOWN_CYCLES
         ):
             # Healing must retain its objective during the planning cooldown.
-            if current_beat(obs) and current_beat(obs).id.startswith("heal"):
+            if (current_beat(obs) and current_beat(obs).id.startswith("heal")) or obs.policy.get("encounter_phase") == "blocked":
                 return ActionProposal(
-                    task_id=task.task_id, agent=task.owner, reason="retain healing objective", actions=[GameAction.WAIT_60]
+                    task_id=task.task_id, agent=task.owner, reason="retain mandatory objective", actions=[GameAction.WAIT_60]
                 )
             # System 2 looked moments ago. Asking again buys the same answer; explore instead.
             s1 = self._system1(obs, signals, mash_stalled=mash_stalled, jev_decide=jev_decide, explore=True)
@@ -1495,7 +1496,7 @@ class RunLoop:
         speech, a battle, or the naming grid (speech is not a new goal).
         """
         self._objectives_observation = obs
-        if not controllable:
+        if not controllable or find_boxes(obs.screen_rows):
             return None
         from nuzlocke.knowledge.encounters import encounter_objective
 

@@ -172,6 +172,8 @@ class Navigator:
             while waypoints and tuple(waypoints[0]) == start:
                 waypoints.pop(0)
                 reached_waypoint = True
+            if reached_waypoint and not waypoints and obs.policy.get("encounter_phase") == "blocked":
+                remaining, suffix = [], []
             if waypoints:
                 waypoint = tuple(waypoints[0])
                 routes = Routes(
@@ -280,6 +282,9 @@ class Navigator:
             "objects": [object_facts(obs, npc) for npc in obs.npcs],
             "signs": obs.signs,
             "interaction_target": objective if objective and objective.get("kind") in {"npc", "face"} else None,
+            "encounter_access": {"phase": obs.policy.get("encounter_phase"), "destination": objective}
+            if obs.policy.get("encounter_search")
+            else None,
             "temporary_blocked_edges": [list(e) for e in room.temporary_edges(obs)],
             "terrain_blocked_edges": [list(e) for e in sorted(room.terrain_edges(obs))],
             "route": self.brief if self.signature and self.signature[0] == obs.map_id else {},

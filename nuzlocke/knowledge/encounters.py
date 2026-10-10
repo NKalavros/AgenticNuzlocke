@@ -167,11 +167,8 @@ def encounter_objective(loop, obs, beat):
         from nuzlocke.knowledge.objects import object_available
 
         occupied = {(n["x"], n["y"]) for n in obs.npcs if object_available(obs, n)}
-        targets = [
-            t
-            for t in (tiles or [tuple(t) for t in (reference(obs) or {}).get("grass", [])])
-            if t not in occupied and grid.get(t, True)
-        ]
+        patches = tiles or [tuple(t) for t in (reference(obs) or {}).get("grass", [])]
+        targets = [t for t in patches if t not in occupied and grid.get(t, True)]
         path = (
             shortest_path(
                 obs,
@@ -210,6 +207,20 @@ def encounter_objective(loop, obs, beat):
                     "Return to Cerulean's southern apron to enter Route 5's central grass lane; the encounter remains pending.",
                     True,
                 )
+        if patches:
+            # Keep a stable destination so System 2 can route to an obstacle under
+            # this encounter, rather than lose its waypoints to generic exploration.
+            data = loop.navigator.maps[str(obs.map_id)]
+            tile = tuple(data.get("encounter_target", []))
+            if tile not in patches:
+                tile = min(patches, key=lambda t: abs(t[0] - obs.x) + abs(t[1] - obs.y))
+                data["encounter_target"] = list(tile)
+            obs.policy["encounter_phase"] = "blocked"
+            return (
+                {"kind": "tile", "x": tile[0], "y": tile[1]},
+                f"Resolve {map_name(obs.map_id)}'s first legal encounter; reroll duplicates.",
+                True,
+            )
         # Keep this work pending while finding grass; do not quietly take the story exit.
         return (
             {"kind": "explore"},

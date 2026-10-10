@@ -49,6 +49,12 @@ interaction or field-menu action, then verify its result before resuming the des
 Do not create a temporary objective. A learned HM is not a cleared tree.
 Do not send the walker toward an inaccessible door and expect it to invent the missing interaction.
 
+For "encounter route blocked", navigation.encounter_access identifies a known encounter
+patch with no confirmed walking route. Keep the encounter objective active. Supply route_plan
+waypoints to inspect or approach the blocker, then use steps for facing or opening the field
+menu when the approach is reached. Use only observed living field-move users with field
+permission. Verify the opened passage before resuming the catch; do not explore unrelated floor.
+
 If the journal shows the same text each time a goal is tried (someone blocking a
 road), that way is closed until a story event: set a different objective.
 

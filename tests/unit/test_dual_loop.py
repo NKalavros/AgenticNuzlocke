@@ -423,6 +423,95 @@ def test_a_partly_successful_walk_burst_still_counts_its_blocked_goal():
     assert loop._goal_fails == {"exit_200": 2}
 
 
+def test_blocked_encounter_cooldown_waits_without_generic_exploration(monkeypatch):
+    loop = _fast_loop(None, recent=[])
+    obs = _obs().model_copy(update={"map_id": 19, "policy": {"encounter_phase": "blocked"}})
+    loop._beat_id = "encounter:19"
+    loop._last_look = 0
+    loop._last_look_context = (19, obs.map_name, loop._beat_id)
+    called = []
+
+    def actor(*args, **kwargs):
+        from nuzlocke.agents.system1 import S1Turn
+
+        called.append(kwargs.get("explore", False))
+        return S1Turn([], "encounter route blocked", "trigger", trigger="encounter route blocked")
+
+    def planner(*args, **kwargs):
+        raise AssertionError("same-context planning must wait for its cooldown")
+
+    loop._system1 = actor
+    monkeypatch.setattr("nuzlocke.orchestration.loop.propose_plan", planner)
+    proposal = loop._fast_proposal(task=make_task(_decision()), obs=obs, context=_context())
+    assert proposal.actions == [GameAction.WAIT_60] and called == [False]
+
+
+def test_blocked_encounter_handoff_keeps_parent_and_executes_field_menu_step(monkeypatch):
+    from nuzlocke.llm.decisions import DecisionResult
+
+    loop = _fast_loop(None, recent=[])
+    loop._encounter_tables, loop._encounter_search_counts, loop._grass_visits = {}, {}, {}
+    loop._beat_locked, loop._beat_id = True, "encounter:19"
+    loop.room.known[19] = {(x, y): x != 3 for x in range(8) for y in range(3)}
+    loop.jev = SimpleNamespace(decide=lambda **kwargs: DecisionResult("objective", 1, 0, 0, "luna", decision_mode="choice"))
+    obs = PlayerObservation(
+        map_id=19,
+        map_name="Route 8",
+        map_size={"w": 8, "h": 3},
+        x=1,
+        y=1,
+        badges=["Boulder", "Cascade"],
+        flags={"has_pokedex": True},
+        bag=[{"item": "Poke Ball", "quantity": 4}],
+        grass_tiles=[{"x": 5, "y": 1}],
+        wild_species=["Vulpix"],
+        party=[{"species": "Beedrill", "hp": 20, "moves": [{"name": "Cut", "pp": 30}]}],
+        raw_player={"name": "RED"},
+    )
+    looks = []
+
+    def planner(*args, **kwargs):
+        looks.append(kwargs)
+        return PlanCard(
+            scene=PlanScene.OVERWORLD,
+            see="blocked grass",
+            plan="Approach the obstacle, then use Beedrill's CUT.",
+            goal_target={"kind": "tile", "map_id": 19, "x": 2, "y": 1},
+            route_plan={"map_id": 19, "objective_key": "objective", "waypoints": [[2, 1]]} if len(looks) == 1 else {},
+            steps=[] if len(looks) == 1 else [GameAction.PRESS_START],
+        )
+
+    monkeypatch.setattr("nuzlocke.orchestration.loop.propose_plan", planner)
+    task = make_task(_decision())
+    proposal = loop._fast_proposal(task=task, obs=obs, context=_context())
+    assert proposal.actions == [GameAction.WALK_RIGHT]
+    assert looks[0]["trigger"] == "encounter route blocked"
+    assert looks[0]["navigation"]["encounter_access"]["destination"] == {"kind": "tile", "x": 5, "y": 1}
+    # The approach is execution intent, not a new encounter or a completed catch.
+    assert loop._objective(obs)[0] == {"kind": "tile", "x": 5, "y": 1}
+    assert loop.referee.encounter_ledger == {}
+    obs.x = 2
+    proposal = loop._fast_proposal(task=task, obs=obs, context=_context())
+    assert looks[1]["trigger"] == "route waypoint reached"  # Even inside the previous look's cooldown.
+    assert proposal.actions == [GameAction.PRESS_START]
+    assert loop.referee.encounter_ledger == {}
+
+
+@pytest.mark.parametrize("cursor", ["▶", " "])
+def test_open_field_menu_preserves_mandatory_encounter_and_planner_card(cursor):
+    loop = _fast_loop(PlanCard(scene=PlanScene.OVERWORLD, see="tree", plan="Use Beedrill's CUT."), recent=[])
+    loop._beat_locked, loop._beat_id = True, "encounter:19"
+    loop.objectives = {"primary": "Resolve Route 8's first legal encounter; reroll duplicates."}
+    plan = loop.plan
+    obs = PlayerObservation(
+        map_id=19,
+        screen_rows=["┌──────────┐", f"│{cursor}POKéDEX  │", "│ POKéMON  │", "│ ITEM     │", "│ EXIT     │", "└──────────┘"],
+    )
+    assert loop._sync_beats(obs, controllable=True) is None
+    assert loop._beat_locked and loop._beat_id == "encounter:19" and loop.plan is plan
+    assert loop.objectives["primary"].startswith("Resolve Route 8")
+
+
 @pytest.mark.parametrize("blocked_facing", [False, True])
 def test_a_goal_that_ends_in_the_same_text_again_counts_as_failed(blocked_facing):
     from nuzlocke.agents.goals import Goal

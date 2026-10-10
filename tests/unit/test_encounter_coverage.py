@@ -102,6 +102,39 @@ def test_healing_outranks_encounter_and_route4_waits_for_east_side():
     assert encounter_objective(loop, obs(map_id=15, x=8, grass_tiles=[]), None) is None
 
 
+def test_blocked_known_grass_keeps_a_stable_destination_for_planner_access():
+    loop = fixture()
+    loop.room.known[19] = {(x, y): x != 3 for x in range(8) for y in range(3)}
+    at = obs(
+        map_id=19,
+        map_name="Route 8",
+        map_size={"w": 8, "h": 3},
+        wild_species=["Vulpix"],
+        grass_tiles=[{"x": 5, "y": 1}, {"x": 6, "y": 1}],
+    )
+    target, text, owned = encounter_objective(loop, at, None)
+    assert target == {"kind": "tile", "x": 5, "y": 1} and owned
+    assert at.policy["encounter_phase"] == "blocked" and "encounter" in text
+    # Moving and seeing more grass must not reset the director's approach route.
+    at.x = 2
+    at.grass_tiles.append({"x": 4, "y": 1})
+    assert encounter_objective(loop, at, None)[0] == target
+    assert not loop.referee.encounter_ledger
+    # A menu does not discard pending encounter work; an observed opening resumes walking.
+    assert encounter_objective(loop, at.model_copy(update={"cutscene": True}), None) is None
+    loop.room.known[19][3, 1] = True
+    target, _, _ = encounter_objective(loop, at, None)
+    assert target["kind"] == "tile" and at.policy["encounter_phase"] == "approach"
+    loop.referee.encounter_ledger["19"] = {"outcome": "caught", "species": "Vulpix"}
+    assert encounter_objective(loop, at, None) is None
+
+
+def test_encounter_exploration_is_retained_when_no_patch_is_known():
+    loop = fixture()
+    at = obs(grass_tiles=[], map_size={"w": 8, "h": 3})
+    assert encounter_objective(loop, at, None)[0] == {"kind": "explore"}
+
+
 def test_brock_continuation_and_distinct_moon_ladders():
     assert current_beat(obs(map_id=2)).target == {"kind": "edge", "dir": "right"}
     assert current_beat(obs(map_id=60, x=5, y=5)).target["dest_map"] == 61

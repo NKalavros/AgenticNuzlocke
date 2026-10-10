@@ -178,12 +178,24 @@ def system1_turn(
         )
         if routed is not None:
             goals = [routed, *[g for g in goals if g.key != routed.key]]
-            if navigator.reason == "Continuing verified route" or (
-                (obs.policy.get("item_pickup") is not None or obs.policy.get("surge_switch_assist")) and objective_from_code
-            ):
-                return S1Turn(routed.actions, f"route: {routed.label}", "goal", goal=routed, choice=routed.key)
         if navigator.reason == "Route waypoint rejected":
             return _look("route waypoint rejected")
+    if obs.policy.get("encounter_phase") == "blocked" and not (navigator and navigator.plan.get("waypoints")):
+        return _look(
+            "route waypoint reached" if navigator and navigator.reason == "Route waypoint reached" else "encounter route blocked"
+        )
+    if routed is not None and (
+        navigator.reason == "Continuing verified route"
+        or (
+            (
+                obs.policy.get("item_pickup") is not None
+                or obs.policy.get("surge_switch_assist")
+                or obs.policy.get("encounter_phase") == "blocked"
+            )
+            and objective_from_code
+        )
+    ):
+        return S1Turn(routed.actions, f"route: {routed.label}", "goal", goal=routed, choice=routed.key)
     if healing_blocked and not (navigator and navigator.plan.get("waypoints")):
         return _look("healing route blocked")
     if any(goal.objective and not goal.actions for goal in goals):

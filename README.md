@@ -83,6 +83,11 @@ Repeated speech can start recovery.
 The program tests one unknown tile at a time.
 It collects an item only when the full approach path is known.
 
+If no walking route reaches known encounter grass, System 2 checks access.
+It can give an approach route and instructions to clear an obstacle.
+The encounter stays pending until the program records its result.
+Field menus keep the current objective and instructions.
+
 Select **PAUSE** to pause the run.
 Select **START** to continue it.
 Select **STOP** to end the run.
