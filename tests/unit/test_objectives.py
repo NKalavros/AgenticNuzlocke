@@ -208,6 +208,9 @@ def test_progression_panel_advances_only_with_observed_prerequisites():
     obs.map_id = 134
     assert "challenge Erika" in progression_objectives(obs)["primary"]
     obs.badges.append("Rainbow")
+    assert "Rocket Hideout" in progression_objectives(obs)["primary"]
+    assert "Koga" in progression_objectives(obs)["tertiary"]
+    obs.badges.append("Soul")
     assert progression_objectives(obs) is None
     obs.badges = ["Boulder"]
     assert progression_objectives(obs) is None

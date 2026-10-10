@@ -58,7 +58,9 @@ def decision(obs: PlayerObservation, *, first_encounter: bool = False) -> Policy
         return PolicyDecision(legal_sequences={"fossil": actions}, required="fossil")
     from nuzlocke.agents.gym_preparation import at_leader, needs_top_up
 
-    if at_leader(obs) and needs_top_up(obs) and not obs.policy.get("preparing"):
+    stage = obs.policy.get("gym_preparation")
+    pending = stage and stage["phase"] != "challenge"
+    if at_leader(obs) and (needs_top_up(obs) or pending) and not obs.policy.get("preparing"):
         # Healing may require leaving this tile. Block the challenge, not the exit.
         return PolicyDecision(forbidden_actions=[GameAction.PRESS_A, GameAction.A_UNTIL_DIALOG_END])
     if "rotation_actions" in obs.policy:
@@ -107,8 +109,11 @@ def decision(obs: PlayerObservation, *, first_encounter: bool = False) -> Policy
         # A conditional planner strategy may leave no useful move despite remaining PP.
         sequences["back"] = [GameAction.PRESS_B]
         return PolicyDecision(legal_sequences=sequences)
-    from nuzlocke.agents.inventory import candy_bag_actions, cut_bag_actions, tm_party_choices
+    from nuzlocke.agents.inventory import candy_bag_actions, capture_ball_actions, cut_bag_actions, tm_party_choices
 
+    capture_actions = capture_ball_actions(obs, first_encounter)
+    if capture_actions is not None:
+        return PolicyDecision(legal_sequences={"capture_bag": capture_actions}, required="capture_bag")
     if actions := cut_bag_actions(obs):
         return PolicyDecision(legal_sequences={"cut_bag": actions}, required="cut_bag")
     choices = tm_party_choices(obs)
@@ -129,9 +134,7 @@ def decision(obs: PlayerObservation, *, first_encounter: bool = False) -> Policy
         if any("×" in row for row in rows):
             legal = {"back": [GameAction.PRESS_B]}
             for i, row in enumerate(rows):
-                allowed = (obs.in_battle and first_encounter and "BALL" in row.upper()) or (
-                    not obs.in_battle and obs.policy.get("preparing") and "RARE CANDY" in row.upper()
-                )
+                allowed = not obs.in_battle and obs.policy.get("preparing") and "RARE CANDY" in row.upper()
                 if allowed or row.upper() == "CANCEL":
                     legal[f"row_{i}"] = menu_actions(f"choose_{i}", menu.cursor_row)
         # Party menus: screen text plus roster identifies selectable rows.

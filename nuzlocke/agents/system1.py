@@ -88,6 +88,7 @@ def system1_turn(
     battle_plan: dict[str, Any] | None = None,
     navigator: Any = None,
     route_plan: dict | None = None,
+    execution_plan: str | None = None,
 ) -> S1Turn | None:
     if is_naming_lock(obs.joy_ignore):
         # 0xD730 bit 6 is "instant text": the naming keyboard, but also the Pokédex page before
@@ -118,7 +119,17 @@ def system1_turn(
 
         if actions := cut_bag_actions(obs):
             return S1Turn(actions, "select HM01 from the full bag to teach CUT", "menu")
-        return _menu_turn(screen, goal_text, journal, low_confidence_streak, confidence_floor, jev_decide, tm_party_choices(obs))
+        return _menu_turn(
+            screen,
+            goal_text,
+            journal,
+            low_confidence_streak,
+            confidence_floor,
+            jev_decide,
+            tm_party_choices(obs),
+            plan=execution_plan,
+            constraints=constraints,
+        )
     if text_box:
         special = _special_page(obs.screen_rows)
         if special is not None:
@@ -169,10 +180,12 @@ def system1_turn(
         if routed is not None:
             goals = [routed, *[g for g in goals if g.key != routed.key]]
             if navigator.reason == "Continuing verified route" or (
-                obs.policy.get("item_pickup") is not None and objective_from_code
+                (obs.policy.get("item_pickup") is not None or obs.policy.get("surge_switch_assist")) and objective_from_code
             ):
                 return S1Turn(routed.actions, f"route: {routed.label}", "goal", goal=routed, choice=routed.key)
     if any(goal.objective and not goal.actions for goal in goals):
+        if navigator is not None and navigator.reason == "Route waypoint reached":
+            return _look("route waypoint reached")
         return _look("objective path blocked")
     state = {
         "navigation": navigator.brief if navigator else None,
@@ -336,12 +349,17 @@ def _battle_menu(
 ) -> S1Turn:
     """A ▶ menu in battle other than FIGHT/PKMN/ITEM/RUN and the moves: the bag, a YES/NO."""
     rows = [row.upper() for row in screen.menu_rows]
-    if first_encounter and any("BALL" in row for row in rows):
-        index = next(i for i, row in enumerate(rows) if "BALL" in row)
-        return S1Turn(
-            menu_actions(f"choose_{index}", screen.cursor_row), "System 3: throw the POKé BALL", "battle", choice=f"choose_{index}"
-        )
     if obs:
+        from nuzlocke.agents.inventory import capture_ball_actions
+
+        actions = capture_ball_actions(obs, first_encounter)
+        if actions is not None:
+            reason = (
+                "close bag for the required battle action"
+                if actions == [GameAction.PRESS_B]
+                else "scroll to and throw a legal capture ball"
+            )
+            return S1Turn(actions, f"System 3: {reason}", "battle", choice="capture_bag")
         desired = str((plan or {}).get("switch_to") or "").upper()
         from nuzlocke.agents.level_buffer import switch_order
 
@@ -396,6 +414,9 @@ def _menu_turn(
     confidence_floor: float,
     jev_decide: Decide,
     options: dict[str, str] | None = None,
+    *,
+    plan: str | None = None,
+    constraints: list[str] | None = None,
 ) -> S1Turn:
     rows, cursor = screen.menu_rows, screen.cursor_row
     yes_no = [row.upper() for row in rows] == ["YES", "NO"]
@@ -408,7 +429,7 @@ def _menu_turn(
         questions["action"]["instructions"] = (
             "Pick a compatible living member to teach. If the goal names an unavailable member, choose an offered alternative."
         )
-    state = {"goal": goal_text, **screen.as_state(), "recent": journal[-4:]}
+    state = {"goal": goal_text, "plan": plan, "constraints": constraints, **screen.as_state(), "recent": journal[-4:]}
     read = _ask(jev_decide, state, questions)
     if not accepts(read, confidence_floor):
         streak = low_confidence_streak + 1
@@ -446,7 +467,8 @@ def menu_questions(
             "type": "choice",
             "instructions": (
                 "A menu is open. `text` is the question, `menu` the rows. Pick the row that "
-                "carries out `goal`. For a name, pick a preset name, not NEW NAME."
+                "carries out `goal`, using `plan` for the current execution step and obeying `constraints`. "
+                "For a name, pick a preset name, not NEW NAME."
             ),
             "criteria": criteria,
         }

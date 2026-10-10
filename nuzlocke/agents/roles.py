@@ -218,7 +218,7 @@ def decide_director(
         return DirectorDecision(
             **data("prompts/director.json")["recovery"],
             narration=f"Stuck path → recovery (stuck={stuck}, noop={noop}, loop={loop}, "
-            f"no_progress={no_progress}); no Director LLM.",
+            f"no_progress={no_progress}); automatic recovery routing.",
         )
 
     next_target = _NEXT_GYM_TARGET[min(len(obs.badges), len(_NEXT_GYM_TARGET) - 1)]
@@ -436,7 +436,7 @@ def _battle_plan(raw: Any) -> dict[str, Any]:
 
 def parse_target(raw: Any) -> dict[str, Any] | None:
     """System 2's target in the form ``agents.goals`` matches options against."""
-    from nuzlocke.environment.maps import map_name
+    from nuzlocke.environment.maps import map_id_for_name
 
     raw = raw if isinstance(raw, dict) else {"kind": "cell", "value": raw}
     kind, value = str(raw.get("kind") or "").lower(), str(raw.get("value") or "").strip()
@@ -444,7 +444,7 @@ def parse_target(raw: Any) -> dict[str, Any] | None:
         return {"kind": "tile", **{k: raw[k] for k in ("map_id", "x", "y")}}
     if kind == "exit" and value:
         wanted = value.casefold()
-        dest = next((i for i in range(256) if (map_name(i) or "").casefold() == wanted and i != 255), None)
+        dest = map_id_for_name(wanted)
         if dest is None and wanted in {"outside", "back outside", "out"}:
             dest = 255
         return {"kind": "warp", "dest_map": dest} if dest is not None else None

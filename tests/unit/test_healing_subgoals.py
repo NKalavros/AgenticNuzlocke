@@ -83,6 +83,30 @@ def test_nurse_and_verified_healing_retire_the_temporary_route():
     assert not loop.objectives["primary"].startswith("Heal")
 
 
+def test_final_gym_healing_cannot_be_replaced_by_planner_or_progression_objectives():
+    from nuzlocke.agents.gym_preparation import GymPreparation
+
+    loop, obs = setup()
+    obs.map_id, obs.map_name = 89, "Vermilion Pokecenter"
+    obs.party[0].update(status="OK", level=23)
+    obs.surge_puzzle = {"phase": "open"}
+    loop.gym_preparation = GymPreparation()
+    loop.gym_preparation.observe(obs, cap=24, candy_enabled=True, record=loop.store.append)
+    loop._sync_beats(obs, controllable=True)
+    loop._apply_proposal_meta(
+        ActionProposal(
+            task_id="test",
+            agent=AgentRole.OVERWORLD,
+            actions=[],
+            reason="challenge",
+            objectives=ObjectivesUpdate(primary="Fight Surge", secondary="Erika"),
+        )
+    )
+    assert loop.objectives["primary"].startswith("Heal")
+    assert "24" in loop.objectives["secondary"] and "Thunder" in loop.objectives["tertiary"]
+    assert loop._objective(obs)[0] == {"kind": "face", "x": 3, "y": 3, "dir": "up"}
+
+
 def test_partial_healing_exit_requests_a_plan_before_walking_an_enclosed_area():
     loop, obs = setup()
     # Open local floor cannot reach the distant Center; the inaccessible exit still has a partial path.

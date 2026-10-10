@@ -148,7 +148,7 @@
   "surge.gym_access": {
     "default": {
       "primary": "Reach Vermilion Gym's entrance; approach its blocking tree before targeting the gym door.",
-      "secondary": "Face the tree and use the living CUT user's POK\u00e9MON menu; verify the opening, then enter the gym.",
+      "secondary": "Face the tree and use the living CUT user's POKéMON menu; verify the opening, then enter the gym.",
       "tertiary": "Solve the switch locks, prepare safely, and defeat Lt. Surge; verify Thunder."
     },
     "variants": [
@@ -157,11 +157,78 @@
           5
         ],
         "objectives": {
-          "primary": "Approach the gym tree at (15,18) from (14,18); face right and use CUT from the living user's POK\u00e9MON menu.",
+          "primary": "Approach the gym tree at (15,18) from (14,18); face right and use CUT from the living user's POKéMON menu.",
           "secondary": "Verify the entrance is open, then enter Vermilion Gym at (12,19).",
           "tertiary": "Solve the switch locks, prepare safely, and defeat Lt. Surge; verify Thunder."
         }
       }
     ]
+  },
+  "koga.rocket_entry": {
+    "default": {
+      "primary": "Heal in Celadon, then enter the Game Corner and open the poster's Rocket Hideout stairs.",
+      "secondary": "Heal and prepare the living party for Koga at the current level-43 cap.",
+      "tertiary": "Defeat Koga and verify the Soul Badge."
+    },
+    "variants": []
+  },
+  "koga.rocket_key": {
+    "default": {
+      "primary": "Descend the Rocket Hideout to B4F; defeat the northwest Rocket, talk again and collect the Lift Key.",
+      "secondary": "Heal and prepare the living party for Koga at the current level-43 cap.",
+      "tertiary": "Defeat Koga and verify the Soul Badge."
+    },
+    "variants": []
+  },
+  "koga.rocket_scope": {
+    "default": {
+      "primary": "Use the Lift Key elevator to B4F, defeat the doorway Rockets and Giovanni, then collect the Silph Scope.",
+      "secondary": "Heal and prepare the living party for Koga at the current level-43 cap.",
+      "tertiary": "Defeat Koga and verify the Soul Badge."
+    },
+    "variants": []
+  },
+  "koga.tower": {
+    "default": {
+      "primary": "Return to Lavender, climb Pokémon Tower, rescue Mr. Fuji and receive the Poké Flute at his house.",
+      "secondary": "Heal and prepare the living party for Koga at the current level-43 cap.",
+      "tertiary": "Defeat Koga and verify the Soul Badge."
+    },
+    "variants": [
+      {
+        "maps": [
+          149
+        ],
+        "objectives": {
+          "primary": "Speak to rescued Mr. Fuji at his house for the Poké Flute; return to the Tower if he is absent.",
+          "secondary": "Heal and prepare the living party for Koga at the current level-43 cap.",
+          "tertiary": "Defeat Koga and verify the Soul Badge."
+        }
+      }
+    ]
+  },
+  "koga.fuchsia_route": {
+    "default": {
+      "primary": "Use the Poké Flute at Route 12's Snorlax; follow Routes 13–15 west to Fuchsia.",
+      "secondary": "Heal and prepare the living party for Koga at the current level-43 cap.",
+      "tertiary": "Defeat Koga and verify the Soul Badge."
+    },
+    "variants": []
+  },
+  "koga.fuchsia": {
+    "default": {
+      "primary": "Heal in Fuchsia's Center, then enter the southwest gym and approach Koga through its invisible-wall maze.",
+      "secondary": "Heal and prepare the living party for Koga at the current level-43 cap.",
+      "tertiary": "Defeat Koga and verify the Soul Badge."
+    },
+    "variants": []
+  },
+  "koga.gym": {
+    "default": {
+      "primary": "Clear Fuchsia Gym's invisible-wall maze; reach Koga's approach at (4,11), facing up.",
+      "secondary": "Heal and prepare the living party for Koga at the current level-43 cap.",
+      "tertiary": "Defeat Koga and verify the Soul Badge."
+    },
+    "variants": []
   }
 }

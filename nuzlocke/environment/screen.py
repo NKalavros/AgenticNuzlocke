@@ -75,6 +75,12 @@ def text_box_open(path: str | None) -> bool:
     return grey is not None and _has_text_box(grey)
 
 
+def blank_frame(path: str | None) -> bool:
+    """A uniform frame is a fade, not observable map geometry."""
+    grey = _load_grey(path)
+    return grey is not None and len(set(grey.getextrema())) == 1
+
+
 def prompt_box_open(path: str | None) -> bool:
     """True when a menu box sits above an open text box: a YES/NO or a list.
 

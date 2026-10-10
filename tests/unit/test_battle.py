@@ -61,23 +61,14 @@ def _obs(rows: list[str], kind: str = "trainer") -> PlayerObservation:
 
 def _butterfree(status="SLP"):
     obs = _obs([r.replace("SCRATCH", "SLEEP POWDER").replace("GROWL", "CONFUSION") for r in MOVES])
-    obs.battle["enemy"] = {
-        "species": "Starmie",
-        "level": 21,
-        "hp": 59,
-        "max_hp": 59,
-        "status": status,
-    }
+    obs.battle["enemy"] = {"species": "Starmie", "level": 21, "hp": 59, "max_hp": 59, "status": status}
     obs.party = [
         {
             "species": "Butterfree",
             "hp": 24,
             "max_hp": 58,
             "status": "OK",
-            "moves": [
-                {"id": 79, "name": "SLEEP POWDER", "pp": 5},
-                {"id": 93, "name": "CONFUSION", "pp": 25},
-            ],
+            "moves": [{"id": 79, "name": "SLEEP POWDER", "pp": 5}, {"id": 93, "name": "CONFUSION", "pp": 25}],
         }
     ]
     return obs
@@ -113,9 +104,7 @@ def test_battle_handoff_keeps_strategy_and_blocks_repeated_sleep_even_on_fallbac
                 "moves": ["SLEEP POWDER", "CONFUSION"],
                 "opening_moves": ["SLEEP POWDER"],
                 "notes": "Use Confusion until it wakes up.",
-                "move_rules": [
-                    {"move": "SLEEP POWDER", "enemy_status": ["OK"], "reason": "Sleep once"}
-                ],
+                "move_rules": [{"move": "SLEEP POWDER", "enemy_status": ["OK"], "reason": "Sleep once"}],
             }
         ),
     )
@@ -150,9 +139,7 @@ def test_plan_conditions_and_bans_apply_with_unknown_status_and_to_fallback():
     obs = _butterfree(None)
     plan = {
         "moves": ["SLEEP POWDER", "CONFUSION"],
-        "move_rules": [
-            {"move": "Sleep Powder", "enemy_status": ["OK"], "reason": "Only if healthy"}
-        ],
+        "move_rules": [{"move": "Sleep Powder", "enemy_status": ["OK"], "reason": "Only if healthy"}],
     }
     screen = battle.parse_battle(obs.screen_rows)
     assert battle.fallback(screen, obs, plan=plan) == "move_1"
@@ -189,15 +176,7 @@ def test_only_blocked_moves_can_back_out_then_switch():
 def test_invalid_plan_condition_is_not_silently_discarded():
     from nuzlocke.agents.roles import _battle_plan
 
-    assert (
-        _battle_plan(
-            {
-                "moves": ["SLEEP POWDER"],
-                "move_rules": [{"move": "SLEEP POWDER", "enemy_status": ["SOMETHING"]}],
-            }
-        )
-        == {}
-    )
+    assert _battle_plan({"moves": ["SLEEP POWDER"], "move_rules": [{"move": "SLEEP POWDER", "enemy_status": ["SOMETHING"]}]}) == {}
 
 
 def test_no_applicable_move_or_switch_stops_instead_of_reopening_the_move_menu():
@@ -246,11 +225,7 @@ def test_reads_the_battle_menu_and_the_move_list():
 
 def test_cursor_moves_on_the_grid_and_the_list():
     menu = battle.parse_battle(MENU)
-    assert battle.actions_for(menu, "run") == [
-        GameAction.WALK_RIGHT,
-        GameAction.WALK_DOWN,
-        GameAction.PRESS_A,
-    ]
+    assert battle.actions_for(menu, "run") == [GameAction.WALK_RIGHT, GameAction.WALK_DOWN, GameAction.PRESS_A]
     moves = battle.parse_battle(MOVES)
     assert battle.actions_for(moves, "move_1") == [GameAction.WALK_DOWN, GameAction.PRESS_A]
 
@@ -387,11 +362,16 @@ def test_system_3_throws_a_ball_at_the_first_encounter_and_says_no_to_nicknames(
     turn = system1_turn(obs=wild, **args)
     assert turn.choice == "item" and calls == []
     assert turn.actions == [GameAction.WALK_DOWN, GameAction.PRESS_A]
-    bag = ScreenText([], ["POKé BALL  ×5", "CANCEL"], 1, "")
-    throw = _battle_menu(bag, True, [], 0.55, args["jev_decide"])
-    assert throw.actions == [GameAction.WALK_UP, GameAction.PRESS_A]
-    closed = _battle_menu(bag, False, [], 0.55, args["jev_decide"])
-    assert closed.actions == [GameAction.PRESS_A]  # CANCEL is already highlighted
+    from nuzlocke.environment.screen_text import parse_screen
+
+    wild.screen_rows = ["┌─────────────┐", "│ POKé BALL ×5│", "│▶CANCEL      │", "└─────────────┘"]
+    bag = parse_screen(wild.screen_rows)
+    throw = _battle_menu(bag, True, [], 0.55, args["jev_decide"], wild)
+    assert throw.actions == [GameAction.WALK_UP]  # Reobserve before selecting the ball.
+    wild.screen_rows = ["┌─────────────┐", "│▶POKé BALL ×5│", "│ CANCEL      │", "└─────────────┘"]
+    assert _battle_menu(parse_screen(wild.screen_rows), True, [], 0.55, args["jev_decide"], wild).actions == [GameAction.PRESS_A]
+    closed = _battle_menu(bag, False, [], 0.55, args["jev_decide"], wild)
+    assert closed.actions == [GameAction.PRESS_B]
     nickname = ScreenText(["Do you want to give a", "nickname to PIDGEY?"], ["YES", "NO"], 0, "")
     assert _menu_turn(nickname, None, [], 0, 0.55, args["jev_decide"]).choice == "choose_1"
 

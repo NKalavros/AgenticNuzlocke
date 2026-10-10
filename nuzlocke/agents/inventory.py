@@ -5,6 +5,29 @@ from nuzlocke.environment.screen_text import parse_screen
 from nuzlocke.state.models import GameAction as A
 
 
+def is_capture_ball(item):
+    identity = item.get("id")
+    return (
+        item.get("quantity", 0) > 0
+        and normalize(str(item.get("item", ""))) in {"MASTERBALL", "ULTRABALL", "GREATBALL", "POKEBALL"}
+        and (identity is None or identity in {1, 2, 3, 4})
+    )
+
+
+def capture_ball_actions(obs, first_encounter=False):
+    """Scroll a legal catch's full bag; close it when survival or encounter rules require another action."""
+    if not obs.in_battle:
+        return None
+    from nuzlocke.agents.system3 import forced_battle_choice
+
+    ball = (
+        next((item for item in obs.bag if is_capture_ball(item)), None)
+        if forced_battle_choice(obs, first_encounter) == "item"
+        else None
+    )
+    return _bag_actions(obs, normalize(ball["item"]) if ball else None, missing_action=A.PRESS_B)
+
+
 def candy_bag_actions(obs):
     if obs.in_battle or not obs.policy.get("preparing"):
         return None
@@ -20,7 +43,7 @@ def cut_bag_actions(obs):
     return _bag_actions(obs, "HM01")
 
 
-def _bag_actions(obs, wanted):
+def _bag_actions(obs, wanted, *, missing_action=A.WAIT_60):
     screen = parse_screen(obs.screen_rows)
     rows = screen.menu_rows
     if not rows or screen.cursor_row is None or any("¥" in row for row in rows):
@@ -32,7 +55,7 @@ def _bag_actions(obs, wanted):
         return None
     target = next((i for i, item in enumerate(obs.bag) if bag[i] == wanted and item.get("quantity", 0) > 0), None)
     if target is None:
-        return [A.WAIT_60]  # Actor reports missing candy; final arbiter permits its pause.
+        return [missing_action]  # Missing candy pauses preparation; an unauthorized battle bag closes.
     selected = labels[screen.cursor_row]
     current = len(bag) if selected == "CANCEL" else bag.index(selected)
     return [A.PRESS_A if current == target else A.WALK_DOWN if current < target else A.WALK_UP]

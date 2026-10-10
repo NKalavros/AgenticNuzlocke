@@ -17,6 +17,20 @@ POKERED_NAMES = {int(key): value for key, value in data("maps-pokered_names.json
 LAST_MAP = 255
 
 
+def map_id_for_name(name: str) -> int | None:
+    """Corrected names take precedence over shifted upstream aliases."""
+    wanted = name.casefold()
+    return next(
+        (
+            mid
+            for table in (POKERED_NAMES, MAP_NAMES)
+            for mid, label in table.items()
+            if mid != LAST_MAP and label.casefold() == wanted
+        ),
+        None,
+    )
+
+
 def map_name(map_id: int | None, fallback: str | None = None) -> str | None:
     """The map's name; 255 is "back outside" (the map the player came from)."""
     if map_id is None:

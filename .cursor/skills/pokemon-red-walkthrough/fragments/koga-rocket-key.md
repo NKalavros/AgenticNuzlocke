@@ -1,0 +1,5 @@
+### Rocket Hideout: obtain the Lift Key
+
+The stairs route is B1F (199) `(23,2)` → B2F (200); B2F `(21,8)` → B3F (201); B3F `(19,18)` → B4F (202). Coordinates refer to the current map and distinguish repeated stairs. Arrow floor tiles automatically slide the player until a stop tile. Send wait frames while sliding; do not assume one input gives one tile or turn a slide into a permanent wall. Use small current-map route waypoints to approach a chosen arrow/stop tile, observe its landing, then plan the next segment. An inaccessible reference path is advisory, not permission to walk through a wall.
+
+On B4F's northwest side, defeat the Rocket `(11,2)`. **Talk to him again after the battle** to reveal the Lift Key at `(10,2)`; face the labeled item from an adjacent legal tile and pick it up. Verify positive Lift Key quantity in the bag before leaving. An absent item is not proof of collection. Leave bag space for this key and the later Silph Scope; use a Center PC to store optional non-key items if necessary. Return via B4F `(19,10)` → B3F, then `(25,6)` → B2F. The Lift Key opens elevator use; it does not itself reveal the Silph Scope.

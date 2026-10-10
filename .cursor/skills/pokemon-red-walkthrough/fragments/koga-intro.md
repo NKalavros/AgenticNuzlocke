@@ -1,0 +1,3 @@
+## 11. Koga — Rocket Hideout, Pokémon Tower, Fuchsia
+
+After the observed Rainbow Badge, work toward Koga and the Soul Badge. Use inventory evidence to skip completed errands. The normal land route needs the Poké Flute to pass Snorlax. Obtain the Silph Scope in Celadon, rescue Mr. Fuji in Lavender, then travel through Routes 12–15 to Fuchsia. If already in Fuchsia or beyond Snorlax, continue from that observed location instead of returning for keys. Healing, death storage, supplies and the controller's encounter rules retain priority. Do not start Silph Co., Sabrina, sea travel or a Safari Zone errand for this chapter.

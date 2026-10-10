@@ -13,6 +13,7 @@ The canonical guide lives in [the walkthrough skill](../.cursor/skills/pokemon-r
 ```bash
 uv run python tools/walkthrough.py surge.bill
 uv run python tools/walkthrough.py erika.rock_tunnel rules
+uv run python tools/walkthrough.py koga.rocket_key
 ```
 
 In Python:
@@ -48,3 +49,9 @@ Composition expands nested bundles in order and includes each fragment once. Onl
 Other static prompts and reference tables live under `nuzlocke/assets/` and ship in the Python package. The cached asset loader returns shared values; treat them as read-only or copy before mutation.
 
 All Python loaders and selectors count toward the core source limit. Markdown and JSON content do not. See [the budget checker](../tools/core_loc.py) for the exact metric.
+
+## Koga and conditional Surf
+
+The `koga.*` stages share one observed selector with the Objectives panel. Add prerequisites to `knowledge/walkthrough.py`, stage prose to the fragments, and display text to `assets/walkthrough/objectives.json`. Inventory proves keys; map arrival can prove a blocked route has already been passed. Soul is the chapter's completion evidence.
+
+`surf.teach`, `surf.locked` and `surf.field` belong in the complete reference but have no keyword recovery match. Runtime selection needs positive HM03 inventory or a living observed SURF move. Field use additionally needs Soul. Pass the current observation to `excerpt_for_context`; it preserves the current Koga stage and applies the Surf gate. A planner's mention of Surf cannot activate a bundle or change a destination.

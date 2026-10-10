@@ -47,7 +47,7 @@ def test_all_fragments_preserve_compatibility_guide_and_stages_are_selective():
     root = skill_dir()
     assert compose("all").split() == (root / "reference.md").read_text().split()
     guide = json.loads((root / "manifest.json").read_text())
-    for chapter in ("surge", "erika"):
+    for chapter in ("surge", "erika", "koga"):
         for bundle in guide["bundles"]:
             if bundle.startswith(chapter + "."):
                 assert 0 < len(compose(bundle)) < len(compose(chapter))

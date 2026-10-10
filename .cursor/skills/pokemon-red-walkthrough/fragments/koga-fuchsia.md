@@ -1,0 +1,3 @@
+### Fuchsia: Center and gym access
+
+In Fuchsia (7), heal at the southern Center `(19,27)` → 154. Keep capture balls and bag space available. The gym entrance is southwest at `(5,27)` → 157. Enter the gym and clear its invisible-wall maze; there is no trash-can switch puzzle here. Koga is the next badge goal. Do not leave for Safari Zone, Gold Teeth, the Warden, Silph Co. or a sea route. Arrival in Fuchsia starts the controller's persistent full nurse visit and audited level-43 preparation. Finish these stages at the Center before entering the maze's trainer battles; then follow the challenge objective to Koga.

@@ -34,7 +34,7 @@ def test_excerpt_lab() -> None:
 def test_unmatched_late_game_context_does_not_leak_early_game_sections() -> None:
     # No keyword rule matches a mid/late-game map/reason — must not fall
     # back to Pallet/bedroom-specific hints, only the generic stuck cheatsheet.
-    text = excerpt_for_context(map_name="Fuchsia City", reason="cannot find the Safari Zone exit")
+    text = excerpt_for_context(map_name="Cinnabar Island", reason="cannot find the mansion exit")
     assert "Pallet Town" not in text
     assert "Red's House" not in text
     assert "stuck" in text.lower()
@@ -59,7 +59,7 @@ def test_surge_guidance_tracks_missing_prerequisites_without_waiting_for_stuck()
     obs.badges.append("Thunder")
     assert "Post-Thunder" in progression_hint(obs) and "Erika" in progression_hint(obs)
     obs.badges.append("Rainbow")
-    assert not progression_hint(obs)
+    assert "Post-Rainbow" in progression_hint(obs)
     obs.badges = ["Boulder"]
     assert not progression_hint(obs)
     obs.badges.append("Cascade")
@@ -111,7 +111,7 @@ def test_erika_guidance_is_stage_specific_and_stops_after_rainbow():
     assert not progression_hint(obs)
     obs.in_battle = False
     obs.badges.append("Rainbow")
-    assert not progression_hint(obs)
+    assert erika_stage(obs) is None and "Post-Rainbow" in progression_hint(obs)
 
 
 def test_boss_briefing_covers_surge_and_erika():

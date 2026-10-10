@@ -5,6 +5,10 @@ observation_mode: human_assist  # strict_visual | human_assist | debug
 # Override: --with-ram / NUZLOCKE_VISION_ONLY=0
 vision_only: true
 
+# Explicit exception: read Surge's hidden switch indices and press the cans normally.
+# Only the verified Red Star ROM is supported. Set false for an unassisted puzzle.
+surge_puzzle_assist: true
+
 # Reserve Pokémon at cap-1 and above for necessity; routine candy prep stops below it.
 # Final Brock/Misty preparation tops every living under-cap party member up to the cap.
 level_cap_buffer: 1

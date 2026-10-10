@@ -1,0 +1,5 @@
+### Rocket Hideout: obtain the Silph Scope
+
+With the observed Lift Key, reach the elevator at B2F `(24,19)` / `(25,19)` → 203 through the arrow maze. In the elevator, face the panel `(1,1)` from an adjacent tile, press A and choose **B4F** from the visible floor list. The door then leads to B4F's eastern area. Defeat both doorway Rockets `(23,12)` and `(26,12)` to open the barrier. Approach Giovanni `(25,3)` and fight him with healthy legal members. Vanilla prior: Onix 25, Rhyhorn 24, Kangaskhan 29; actual enemy data overrides it. Grass/Water help against his Rock/Ground pair, but Kangaskhan needs a separate plan. No battle healing items.
+
+After Giovanni leaves, pick up the revealed Silph Scope `(25,2)` and verify it in inventory. Do not confuse victory, the Lift Key, or the closed barrier with possession. Return to the elevator, select **B1F**, and exit B1F `(21,2)` → Game Corner, then the south door → Celadon. Heal before Lavender. If outside the hideout with the key but no Scope, reenter the already opened Game Corner stairs and return to the elevator.

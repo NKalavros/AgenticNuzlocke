@@ -298,5 +298,357 @@
       "kind": "edge",
       "dir": "left"
     }
+  },
+  "92": {
+    "id": "heal_exit",
+    "text": "Heal first: leave this building for healing.",
+    "hint": "leave this building for healing.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "134": {
+    "id": "heal_exit",
+    "text": "Heal first: leave this building for healing.",
+    "hint": "leave this building for healing.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "7": {
+    "id": "heal_map_7",
+    "text": "Heal first: enter Fuchsia's Center.",
+    "hint": "enter Fuchsia's Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 154
+    }
+  },
+  "149": {
+    "id": "heal_map_149",
+    "text": "Heal first: leave this building for the nearest Center.",
+    "hint": "leave this building for the nearest Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "152": {
+    "id": "heal_map_152",
+    "text": "Heal first: leave this building for the nearest Center.",
+    "hint": "leave this building for the nearest Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "153": {
+    "id": "heal_map_153",
+    "text": "Heal first: leave this building for the nearest Center.",
+    "hint": "leave this building for the nearest Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "155": {
+    "id": "heal_map_155",
+    "text": "Heal first: leave this building for the nearest Center.",
+    "hint": "leave this building for the nearest Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "156": {
+    "id": "heal_map_156",
+    "text": "Heal first: leave this building for the nearest Center.",
+    "hint": "leave this building for the nearest Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "157": {
+    "id": "heal_map_157",
+    "text": "Heal first: leave this building for the nearest Center.",
+    "hint": "leave this building for the nearest Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "158": {
+    "id": "heal_map_158",
+    "text": "Heal first: leave this building for the nearest Center.",
+    "hint": "leave this building for the nearest Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "164": {
+    "id": "heal_map_164",
+    "text": "Heal first: leave this building for the nearest Center.",
+    "hint": "leave this building for the nearest Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "189": {
+    "id": "heal_map_189",
+    "text": "Heal first: leave this building for the nearest Center.",
+    "hint": "leave this building for the nearest Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "135": {
+    "id": "heal_map_135",
+    "text": "Heal first: exit the Game Corner, then enter Celadon's Center.",
+    "hint": "exit the Game Corner, then enter Celadon's Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "199": {
+    "id": "heal_map_199",
+    "text": "Heal first: return upstairs toward Celadon Center; select B1F in the elevator.",
+    "hint": "return upstairs toward Celadon Center; select B1F in the elevator.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 135,
+      "x": 21,
+      "y": 2
+    }
+  },
+  "200": {
+    "id": "heal_map_200",
+    "text": "Heal first: return upstairs toward Celadon Center; select B1F in the elevator.",
+    "hint": "return upstairs toward Celadon Center; select B1F in the elevator.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 199,
+      "x": 27,
+      "y": 8
+    }
+  },
+  "201": {
+    "id": "heal_map_201",
+    "text": "Heal first: return upstairs toward Celadon Center; select B1F in the elevator.",
+    "hint": "return upstairs toward Celadon Center; select B1F in the elevator.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 200,
+      "x": 25,
+      "y": 6
+    }
+  },
+  "203": {
+    "id": "heal_map_203",
+    "text": "Heal first: return upstairs toward Celadon Center; select B1F in the elevator.",
+    "hint": "return upstairs toward Celadon Center; select B1F in the elevator.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 199,
+      "x": 2,
+      "y": 1
+    }
+  },
+  "143": {
+    "id": "heal_map_143",
+    "text": "Heal first: descend toward Lavender's Center.",
+    "hint": "descend toward Lavender's Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 142,
+      "x": 18,
+      "y": 9
+    }
+  },
+  "144": {
+    "id": "heal_map_144",
+    "text": "Heal first: descend toward Lavender's Center.",
+    "hint": "descend toward Lavender's Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 143,
+      "x": 3,
+      "y": 9
+    }
+  },
+  "145": {
+    "id": "heal_map_145",
+    "text": "Heal first: descend toward Lavender's Center.",
+    "hint": "descend toward Lavender's Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 144,
+      "x": 18,
+      "y": 9
+    }
+  },
+  "146": {
+    "id": "heal_map_146",
+    "text": "Heal first: descend toward Lavender's Center.",
+    "hint": "descend toward Lavender's Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 145,
+      "x": 3,
+      "y": 9
+    }
+  },
+  "147": {
+    "id": "heal_map_147",
+    "text": "Heal first: descend toward Lavender's Center.",
+    "hint": "descend toward Lavender's Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 146,
+      "x": 18,
+      "y": 9
+    }
+  },
+  "148": {
+    "id": "heal_map_148",
+    "text": "Heal first: descend toward Lavender's Center.",
+    "hint": "descend toward Lavender's Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 147,
+      "x": 9,
+      "y": 16
+    }
+  },
+  "142": {
+    "id": "heal_map_142",
+    "text": "Heal first: exit the Tower for Lavender's Center.",
+    "hint": "exit the Tower for Lavender's Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255
+    }
+  },
+  "23": {
+    "id": "heal_map_23",
+    "text": "Heal first: head toward Lavender's Center.",
+    "hint": "head toward Lavender's Center.",
+    "heading": null,
+    "target": {
+      "kind": "edge",
+      "dir": "up"
+    }
+  },
+  "24": {
+    "id": "heal_map_24",
+    "text": "Heal first: head toward Fuchsia's Center.",
+    "hint": "head toward Fuchsia's Center.",
+    "heading": null,
+    "target": {
+      "kind": "edge",
+      "dir": "left"
+    }
+  },
+  "25": {
+    "id": "heal_map_25",
+    "text": "Heal first: head toward Fuchsia's Center.",
+    "hint": "head toward Fuchsia's Center.",
+    "heading": null,
+    "target": {
+      "kind": "edge",
+      "dir": "left"
+    }
+  },
+  "26": {
+    "id": "heal_map_26",
+    "text": "Heal first: head toward Fuchsia's Center.",
+    "hint": "head toward Fuchsia's Center.",
+    "heading": null,
+    "target": {
+      "kind": "edge",
+      "dir": "left"
+    }
+  },
+  "27": {
+    "id": "heal_map_27",
+    "text": "Heal first: head toward Fuchsia's Center.",
+    "hint": "head toward Fuchsia's Center.",
+    "heading": null,
+    "target": {
+      "kind": "edge",
+      "dir": "left"
+    }
+  },
+  "28": {
+    "id": "heal_map_28",
+    "text": "Heal first: head toward Fuchsia's Center.",
+    "hint": "head toward Fuchsia's Center.",
+    "heading": null,
+    "target": {
+      "kind": "edge",
+      "dir": "down"
+    }
+  },
+  "29": {
+    "id": "heal_map_29",
+    "text": "Heal first: head toward Fuchsia's Center.",
+    "hint": "head toward Fuchsia's Center.",
+    "heading": null,
+    "target": {
+      "kind": "edge",
+      "dir": "right"
+    }
+  },
+  "184": {
+    "id": "heal_map_184",
+    "text": "Heal first: leave the gate west toward Fuchsia's Center.",
+    "hint": "leave the gate west toward Fuchsia's Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 255,
+      "x": 0,
+      "y": 4
+    }
+  },
+  "185": {
+    "id": "heal_map_185",
+    "text": "Heal first: return downstairs toward Fuchsia's Center.",
+    "hint": "return downstairs toward Fuchsia's Center.",
+    "heading": null,
+    "target": {
+      "kind": "warp",
+      "dest_map": 184
+    }
   }
 }

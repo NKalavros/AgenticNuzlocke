@@ -25,14 +25,7 @@ def scene(x=1, y=1):
 
 def goal(path=None):
     path = path or ["right"] * 12
-    return Goal(
-        key="exit_47",
-        kind="exit",
-        label="North gate",
-        actions=[A.WALK_RIGHT] * 8,
-        path=path,
-        objective=True,
-    )
+    return Goal(key="exit_47", kind="exit", label="North gate", actions=[A.WALK_RIGHT] * 8, path=path, objective=True)
 
 
 def test_safe_path_avoids_grass_but_shortest_takes_it():
@@ -41,6 +34,35 @@ def test_safe_path_avoids_grass_but_shortest_takes_it():
     safe = Routes((0, 0), grid, costs={(x, 0): 5 for x in range(1, 4)}).paths[(4, 0)]
     assert len(direct) == 4
     assert len(safe) == 6 and safe[0] == "down"
+
+
+def test_explicit_door_tile_uses_the_exit_instead_of_unreachable_floor():
+    from nuzlocke.agents.goals import build_goals, collision_map
+
+    obs, room = scene(x=11, y=2)
+    obs.warps = [{"x": 11, "y": 1, "dest_map": 89}, {"x": 7, "y": 1, "dest_map": 163}]
+    target = {"kind": "tile", "map_id": 51, "x": 11, "y": 1}
+    assert collision_map(obs, room)[11, 1] is False  # Incidental paths still exclude doors.
+    goals = build_goals(obs, room, objective=target)
+    chosen = next(g for g in goals if g.objective)
+    assert chosen.kind == "exit" and chosen.dest_map == 89 and chosen.complete
+    assert chosen.path[0] == "up" and chosen.actions[0] == A.WALK_UP
+    assert not next(g for g in goals if g.dest_map == 163).objective
+
+
+def test_nurse_npc_goal_uses_counter_interaction_instead_of_adjacent_sprite():
+    from nuzlocke.agents.goals import build_goals
+    from nuzlocke.knowledge.objects import object_facts
+
+    obs = PlayerObservation(map_id=89, x=0, y=3, facing="down", map_size={"w": 14, "h": 8})
+    nurse = {"slot": 1, "picture": 41, "x": 3, "y": 1, "on_screen": True}
+    obs.npcs = [nurse]
+    room = RoomMap()
+    room.known[89] = {(x, y): y >= 3 for x in range(14) for y in range(8)}
+    goal = next(g for g in build_goals(obs, room, objective={"kind": "npc", "name": "nurse"}) if g.objective)
+    assert goal.path == ["right", "right", "right", "up"]
+    assert goal.actions == [A.WALK_RIGHT] * 3 + [A.WALK_UP, A.PRESS_A]
+    assert "counter" in object_facts(obs, nurse)["interaction"]
 
 
 def test_exit_search_does_not_return_to_visited_northern_dead_end():
@@ -66,20 +88,7 @@ def test_exit_search_uses_known_boundary_and_crosses_it():
 
 def test_failed_direction_does_not_make_destination_tile_a_wall():
     obs, room = scene()
-    room.record_walks(
-        obs,
-        [
-            {
-                "map_id": 51,
-                "x0": 1,
-                "y0": 1,
-                "x1": 1,
-                "y1": 1,
-                "action": "walk_right",
-                "blocked": True,
-            }
-        ],
-    )
+    room.record_walks(obs, [{"map_id": 51, "x0": 1, "y0": 1, "x1": 1, "y1": 1, "action": "walk_right", "blocked": True}])
     assert not room.blocked(obs)
     route = Routes((1, 1), room.known[51], blocked_edges=room.blocked_edges(obs))
     assert route.paths[(2, 1)] != ["right"]
@@ -90,10 +99,7 @@ def test_failed_direction_does_not_make_destination_tile_a_wall():
 
 def test_transition_or_turn_is_not_learned_as_a_wall():
     obs, room = scene()
-    room.record_walks(
-        obs,
-        [{"map_id": 51, "x0": 1, "y0": 1, "x1": 1, "y1": 1, "action": "walk_up", "blocked": False}],
-    )
+    room.record_walks(obs, [{"map_id": 51, "x0": 1, "y0": 1, "x1": 1, "y1": 1, "action": "walk_up", "blocked": False}])
     assert not room.blocked_edges(obs)
 
 
@@ -162,13 +168,7 @@ def test_waypoint_completion_resumes_final_destination():
     plan = {"map_id": 51, "objective_key": "exit_47", "waypoints": [[2, 1]]}
     first = nav.select(obs, room, [goal()], objective_text="Go north", plan=plan)
     assert first.actions == [A.WALK_RIGHT]
-    second = nav.select(
-        obs.model_copy(update={"x": 2}),
-        room,
-        [goal(["right"] * 11)],
-        objective_text="Go north",
-        plan=plan,
-    )
+    second = nav.select(obs.model_copy(update={"x": 2}), room, [goal(["right"] * 11)], objective_text="Go north", plan=plan)
     assert len(second.path) == 11
     assert not nav.plan["waypoints"]
 
@@ -187,9 +187,7 @@ def test_whole_map_marks_unknown_and_keeps_observed_grass():
 
 def test_bad_route_plan_is_ignored():
     assert parse_route_plan({"map_id": "oops"}) == {}
-    assert (
-        parse_route_plan({"map_id": 51, "objective_key": "exit_47", "preference": "teleport"}) == {}
-    )
+    assert parse_route_plan({"map_id": 51, "objective_key": "exit_47", "preference": "teleport"}) == {}
 
 
 def test_system1_reuses_route_without_asking_jev_again():
@@ -248,11 +246,7 @@ def test_unknown_waypoint_cannot_use_optimistic_collision_fallback():
     room.known[51] = {(1, 1): True}
     nav = Navigator()
     nav.select(
-        obs,
-        room,
-        [goal()],
-        objective_text="Go north",
-        plan={"map_id": 51, "objective_key": "exit_47", "waypoints": [[2, 1]]},
+        obs, room, [goal()], objective_text="Go north", plan={"map_id": 51, "objective_key": "exit_47", "waypoints": [[2, 1]]}
     )
     assert nav.rejected_waypoints == 1
 

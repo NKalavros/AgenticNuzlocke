@@ -100,7 +100,7 @@ Complete these objectives in order, using current observations. Safety and heali
 
 Keep the current subgoal until its evidence is observed. A failed path is a reason to inspect the blocker, not permission to replace the objective with arbitrary exploration. If the picture is blank or unreadable, report that uncertainty, wait for a settled view or use the observed map to approach a known landmark; do not call it a naming screen without a visible letter grid.
 
-6. **Inside Vermilion Gym:** keep two separate objectives: open the switch locks, then challenge Lt. Surge. Search trash cans for the first switch and record its tile. After the first-switch confirmation, test an orthogonally adjacent can for the second; a diagonal can is not adjacent. A wrong second choice resets both locks: clear the remembered first-switch state and search again. Read each result before choosing the next can. Only the observed open barrier or successful crossing completes the puzzle. Heal before challenging Surge; use the controller's current cap (normally 24) and observed enemy data. Do not invent a candy grant at an unsupported location or assume the later-gym preparation menus are automated. Finish the victory dialog and verify Thunder before advancing to Erika.
+6. **Inside Vermilion Gym:** keep two separate objectives: open the switch locks, then challenge Lt. Surge. When the controller supplies a **RAM assist** objective, follow its indicated can. It reads the active switch again after the first lock opens; do not substitute a random neighbor. Once both locks are reported open, stop searching cans and verify the barrier passage. Without assistance, search trash cans for the first switch and record its tile. After the first-switch confirmation, test an orthogonally adjacent can for the second; a diagonal can is not adjacent. Vanilla Red has a bug that can put the second switch in can 0 at (1,7) even when it is not adjacent; adjacency is not a guarantee for every Red-family ROM. A wrong second choice resets both locks: clear the remembered first-switch state and search again. Read each result before choosing the next can. Only the observed open barrier or successful crossing completes the puzzle. The controller inserts mandatory healing and preparation before the challenge: visit Vermilion Center, stand at (3,3) facing up across the nurse counter, accept HEAL/YES, and verify HP/status/PP recovery. It grants the exact audited Rare Candy deficit and uses normal menus to bring living members to the current cap (normally 24). Return to the gym, clear the respawned CUT tree if needed, verify the open barrier passage, then approach Surge from (5,2) facing up. Use observed enemy data. Finish the victory dialog and verify Thunder before advancing to Erika.
 
 Cerulean → Route 24 is a NORTH map edge: use `{"kind":"edge","dir":"up"}`, not a warp to map 35. Route 24 → Route 25 is an EAST edge: use `{"kind":"edge","dir":"right"}`. Doors use `kind: warp` with the observed destination map.
 
@@ -133,6 +133,70 @@ After Thunder and before Rainbow, follow the current location along this route. 
 At every stage, healing/status/PP needs and permanent-death restrictions outrank travel. If code has no healing route for a later map, the director must explicitly route to the named Center using observed exits. Choose one current-map machine target (`edge`, `warp` with coordinates when ladders repeat, `npc`, or a verified interaction tile) and verify its outcome before the next leg. Actual enemy data and visible scene changes override this vanilla guide.
 
 Sources: [pret/pokered map objects](https://github.com/pret/pokered/tree/master/data/maps/objects), [map connections](https://github.com/pret/pokered/tree/master/data/maps/headers), [trainer teams](https://github.com/pret/pokered/blob/master/data/trainers/parties.asm), [FLASH aide script](https://github.com/pret/pokered/blob/master/scripts/Route2Gate.asm), and [Erika script](https://github.com/pret/pokered/blob/master/scripts/CeladonGym.asm).
+
+## 11. Koga — Rocket Hideout, Pokémon Tower, Fuchsia
+
+After the observed Rainbow Badge, work toward Koga and the Soul Badge. Use inventory evidence to skip completed errands. The normal land route needs the Poké Flute to pass Snorlax. Obtain the Silph Scope in Celadon, rescue Mr. Fuji in Lavender, then travel through Routes 12–15 to Fuchsia. If already in Fuchsia or beyond Snorlax, continue from that observed location instead of returning for keys. Healing, death storage, supplies and the controller's encounter rules retain priority. Do not start Silph Co., Sabrina, sea travel or a Safari Zone errand for this chapter.
+
+### Celadon: open the Rocket Hideout
+
+Leave Erika's gym through its south door and heal at Celadon Center `(41,9)` → 133. After the controller reports full living HP/status/observed PP recovery and text is closed, continue to the Game Corner; use the supplied recovery facts without opening STATS to recheck them. Finish any mandatory nurse stage first. Trees can return after reentry; use the actual living CUT user's menu from the adjacent tile and verify the passage. Enter the Game Corner `(28,19)` → 135. Defeat the Rocket guarding the north-wall poster at `(9,5)`, then stand `(9,5)`, face up and press A at the poster `(9,4)`. This switch reveals the stairs `(17,4)` → Rocket Hideout B1F (199). If the stairs are already open, use them without repeating the poster battle. Slots, the Coin Case and prizes are not prerequisites. Aim for a reachable approach tile first if an interaction route is incomplete.
+
+### Rocket Hideout: obtain the Lift Key
+
+The stairs route is B1F (199) `(23,2)` → B2F (200); B2F `(21,8)` → B3F (201); B3F `(19,18)` → B4F (202). Coordinates refer to the current map and distinguish repeated stairs. Arrow floor tiles automatically slide the player until a stop tile. Send wait frames while sliding; do not assume one input gives one tile or turn a slide into a permanent wall. Use small current-map route waypoints to approach a chosen arrow/stop tile, observe its landing, then plan the next segment. An inaccessible reference path is advisory, not permission to walk through a wall.
+
+On B4F's northwest side, defeat the Rocket `(11,2)`. **Talk to him again after the battle** to reveal the Lift Key at `(10,2)`; face the labeled item from an adjacent legal tile and pick it up. Verify positive Lift Key quantity in the bag before leaving. An absent item is not proof of collection. Leave bag space for this key and the later Silph Scope; use a Center PC to store optional non-key items if necessary. Return via B4F `(19,10)` → B3F, then `(25,6)` → B2F. The Lift Key opens elevator use; it does not itself reveal the Silph Scope.
+
+### Rocket Hideout: obtain the Silph Scope
+
+With the observed Lift Key, reach the elevator at B2F `(24,19)` / `(25,19)` → 203 through the arrow maze. In the elevator, face the panel `(1,1)` from an adjacent tile, press A and choose **B4F** from the visible floor list. The door then leads to B4F's eastern area. Defeat both doorway Rockets `(23,12)` and `(26,12)` to open the barrier. Approach Giovanni `(25,3)` and fight him with healthy legal members. Vanilla prior: Onix 25, Rhyhorn 24, Kangaskhan 29; actual enemy data overrides it. Grass/Water help against his Rock/Ground pair, but Kangaskhan needs a separate plan. No battle healing items.
+
+After Giovanni leaves, pick up the revealed Silph Scope `(25,2)` and verify it in inventory. Do not confuse victory, the Lift Key, or the closed barrier with possession. Return to the elevator, select **B1F**, and exit B1F `(21,2)` → Game Corner, then the south door → Celadon. Heal before Lavender. If outside the hideout with the key but no Scope, reenter the already opened Game Corner stairs and return to the elevator.
+
+### Lavender: rescue Mr. Fuji and receive the Poké Flute
+
+With the observed Silph Scope and no Poké Flute, leave Celadon EAST to Route 7 (18). Use its Underground Path building `(5,13)` → 77, descend to tunnel 121, travel EAST to stairs `(47,2)` → 80, exit to Route 8 (19), then go EAST to Lavender (4). Use this bypass; no Saffron guard errand is needed. Heal at Lavender Center `(3,5)` → 141, then enter Pokémon Tower `(14,5)` → 142. Expect the rival on 2F; heal first and trust observed teams.
+
+Ascending stairs: 1F `(18,9)` → 143; 2F `(3,9)` → 144; 3F `(18,9)` → 145; 4F `(3,9)` → 146; 5F `(18,9)` → 147; 6F `(9,16)` → 148. Use each current-map destination, not a previous floor's target. Channelers and normal wild encounters obey the live ledger. The scripted level-30 Marowak ghost guarding 6F's last stairs cannot be caught; defeat it after the Silph Scope reveals it. Do not spend capture balls on this story ghost. Heal at the Center as needed; do not assume a healing-looking tile is an allowed substitute.
+
+On 7F, defeat the three Rockets and speak to Mr. Fuji `(10,3)`. Finish his dialog to travel to his house (149). **Speak to Fuji again there** at `(3,1)` to receive the Poké Flute. If the house has no Fuji, the rescue is still unfinished: return to the Tower. Verify positive Poké Flute quantity in the bag. The Scope, arriving at 7F, or the house transfer alone does not finish this stage.
+
+### Land route: Lavender → Routes 12–15 → Fuchsia
+
+With the Poké Flute, return to Lavender by the Route 7/8 Underground Path if still in Celadon. From Lavender go SOUTH to Route 12 (23), through its gate if required. Follow the wooden paths south. At the blocking Snorlax, stand adjacent and use **Poké Flute from ITEM**; interacting with the sleeping sprite alone does not wake it. Resolve the resulting encounter under the current area's ledger, duplicate and survival rules, then verify the passage. Do not force a capture if that area's encounter is already committed. Keep the Flute after use.
+
+Continue SOUTH from Route 12 to Route 13 (24), WEST to Route 14 (25), WEST to Route 15 (26), then WEST through the Route 15 gate (184) to Fuchsia (7). Route 14's western opening is toward its south end; follow the live map's connection alignment and avoid repeating a blocked edge at the wrong height. Route 15's main lane and gate work without the optional upper CUT shortcut. Heal for poison, low HP or exhausted PP; complete legal encounters and reachable labeled pickups while respecting higher-priority safety. This eastern route does not need a Bicycle. If already on Cycling Road with a Bicycle and the passage open, continue through Routes 17/18 to Fuchsia instead of returning east.
+
+### Fuchsia: Center and gym access
+
+In Fuchsia (7), heal at the southern Center `(19,27)` → 154. Keep capture balls and bag space available. The gym entrance is southwest at `(5,27)` → 157. Enter the gym and clear its invisible-wall maze; there is no trash-can switch puzzle here. Koga is the next badge goal. Do not leave for Safari Zone, Gold Teeth, the Warden, Silph Co. or a sea route. Arrival in Fuchsia starts the controller's persistent full nurse visit and audited level-43 preparation. Finish these stages at the Center before entering the maze's trainer battles; then follow the challenge objective to Koga.
+
+### Koga: invisible walls and the Soul Badge
+
+Fuchsia Gym (157) has invisible walls that can resemble open floor. From the southern entrance, the vanilla approach goes up the RIGHT outside corridor, across the TOP, then down the LEFT corridor into the center. Follow reference collision geometry, current terrain and observed blocked edges; a floor-colored tile or an old visit does not prove a passage. Use reachable current-map waypoints to approach the next bend. The trainers include Psychic attackers as well as Poison users; do not assume every trainer is weak to Psychic or bring a Poison lead into an observed Psychic threat. Heal between fights when required.
+
+Koga stands at `(4,10)`; approach from `(4,11)` facing UP. Arrival in Fuchsia starts the persistent **heal → prepare → challenge** sequence before the maze trainers. Return to Fuchsia Center, accept the nurse, verify full living HP/status/observed PP and closed text, then use audited candies through normal menus to the current **43** cap. Do not initiate Koga before preparation is complete. Retrace the maze after healing; return damage can require another nurse visit.
+
+Vanilla team: Koffing 37, Muk 39, Koffing 37, Weezing 43. Psychic or Ground attacks may help if the actual living roster knows them; Gen I Koffing/Weezing have no Levitate ability. Plan for poison/Toxic, accuracy loss and self-destructing foes using observed moves and HP; keep a safe legal switch and obey System 2's conditional trainer plan. Finish victory/reward dialog and verify the **Soul Badge**, not merely a trainer win or a conversation. Stop when `stop_after: koga` is configured.
+
+Choose one machine target on the current map and verify the result before changing floors or selecting the next leg. Inventory, badges, learned moves and committed encounter outcomes establish progress; planner prose cannot. Vanilla coordinates and teams are priors. Red Star's screenshot, live objects, observed collision and enemy data take precedence.
+
+Sources: [map objects](https://github.com/pret/pokered/tree/master/data/maps/objects), [Rocket key and Scope script](https://github.com/pret/pokered/blob/master/scripts/RocketHideoutB4F.asm), [Fuji reward script](https://github.com/pret/pokered/blob/master/scripts/MrFujisHouse.asm), [route connections](https://github.com/pret/pokered/tree/master/data/maps/headers), and [trainer teams](https://github.com/pret/pokered/blob/master/data/trainers/parties.asm).
+
+## Surf: observed HM03, teaching still required
+
+HM03 is observed in the bag, but no living party member is observed with SURF. Use ITEM → HM03 → USE, accept teaching, and select a living member marked **ABLE** in the visible compatibility list. Do not guess compatibility from vanilla species. If replacement is required, preserve needed field moves and the planner's move bans. Verify learned SURF in the party observation; a successful-looking text page alone is insufficient. This guidance does not add a new destination or release mandatory healing/preparation. Before field use, require the observed Soul Badge and a living user. Keep the Koga route as the main objective until Soul is earned.
+
+## Surf: learned, field permission still locked
+
+A living party member has SURF, but the Soul Badge is not observed. It can be a legal battle move; field use on water remains locked. Continue the current Koga objective and earn Soul before trying to cross water. A learned move and a visible water tile do not establish field permission.
+
+## Surf: observed living user and Soul Badge
+
+A living party member is observed with SURF and Soul is earned. For a water crossing required by the current objective, approach a reachable land tile adjacent to actual water and face the water. Open START → POKéMON → the living SURF user → SURF; accept a visible confirmation if asked. Verify the scene changes to surfing and the position enters water before targeting a farther water exit. Ordinary walking into water does not activate the move. Advance transitions with wait frames; if use fails, recheck the user, badge, facing and terrain. Landing on a reachable shore ends surfing; verify the mode and reobserve the map. Keep the existing destination and safety/encounter rules. This is conditional field guidance, not an instruction to start a new sea journey.
+
+Source: [field-move menu and Soul Badge gate](https://github.com/pret/pokered/blob/master/engine/menus/start_sub_menus.asm).
 
 ## Stuck cheatsheet
 

@@ -52,6 +52,49 @@ def load_full_walkthrough() -> str:
     return compose("all")
 
 
+def holds(obs, item_id, name):
+    return any(
+        item.get("quantity", 0) > 0
+        and (item.get("id") == item_id or re.sub(r"[^A-Z0-9]", "", str(item.get("item", "")).upper().replace("É", "E")) == name)
+        for item in obs.bag
+    )
+
+
+def living_move(obs, move_id, name):
+    return any(
+        move.get("id") == move_id or str(move.get("name", "")).upper() == name
+        for mon in obs.party
+        if not mon.get("dead") and mon.get("hp", 0) > 0
+        for move in mon.get("moves", [])
+    )
+
+
+def koga_stage(obs) -> str | None:
+    """Inventory proves story prerequisites; reaching Fuchsia proves access already exists."""
+    if obs is None or "Rainbow" not in obs.badges or "Soul" in obs.badges:
+        return None
+    if obs.map_id == 157:
+        return "gym"
+    if obs.map_id in {7, 152, 153, 154, 155, 156, 158, 164}:
+        return "fuchsia"
+    if obs.map_id in {24, 25, 26, 28, 29, 184, 185} or holds(obs, 73, "POKEFLUTE"):
+        return "fuchsia_route"
+    if holds(obs, 72, "SILPHSCOPE"):
+        return "tower"
+    if holds(obs, 74, "LIFTKEY"):
+        return "rocket_scope"
+    return "rocket_key" if obs.map_id in range(199, 204) else "rocket_entry"
+
+
+def surf_stage(obs) -> str | None:
+    """Never infer the HM or a usable field move from location or planner prose."""
+    if obs is None:
+        return None
+    if living_move(obs, 57, "SURF"):
+        return "field" if "Soul" in obs.badges else "locked"
+    return "teach" if holds(obs, 198, "HM03") else None
+
+
 def surge_stage(obs) -> str | None:
     """Shared observed prerequisite for planner guidance and displayed objectives."""
     if obs is None or "Cascade" not in obs.badges or "Thunder" in obs.badges:
@@ -78,12 +121,26 @@ def progression_hint(obs) -> str:
     """Compose only the current stage; observed prerequisites still control selection."""
     if obs is None or obs.in_battle:
         return ""
-    if stage := erika_stage(obs):
-        return f"Post-Thunder progression — next stage: {stage}.\n\n{compose('erika.' + stage)}"
+    sections = []
+    if stage := surf_stage(obs):
+        sections.append(compose("surf." + stage))
+    for chapter, badge, stage in (("koga", "Rainbow", koga_stage(obs)), ("erika", "Thunder", erika_stage(obs))):
+        if stage:
+            sections.append(f"Post-{badge} progression — next stage: {stage}.\n\n{compose(chapter + '.' + stage)}")
+            return "\n\n".join(sections)
     if stage := surge_stage(obs):
-        key = "surge." + stage
-        return f"Post-Cascade progression — next unmet prerequisite: {_manifest()['stage_hints'][key]}\n\n{compose(key)}"
-    return ""
+        if obs.map_id == 92 and (obs.surge_puzzle or {}).get("phase") == "open":
+            sections.append(
+                "Surge's two locks are already open (verified ROM RAM). Stop searching cans. "
+                "Verify the visible barrier opens and cross the passage. Heal before challenging Lt. Surge; "
+                "only the observed Thunder Badge completes the gym."
+            )
+        else:
+            key = "surge." + stage
+            sections.append(
+                f"Post-Cascade progression — next unmet prerequisite: {_manifest()['stage_hints'][key]}\n\n{compose(key)}"
+            )
+    return "\n\n".join(sections)
 
 
 def erika_stage(obs) -> str | None:
@@ -105,8 +162,11 @@ def erika_stage(obs) -> str | None:
     return "return_cerulean"
 
 
-def excerpt_for_context(*, map_name=None, reason=None, memory=None, max_chars=1800) -> str:
+def excerpt_for_context(*, map_name=None, reason=None, memory=None, obs=None, max_chars=1800) -> str:
     """Select reusable sections for the current location and recovery reason."""
+    if obs is not None and ("Rainbow" in obs.badges or surf_stage(obs)):
+        text = progression_hint(obs) + "\n\n" + compose("stuck")
+        return text[:max_chars]
     hay = " ".join(value for value in (map_name, reason, memory) if value).lower()
     selected = [name for rule in _manifest()["matches"] if any(key in hay for key in rule["keywords"]) for name in rule["include"]]
     return compose(*selected, "stuck", max_chars=max_chars)

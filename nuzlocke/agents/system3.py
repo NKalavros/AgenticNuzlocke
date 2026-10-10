@@ -25,7 +25,7 @@ RUN_BELOW = 0.25
 HEAL_BELOW = 0.5
 # Map ids are pokered's (environment.maps).
 POKECENTERS = {41, 58, 64, 68}
-HEALING_CENTERS = POKECENTERS | {81, 89, 133, 141}
+HEALING_CENTERS = POKECENTERS | {81, 89, 133, 141, 154}
 # pokered's Pokémon Center: the nurse at (3,1) behind the counter, answered from (3,3) facing up.
 _NURSE = Beat(**data("walkthrough/nurse.json"))
 
@@ -72,6 +72,8 @@ def needs_heal(obs: PlayerObservation) -> bool:
 
 def heal_beat(obs: PlayerObservation) -> Beat | None:
     """Keep healing mandatory even when the director must find the route."""
+    if obs.in_battle:
+        return None
     living = [m for m in obs.party if not m.get("dead")]
     target = obs.policy.get("preparation_target", 12 if obs.map_id == 41 else 14)
     preparing = any((m.get("level") or 14) < target for m in living)
@@ -90,7 +92,7 @@ def heal_beat(obs: PlayerObservation) -> Beat | None:
             or any(move.get("pp", 0) < move.get("observed_max_pp", 0) for move in m.get("moves", []))
             for m in living
         )
-    if not needs_heal(obs) and not preparation_heal:
+    if not needs_heal(obs) and not preparation_heal and not obs.policy.get("gym_heal_pending"):
         return None
     if obs.map_id in HEALING_CENTERS:
         return _NURSE
@@ -109,6 +111,13 @@ def heal_beat(obs: PlayerObservation) -> Beat | None:
     if obs.map_id == 60:
         target = {"kind": "warp", "dest_map": 255} if (obs.y or 0) < 6 and (obs.x or 0) > 20 else {"kind": "warp", "dest_map": 59}
         return _toward("heal_moon_b1", "return to a Center via the nearest surface exit.", target)
+    if obs.map_id == 202:
+        destination = 201 if (obs.x or 0) < 20 else 203
+        return _toward(
+            "heal_hideout_b4",
+            "return upstairs to Celadon's Center; use B1F in the elevator.",
+            {"kind": "warp", "dest_map": destination},
+        )
     return _ROUTE.get(obs.map_id, _UNKNOWN_HEAL)
 
 
@@ -125,7 +134,9 @@ def current_beat(obs: PlayerObservation) -> Beat | None:
         # Route to a Center even if the surviving party is healthy.
         hurt = obs.model_copy(update={"party": [{**m, "hp": 1} for m in obs.party if not m.get("dead")]})
         return heal_beat(hurt)
-    return heal_beat(obs) or supply_beat(obs) or beats.current_beat(obs)
+    from nuzlocke.agents.gym_preparation import gym_beat
+
+    return heal_beat(obs) or supply_beat(obs) or gym_beat(obs) or beats.current_beat(obs)
 
 
 def supply_beat(obs: PlayerObservation) -> Beat | None:
@@ -147,15 +158,26 @@ def supply_beat(obs: PlayerObservation) -> Beat | None:
 
 
 def objective_window(obs: PlayerObservation) -> dict[str, str] | None:
-    heal = heal_beat(obs) or supply_beat(obs)
+    from nuzlocke.agents.gym_preparation import gym_beat
+
+    heal = heal_beat(obs) or supply_beat(obs) or gym_beat(obs)
     story = beats.objective_window(obs)
     if heal is None:
         return story
+    state = obs.policy.get("gym_preparation")
+    if state:
+        remaining = [heal.text]
+        if state["phase"] == "heal":
+            remaining.append(f"Prepare living Pokémon with audited Rare Candies to level {state['cap']} before {state['name']}.")
+        remaining.append(f"Defeat {state['name']} and verify the {state['badge']} Badge.")
+        return dict(zip(("primary", "secondary", "tertiary"), remaining))
     return {"primary": heal.text, **({"secondary": story["primary"]} if story else {})}
 
 
 def has_balls(obs: PlayerObservation) -> bool:
-    return any("ball" in str(item.get("item") or "").casefold() for item in obs.bag)
+    from nuzlocke.agents.inventory import is_capture_ball
+
+    return any(is_capture_ball(item) for item in obs.bag)
 
 
 def forced_battle_choice(obs: PlayerObservation, first_encounter: bool = False) -> str | None:
@@ -193,6 +215,14 @@ def forced_battle_choice(obs: PlayerObservation, first_encounter: bool = False) 
 def constraints(obs: PlayerObservation, cap: int | None, dead: list[str]) -> list[str]:
     """What System 1 and 2 must obey and know: the rules, the cap, the next boss, trainers here."""
     lines = [data("rule_briefing.json")]
+    from nuzlocke.agents.gym_preparation import party_ready
+
+    if obs.map_id in HEALING_CENTERS and party_ready(obs):
+        lines.append(
+            "Observed party recovery: every living member has full HP, OK status and restored observed PP. "
+            "Finish any mandatory nurse-acceptance stage and close healing text/menus, then resume the destination. "
+            "Use these supplied facts; opening party STATS to recheck recovery is unnecessary."
+        )
     lines += [
         f"Living field-move user: {mon.get('nickname') or mon.get('species')} knows {move['name']}; verify field permission."
         for mon in obs.party

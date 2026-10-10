@@ -73,6 +73,8 @@ SUPPORTED.update(
         232,
     }
 )
+# Rocket Hideout, Pokemon Tower and the land route to Koga; no water route is assumed.
+SUPPORTED.update({7, *range(23, 30), 135, *range(142, 159), 164, *range(184, 190), *range(199, 204)})
 
 
 def read(path):

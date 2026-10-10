@@ -14,6 +14,7 @@ import sys
 from typing import Any
 
 from nuzlocke.assets import data as asset_data
+from nuzlocke.environment.surge import read_surge_puzzle
 
 W_Y_COORD = 0xD361
 W_X_COORD = 0xD362
@@ -168,6 +169,7 @@ def read_map_objects(emu: Any) -> dict[str, Any]:
         "menu_index": emu.read_u8(0xCC26),
         "menu_scroll": emu.read_u8(0xCC36),
         "shop_stock": read_shop_stock(emu),
+        "surge_puzzle": read_surge_puzzle(emu),
         # LearnMove uses wWhichPokemon, not the active battle slot or party menu cursor.
         # These scratch values are meaningful only on a verified move-learning screen.
         "learning_party_slot": emu.read_u8(0xCF92),
@@ -382,16 +384,23 @@ def prepare_items(reader: Any, request: dict) -> dict:
         memory[W_OPTIONS] = emu.read_u8(W_OPTIONS) | 0x40
         return {"battle_style": "SET"}
     target = request.get("target")
-    cap = 21 if emu.read_u8(0xD356) & 1 else 14
-    from nuzlocke.agents.gym_preparation import leader_position
+    from pokemon_agent.memory.red import BADGE_NAMES
 
-    badges = [name for bit, name in ((1, "Boulder"), (2, "Cascade")) if emu.read_u8(0xD356) & bit]
+    from nuzlocke.agents.gym_preparation import leader_position
+    from nuzlocke.agents.system3 import HEALING_CENTERS
+    from nuzlocke.config import load_rules
+    from nuzlocke.referee.rules import NuzlockeReferee
+
+    badges = [name for index, name in enumerate(BADGE_NAMES) if emu.read_u8(0xD356) & (1 << index)]
+    referee = NuzlockeReferee(load_rules())
+    referee.advance(len(badges))
+    cap = referee.current_cap
     leader = leader_position(emu.read_u8(W_CUR_MAP), badges)
     at_leader = leader is not None and (emu.read_u8(W_X_COORD), emu.read_u8(W_Y_COORD)) == leader
     if (
-        not isinstance(target, int)
+        type(target) is not int
         or not 1 <= target <= cap
-        or (emu.read_u8(W_CUR_MAP) not in {40, 41, 58, 64, 68} and not at_leader)
+        or (emu.read_u8(W_CUR_MAP) not in HEALING_CENTERS | {40} and not at_leader)
     ):
         raise ValueError(f"candy grants require a Center or unbeaten leader position and a target at or below {cap}")
     party = reader.read_party()

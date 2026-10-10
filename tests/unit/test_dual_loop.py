@@ -6,6 +6,8 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from nuzlocke.agents.goals import RoomMap
 from nuzlocke.agents.roles import make_task, propose_plan
 from nuzlocke.llm.base import LLMProvider
@@ -322,7 +324,8 @@ def test_disengage_drops_the_plan():
     assert pause is False
 
 
-def test_recovery_advice_becomes_the_plan(monkeypatch):
+@pytest.mark.parametrize("tier", [1, 3])
+def test_recovery_advice_becomes_the_plan(monkeypatch, tier):
     loop = RunLoop.__new__(RunLoop)
     loop.jev = object()
     loop.llm = object()
@@ -341,6 +344,8 @@ def test_recovery_advice_becomes_the_plan(monkeypatch):
     loop.arbiter = SimpleNamespace(set_owner=lambda owner: None)
 
     def fake_recovery(llm, **kwargs):
+        assert llm is loop.llm  # Recovery uses System 2 even when System 1 exists.
+        assert kwargs["reframe"] == (tier >= 3)
         return RecoveryAdvice(
             diagnosis="Oak is repeating himself",
             reason="leave the lab north",
@@ -349,7 +354,7 @@ def test_recovery_advice_becomes_the_plan(monkeypatch):
 
     monkeypatch.setattr("nuzlocke.orchestration.loop.advise_recovery", fake_recovery)
     proposal, used, pause = loop._select_proposal(
-        tier=3,
+        tier=tier,
         decision=_decision(),
         task=make_task(_decision()),
         obs=_obs(),

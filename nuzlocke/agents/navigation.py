@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
-from nuzlocke.agents.goals import MAX_BURST, Goal, RoomMap, Routes, _grid_tiles, collision_map, map_key
+from nuzlocke.agents.goals import MAX_BURST, Goal, RoomMap, Routes, collision_map, map_key
 from nuzlocke.environment.terrain import step_delta
 from nuzlocke.state.models import GameAction, PlayerObservation
 
@@ -45,6 +45,7 @@ class Navigator:
     def __init__(self) -> None:
         self.maps: dict[str, dict] = {}
         self.route: dict = {}
+        self.signature: list = []
         self.plan: dict = {}
         self.last_plan: dict = {}
         self.reason = "No route yet"
@@ -89,15 +90,20 @@ class Navigator:
         goal = next((g for g in goals if g.objective), None)
         if goal is None or goal.kind in {"wait", "explore", "heading"}:
             self.route = {}
+            self.plan = {}
+            self.signature = []
             self.brief = {}
             return None
-        if not goal.actions and not goal.path:
-            self.route = {}
-            self.brief = {}
-            self.reason = "Objective has no legal route; director must replan"
-            return None
-        signature = [obs.map_id, goal.key, objective_text, goal.finish, list(goal.target) if goal.target is not None else None]
-        if self.route.get("signature") != signature:
+        signature = [
+            obs.map_id,
+            goal.key,
+            objective_text,
+            goal.label,
+            goal.finish,
+            list(goal.target) if goal.target is not None else None,
+        ]
+        if self.signature != signature:
+            self.signature = signature
             self.route = {}
             self.plan = {}
             self.reason = "Objective or map changed"
@@ -109,6 +115,10 @@ class Navigator:
                 self.route = {}
                 self.reason = "System 2 updated the route"
         self.observe(obs, room)
+        if not goal.actions and not goal.path:
+            # A newly unreachable objective invalidates its old route. Explicit,
+            # reachable waypoints may still approach an interaction below.
+            self.route = {}
         start = (obs.x, obs.y)
         walkable = collision_map(obs, room) or {}
         from nuzlocke.knowledge.map_reference import ledge_jumps
@@ -116,6 +126,7 @@ class Navigator:
         jumps = ledge_jumps(obs, room)
         remaining = None
         suffix: list[str] = []
+        reached_waypoint = False
         if self.route and not failed:
             tiles = [tuple(t) for t in self.route["tiles"]]
             if start in tiles[:-1]:
@@ -147,6 +158,7 @@ class Navigator:
             waypoints = self.plan.get("waypoints", [])
             while waypoints and tuple(waypoints[0]) == start:
                 waypoints.pop(0)
+                reached_waypoint = True
             if waypoints:
                 waypoint = tuple(waypoints[0])
                 routes = Routes(
@@ -158,8 +170,7 @@ class Navigator:
                     terrain_edges=room.terrain_edges(obs),
                     jumps=jumps,
                 )
-                observed = {**room.known.get(map_key(obs), {}), **_grid_tiles(obs)}
-                path = routes.paths.get(waypoint) if observed.get(waypoint) or waypoint in room.seen(obs) else None
+                path = routes.paths.get(waypoint) if room.floor(obs).get(waypoint) else None
                 if path:
                     remaining, suffix = path, []
                     self.reason = "Following System 2 waypoint"
@@ -175,11 +186,13 @@ class Navigator:
                 "terminal": not self.plan.get("waypoints") and (goal.kind in {"exit", "edge", "talk"} or goal.finish is not None),
             }
         if not remaining:
+            self.route = {}
+            self.reason = "Route waypoint reached" if reached_waypoint else "No reachable route; awaiting replan"
             self.brief = {
                 "objective_key": goal.key,
                 "destination": objective_text or goal.label,
                 "remaining_steps": 0,
-                "reason": "No reachable route; awaiting replan",
+                "reason": self.reason,
             }
             return None
         actions = [GameAction(f"walk_{d.removeprefix('jump_')}") for d in remaining[:MAX_BURST]]
@@ -210,8 +223,7 @@ class Navigator:
         from nuzlocke.knowledge.objects import object_facts
 
         data = self.maps.get(str(obs.map_id), {})
-        known = room.known.get(map_key(obs), {})
-        seen = room.seen(obs)
+        known = room.floor(obs)
         size = obs.map_size or data.get("size") or {}
         w, h = min(size.get("w", 0), 130), min(size.get("h", 0), 130)
         grass = {tuple(t) for t in data.get("grass", [])}
@@ -220,8 +232,8 @@ class Navigator:
             row = []
             for x in range(w):
                 t = (x, y)
-                c = "." if known.get(t) or t in seen else "#" if t in known else "?"
-                if t in grass:
+                c = "." if known.get(t) else "#" if t in known else "?"
+                if t in grass and known.get(t, True):
                     c = ","
                 if t == (obs.x, obs.y):
                     c = "@"

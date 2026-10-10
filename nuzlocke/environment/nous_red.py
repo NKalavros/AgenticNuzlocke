@@ -231,6 +231,7 @@ class NousRedEnvironment:
             menu_index=(objects or {}).get("menu_index"),
             menu_scroll=(objects or {}).get("menu_scroll", 0),
             shop_stock=(objects or {}).get("shop_stock", []),
+            surge_puzzle=(objects or {}).get("surge_puzzle") if (objects or {}).get("map_id") == map_id else None,
             grass_tiles=(objects or {}).get("grass_tiles", []),
             wild_species=(objects or {}).get("wild_species", []),
             learning_party_slot=(objects or {}).get("learning_party_slot"),

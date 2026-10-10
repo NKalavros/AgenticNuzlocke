@@ -201,7 +201,7 @@ class RecoveryAdvice(BaseModel):
 
 
 class PlayerObservation(BaseModel):
-    """Human-assist observation layer (no privileged RNG/hidden IVs)."""
+    """Human-assist observations, with an explicit optional Surge puzzle shortcut."""
 
     screenshot_path: str | None = None
     # Grid-overlay copy of the same frame, attached to vision calls.
@@ -251,6 +251,7 @@ class PlayerObservation(BaseModel):
     menu_index: int | None = None
     menu_scroll: int = 0
     shop_stock: list[dict[str, Any]] = Field(default_factory=list)
+    surge_puzzle: dict[str, Any] | None = None
     learning_party_slot: int | None = None
     learning_move_id: int | None = None
     grass_tiles: list[dict[str, int]] = Field(default_factory=list)

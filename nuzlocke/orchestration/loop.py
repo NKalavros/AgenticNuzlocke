@@ -304,6 +304,9 @@ class RunLoop:
         from nuzlocke.agents.shop import ShopController
 
         self.shop = ShopController()
+        from nuzlocke.agents.gym_preparation import GymPreparation
+
+        self.gym_preparation = GymPreparation()
         self._rejected_starters = set()
         self._last_search_cycle = None
         self._force_planner_refresh = False
@@ -356,6 +359,13 @@ class RunLoop:
         if self.ledger.update(obs, step=self._cycle):
             self.store.append("ledger_commit", self.referee.snapshot())
         self.referee.identify(obs)
+        if getattr(self, "gym_preparation", None) is not None:
+            self.gym_preparation.observe(
+                obs,
+                cap=self.referee.current_cap,
+                candy_enabled=bool((self.run_cfg.get("rare_candy") or {}).get("enabled")),
+                record=self.store.append,
+            )
         if getattr(self, "move_learner", None) is not None:
             self.move_learner.observe(obs, self.store.append)
         if getattr(self, "lead_rotation", None) is not None:
@@ -410,6 +420,8 @@ class RunLoop:
         return decision(obs, first_encounter=self.ledger.first_encounter)
 
     def _annotate_policy(self, obs):
+        if getattr(self, "gym_preparation", None) is not None:
+            self.gym_preparation.annotate(obs)
         obs.policy.update(
             level_cap=self.referee.current_cap,
             level_cap_buffer=int(self.run_cfg.get("level_cap_buffer", 1)),
@@ -442,12 +454,15 @@ class RunLoop:
             "move_learning": self.move_learner.snapshot(),
             "shop": self.shop.snapshot() if getattr(self, "shop", None) else None,
             "lead_rotation": self.lead_rotation.snapshot() if getattr(self, "lead_rotation", None) else None,
+            "gym_preparation": self.gym_preparation.snapshot() if getattr(self, "gym_preparation", None) else None,
             "rejected_starters": list(self._rejected_starters),
             "navigation": self.navigator.snapshot(),
             "room": {
                 "known": tiles(self.room.known),
                 "blocked": tiles(self.room._blocked),
                 "visited": {str(k): list(v) for k, v in self.room.visited.items()},
+                "walked": {str(k): list(v) for k, v in self.room.walked.items()},
+                "active_map": self.room.active_map,
                 "cycle": self.room.cycle,
                 "edge_blocks": {str(k): [[*edge, at] for edge, at in v.items()] for k, v in self.room.edge_blocks.items()},
                 "crossed_edges": {str(k): list(v) for k, v in self.room.crossed_edges.items()},
@@ -469,6 +484,8 @@ class RunLoop:
         self.objectives = data["objectives"]
         self.move_types = data["move_types"]
         self.move_learner.restore(data.get("move_learning"))
+        if getattr(self, "gym_preparation", None) is not None:
+            self.gym_preparation.restore(data.get("gym_preparation"))
         if getattr(self, "shop", None) is not None:
             self.shop.restore(data.get("shop"))
         if getattr(self, "lead_rotation", None) is not None:
@@ -482,6 +499,9 @@ class RunLoop:
         self.room.known = {key(k): {(x, y): v for x, y, v in rows} for k, rows in room["known"].items()}
         self.room._blocked = {key(k): {(x, y): v for x, y, v in rows} for k, rows in room["blocked"].items()}
         self.room.visited = {key(k): {tuple(t) for t in rows} for k, rows in room["visited"].items()}
+        # Legacy visited tiles are exploration history, not current movement proof.
+        self.room.walked = {key(k): {tuple(t) for t in rows} for k, rows in room.get("walked", {}).items()}
+        self.room.active_map = room.get("active_map")
         self.room.cycle = room["cycle"]
         self.room.edge_blocks = {key(k): {(x, y, d): at for x, y, d, at in rows} for k, rows in room.get("edge_blocks", {}).items()}
         self.room.crossed_edges = {key(k): {tuple(edge) for edge in rows} for k, rows in room.get("crossed_edges", {}).items()}
@@ -520,6 +540,7 @@ class RunLoop:
 
         if (
             not (at_leader(obs) and needs_top_up(obs))
+            and not obs.policy.get("gym_preparation")
             and getattr(self, "lead_rotation", None) is not None
             and not self._preparing_target
             and not self._closing_preparation
@@ -670,7 +691,9 @@ class RunLoop:
                 console.print(f"[red]Nuzlocke lost: {self.referee.wiped}. Stopping.[/red]")
                 break
             stop_after = self.run_cfg.get("stop_after", "brock")
-            stop_badge = {"brock": "Boulder", "misty": "Cascade", "lt_surge": "Thunder", "erika": "Rainbow"}.get(stop_after)
+            stop_badge = {"brock": "Boulder", "misty": "Cascade", "lt_surge": "Thunder", "erika": "Rainbow", "koga": "Soul"}.get(
+                stop_after
+            )
             if stop_badge and stop_badge in obs.badges:
                 self.store.append("milestone_complete", {"milestone": stop_after, "step": steps})
                 self.integrity.commit(self.env, self._controller_snapshot())
@@ -701,11 +724,11 @@ class RunLoop:
             }
             memory_text = self.memory.wake()
             beat_hint = self._sync_beats(obs, controllable=controllable)
-            stage_hint = "" if str(self._beat_id).startswith("heal") else progression_hint(obs)
+            stage_hint = "" if str(self._beat_id).startswith("heal") or obs.policy.get("gym_preparation") else progression_hint(obs)
             walkthrough_hint = "\n\n".join(filter(None, (beat_hint, stage_hint))) or None
-            if stuck.needs_guide() and not str(self._beat_id).startswith("heal"):
+            if stuck.needs_guide() and not str(self._beat_id).startswith("heal") and not obs.policy.get("gym_preparation"):
                 # The RAM map name picks the section; the model still does not see RAM.
-                excerpt = excerpt_for_context(map_name=obs.map_name, reason=hint or "", memory=memory_text)
+                excerpt = excerpt_for_context(map_name=obs.map_name, reason=hint or "", memory=memory_text, obs=obs)
                 if excerpt:
                     walkthrough_hint = f"{walkthrough_hint}\n\n{excerpt}" if walkthrough_hint else excerpt
                 if walkthrough_hint:
@@ -955,11 +978,11 @@ class RunLoop:
             self.arbiter.set_owner(AgentRole.RECOVERY)
             self._last_recovery_step = steps
             return proposal, True, False
-        # A few wrong joystick presses stay with Jev. The recovery model runs
-        # once mechanical disengage has failed (tier 3), or with no fast actor.
-        if (self.jev is None or tier >= 3) and (tier >= 1 or decision.mode == GameMode.RECOVERY):
+        # Tiers 1 and 3 ask the configured System 2 provider. Passing tier 1 back
+        # to the fast actor can repeat a stale route despite detected oscillation.
+        if tier >= 1 or (self.jev is None and decision.mode == GameMode.RECOVERY):
             hint = context["walkthrough_hint"] or excerpt_for_context(
-                map_name=obs.map_name, reason="stuck recovery", memory=context["memory"]
+                map_name=obs.map_name, reason="stuck recovery", memory=context["memory"], obs=obs
             )
             advice = advise_recovery(
                 self.llm,
@@ -1159,6 +1182,10 @@ class RunLoop:
         encounter = encounter_objective(self, obs, beat)
         if encounter:
             return encounter
+        from nuzlocke.knowledge.surge import switch_objective
+
+        if puzzle := switch_objective(self, obs, beat):
+            return puzzle
         if beat is not None and beat.id == "heal_forest" and self.plan is None:
             from nuzlocke.agents.goals import Routes, collision_map
 
@@ -1174,7 +1201,9 @@ class RunLoop:
                 obs.policy["healing_route_steps"] = cost
                 return {"kind": "warp", "dest_map": destination}, beat.text, True
         # The healing destination stays locked, but a planner can clear an obstacle en route.
-        delegated_heal = beat and beat.id.startswith("heal") and beat.target.get("kind") in {"warp", "edge"} and self.plan
+        delegated_heal = (
+            beat and beat.id.startswith(("heal", "gym_route")) and beat.target.get("kind") in {"warp", "edge"} and self.plan
+        )
         if delegated_heal and any(g.objective and g.complete for g in build_goals(obs, self.room, objective=beat.target)):
             delegated_heal = self.plan = None
         if beat is not None and beat.target and not delegated_heal:
@@ -1194,7 +1223,7 @@ class RunLoop:
         self, obs: PlayerObservation, signals: FrameSignals, *, mash_stalled: bool, jev_decide: Any, explore: bool = False
     ) -> S1Turn | None:
         target, text, from_code = self._objective(obs)
-        obs.policy["healing_route"] = self._beat_locked and str(self._beat_id).startswith("heal")
+        obs.policy["healing_route"] = self._beat_locked and str(self._beat_id).startswith(("heal", "gym_route"))
         if not obs.party and obs.map_id == 40 and self._rejected_starters:
             balls = [n for n in obs.npcs if n.get("picture") == 74 and (n["x"], n["y"] + 1) not in self._rejected_starters]
             if balls:
@@ -1225,6 +1254,7 @@ class RunLoop:
             battle_plan=self._battle_plan(obs),
             navigator=self.navigator,
             route_plan=self.plan.route_plan if self.plan else None,
+            execution_plan="\n".join([self.plan.plan, *self.plan.do_not]) if self.plan else None,
         )
 
     def _battle_brief(self, obs: PlayerObservation) -> dict[str, Any]:
@@ -1481,6 +1511,20 @@ class RunLoop:
                 self._beat_id = identity
                 self.plan = None
             return encounter[1]
+        from nuzlocke.knowledge.surge import switch_objective
+
+        if puzzle := switch_objective(self, obs, beat):
+            self.objectives = {
+                "primary": puzzle[1],
+                "secondary": "Verify that the gym barrier opens after both switches.",
+                "tertiary": "Heal before challenging Lt. Surge; verify the Thunder Badge.",
+            }
+            self._beat_locked = True
+            self._prompt_beat, self._beat_heading = puzzle[1], None
+            identity = f"surge_switch:{obs.surge_puzzle['phase']}:{obs.surge_puzzle['index']}"
+            if self._beat_id != identity:
+                self._beat_id, self.plan = identity, None
+            return puzzle[1]
         if window is None or beat is None:
             from nuzlocke.orchestration.objectives import progression_objectives
 

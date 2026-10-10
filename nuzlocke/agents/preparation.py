@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from nuzlocke.agents.system1 import _special_page, menu_actions
-from nuzlocke.agents.system3 import current_beat
+from nuzlocke.agents.system3 import HEALING_CENTERS, current_beat
 from nuzlocke.environment.screen_text import is_pokedex_page, parse_screen
 from nuzlocke.state.models import GameAction as A
 
@@ -53,10 +53,14 @@ def preparation_turn(loop, obs):
         loop._closing_preparation = False
     # Fixed menus with no strategic choice should never consume an LLM call.
     beat = current_beat(obs)
-    if beat and beat.id.startswith("heal") and "HEAL" in rows and cursor is not None:
-        return menu_actions(f"choose_{rows.index('HEAL')}", cursor), "accept healing"
-    if rows == ["YES", "NO"] and beat and beat.id.startswith("heal"):
-        return menu_actions("choose_0", cursor), "accept healing"
+    nurse_prompt = obs.map_id in HEALING_CENTERS and (obs.x, obs.y) == (3, 3)
+    if beat and beat.id == "heal_nurse" and nurse_prompt and cursor is not None:
+        choice = rows.index("HEAL") if "HEAL" in rows else 0 if rows == ["YES", "NO"] else None
+        if choice is not None:
+            preparation = getattr(loop, "gym_preparation", None)
+            if preparation and preparation.pending and preparation.pending["phase"] == "heal":
+                preparation.pending["accepted"] = True
+            return menu_actions(f"choose_{choice}", cursor), "accept healing"
     dead = [m for m in obs.party if m.get("dead")]
     if dead and obs.map_id in {41, 58, 64, 68}:
         if rows and cursor is not None:
@@ -79,8 +83,12 @@ def preparation_turn(loop, obs):
         return [], ""
     from nuzlocke.agents.gym_preparation import at_leader
 
-    gym_top_up = at_leader(obs)
-    if (obs.map_id not in {40, 41, 58, 64, 68} and not gym_top_up) or any(m.get("dead") for m in obs.party):
+    stage = obs.policy.get("gym_preparation")
+    if stage and stage["phase"] == "heal":
+        return [], ""
+    gym_top_up = at_leader(obs) and not stage
+    gym_center = stage and stage["phase"] == "prepare" and obs.map_id == stage["center"]
+    if (obs.map_id not in {40, 41, 58, 64, 68} and not gym_top_up and not gym_center) or any(m.get("dead") for m in obs.party):
         return [], ""
     if obs.map_id == 40 and (len(obs.party) != 1 or obs.party[0].get("species") != "Bulbasaur"):
         return [], ""
@@ -99,6 +107,8 @@ def preparation_turn(loop, obs):
     )
     if gym_top_up:
         target = loop.referee.current_cap
+    if gym_center:
+        target = min(stage["cap"], loop.referee.current_cap)
     if loop._preparing_target:
         target = loop._preparing_target
     candidates = [(i, m) for i, m in enumerate(obs.party) if (m.get("level") or target) < target]

@@ -7,7 +7,7 @@ needs: distance, whether a path exists, whether it is the current objective,
 and how often it already failed on this visit.
 
 Paths run over the best map knowledge there is: the tilemap walk grid when it
-is trusted, plus every tile the player has actually stood on (``RoomMap``),
+is trusted, plus verified floor from this visit with unchanged terrain (``RoomMap``),
 minus tiles a walk bumped into and tiles an NPC stands on. On a map whose grid
 is withheld (Oak's Lab), unknown tiles are tried optimistically and each bump
 is remembered, so the room is learned by walking it.
@@ -23,7 +23,7 @@ from typing import Any
 from nuzlocke.agents.locomotion import _parsed_grid
 from nuzlocke.environment.maps import map_name
 from nuzlocke.environment.terrain import step_delta
-from nuzlocke.knowledge.objects import field_item, interaction_sides, object_available, object_facts
+from nuzlocke.knowledge.objects import field_item, interaction_sides, nurse_interaction, object_available, object_facts
 from nuzlocke.state.models import GameAction, PlayerObservation
 
 DIRS = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}
@@ -59,7 +59,7 @@ def _manhattan(a: Tile, b: Tile) -> int:
 
 
 class RoomMap:
-    """Per map: the walk grid of every screen seen, tiles stood on, and tiles bumped into.
+    """Per map: observed terrain, exploration history, and current traversal evidence.
 
     Remembering the grid lets a path run across the whole known map, not just the 10x9 screen:
     Viridian Forest's maze sent screen-only paths back into the same dead ends for hours.
@@ -67,6 +67,8 @@ class RoomMap:
 
     def __init__(self) -> None:
         self.visited: dict[Any, set[Tile]] = {}
+        self.walked: dict[Any, set[Tile]] = {}
+        self.active_map: Any = None
         self.known: dict[Any, dict[Tile, bool]] = {}
         self._blocked: dict[Any, dict[Tile, int]] = {}
         self.cycle = 0
@@ -77,22 +79,63 @@ class RoomMap:
 
     def visit(self, obs: PlayerObservation) -> None:
         self.cycle += 1
+        self.refresh(obs)
+
+    def _activate(self, key: Any) -> None:
+        if key != self.active_map:
+            # A map reload can restore obstacles. Keep exploration history,
+            # but successful movement only proves the current visit's geometry.
+            for cache in (self.walked, self.crossed_edges, self.edge_blocks, self._blocked):
+                cache.pop(key, None)
+            self.active_map = key
+
+    def refresh(self, obs: PlayerObservation) -> None:
+        """Merge current terrain without advancing the movement-bump clock."""
         if obs.x is None or obs.y is None:
             return
-        tile = (obs.x, obs.y)
-        self.visited.setdefault(map_key(obs), set()).add(tile)
-        self._blocked.get(map_key(obs), {}).pop(tile, None)
+        from nuzlocke.environment.screen import blank_frame
         from nuzlocke.environment.screen_text import find_boxes
 
-        if not obs.in_battle and not obs.cutscene and not find_boxes(obs.screen_rows):
-            self.known.setdefault(map_key(obs), {}).update(_grid_tiles(obs))
-            self.terrain_tiles.setdefault(map_key(obs), {}).update(
-                {(t["x"], t["y"]): (t["tileset"], t["id"]) for t in obs.terrain_tiles}
-            )
+        if obs.in_battle or obs.cutscene or find_boxes(obs.screen_rows) or blank_frame(obs.screenshot_path):
+            return
+        key = map_key(obs)
+        self._activate(key)
+        grid = _grid_tiles(obs)
+        terrain = {(t["x"], t["y"]): (t["tileset"], t["id"]) for t in obs.terrain_tiles}
+        known = self.known.setdefault(key, {})
+        tiles = self.terrain_tiles.setdefault(key, {})
+        changed = {t for t, value in grid.items() if t in known and known[t] != value}
+        changed |= {t for t, value in terrain.items() if t in tiles and tiles[t] != value}
+        for tile in changed:
+            known.pop(tile, None)
+        self.walked.setdefault(key, set()).difference_update(changed)
+        for cache in (self.crossed_edges, self.edge_blocks):
+            edges = cache.get(key, ())
+            invalid = {
+                edge for edge in edges if edge[:2] in changed or (edge[0] + DIRS[edge[2]][0], edge[1] + DIRS[edge[2]][1]) in changed
+            }
+            for edge in invalid:
+                if isinstance(edges, set):
+                    edges.discard(edge)
+                else:
+                    edges.pop(edge, None)
+        known.update(grid)
+        tiles.update(terrain)
+        tile = (obs.x, obs.y)
+        self.visited.setdefault(key, set()).add(tile)
+        self.walked[key].add(tile)
+        self._blocked.get(key, {}).pop(tile, None)
+
+    def floor(self, obs: PlayerObservation) -> dict[Tile, bool]:
+        """Observed floor plus movement still valid for this map visit and terrain."""
+        self.refresh(obs)
+        key = map_key(obs)
+        return {**self.known.get(key, {}), **dict.fromkeys(self.walked.get(key, ()), True)}
 
     def record_walks(self, before: PlayerObservation, walks: list[dict[str, Any]]) -> None:
         """Every tile a burst stood on is open; a walk that did not move marks the tile ahead."""
         key = map_key(before)
+        self._activate(key)
         for step in walks:
             if step.get("map_id") is not None and step["map_id"] != before.map_id:
                 break
@@ -104,10 +147,11 @@ class RoomMap:
                 self.edge_blocks.get(key, {}).pop(edge, None)
                 delta = DIRS.get(edge[2])
                 if delta and (x1 - x0, y1 - y0) == delta:
-                    # A verified crossing overrides vanilla terrain in a ROM hack.
+                    # A verified crossing overrides unchanged vanilla terrain in a ROM hack.
                     # A two-tile jump does not prove the intermediate edge is walkable.
                     self.crossed_edges.setdefault(key, set()).add(edge)
                 self.visited.setdefault(key, set()).add((x1, y1))
+                self.walked.setdefault(key, set()).add((x1, y1))
                 continue
             direction = str(step.get("action") or "").removeprefix("walk_")
             if direction in DIRS and step.get("blocked", True):
@@ -199,20 +243,15 @@ def _grid_tiles(obs: PlayerObservation) -> dict[Tile, bool]:
 
 def collision_map(obs: PlayerObservation, room: RoomMap) -> dict[Tile, bool] | None:
     """Which tiles can be walked: every screen seen on this map, the current grid over it, the
-    tiles walked, minus bumps, NPCs, and doors that are not the goal."""
+    current visit's verified floor, minus bumps, NPCs, and doors that are not the goal."""
     if obs.x is None or obs.y is None:
         return None
-    walkable: dict[Tile, bool] = dict(room.known.get(map_key(obs), {}))
-    screen = _grid_tiles(obs)
-    if screen:
-        walkable.update(screen)
-    else:
+    walkable = room.floor(obs)
+    if not _grid_tiles(obs):
         # No trusted grid: every on-screen tile is worth one try.
         for dx in range(-4, 6):
             for dy in range(-4, 5):
                 walkable.setdefault((obs.x + dx, obs.y + dy), True)
-    for tile in room.seen(obs):
-        walkable[tile] = True
     from nuzlocke.knowledge.map_reference import ledge_jumps
 
     for x, y, d in ledge_jumps(obs, room):
@@ -310,19 +349,11 @@ class Routes:
         return self.paths[best] if reach(best) > reach(self.start) else None
 
     def closest(self, tile: Tile) -> list[str] | None:
-        """Toward a target with no known way in: the unvisited reachable tile nearest to it.
-
-        Heading for the nearest tile of any kind walked Viridian Forest's maze into the same
-        dead-end pocket forty times. A tile already stood on no longer pulls, so the search
-        works its way around walls. With nothing new in reach, any tile that is strictly nearer.
-        """
-        fresh = [t for t in self.paths if t not in self.seen and t != self.start]
-        # New ground is where the known map ends: a reachable tile next to one never seen.
+        """Reveal unknown geometry toward an unreachable target; known floor is not a frontier."""
         frontier = [t for t in self.paths if t != self.start and self._borders_unknown(t)]
-        pool = frontier or fresh or list(self.paths)
-        best = min(pool, key=lambda t: (_manhattan(t, tile), len(self.paths[t])))
-        if not (frontier or fresh) and _manhattan(best, tile) >= _manhattan(self.start, tile):
+        if not frontier:
             return None
+        best = min(frontier, key=lambda t: (_manhattan(t, tile), len(self.paths[t])))
         return self.paths[best][:MAX_BURST] or None
 
     def _borders_unknown(self, tile: Tile) -> bool:
@@ -478,24 +509,34 @@ def build_goals(
     talkers += [(f"sign_{s['x']}_{s['y']}", "sign", (int(s["x"]), int(s["y"])), ("down",), None) for s in obs.signs]
     talkers.sort(key=lambda item: (item[0] not in wanted_keys, _manhattan(start, item[2])))
     for key, label, tile, sides, picture in talkers[:6]:
-        path = routes.facing(tile, sides)
+        nurse = nurse_interaction(obs, {"picture": picture, "x": tile[0], "y": tile[1]})
+        approach = nurse or tile
+        path = routes.onto(nurse) if nurse else routes.facing(tile, sides)
         goal = _goal(
             key,
             "talk",
             f"talk to the {label}" if label != "sign" else "read the sign",
             path,
-            fallback=toward(tile),
+            extra=["up"] if nurse else [],
+            fallback=toward(approach),
             distance=_manhattan(start, tile),
             finish=GameAction.PRESS_A,
             partial=None
             if path is not None
-            else (guided_path(obs, routes, [(tile[0] + DIRS[s][0], tile[1] + DIRS[s][1]) for s in sides]) or routes.closest(tile)),
+            else (
+                guided_path(obs, routes, [nurse] if nurse else [(tile[0] + DIRS[s][0], tile[1] + DIRS[s][1]) for s in sides])
+                or routes.closest(approach)
+            ),
         )
         goal.picture, goal.name = picture, label
         goal.target = tile
         if any(f"talk_{n.get('slot', 0)}" == key and field_item(n) for n in available_npcs):
             goal.label = f"pick up {label}"
-        goal.facts.append(f"Object at map tile ({tile[0]},{tile[1]}); face it and press A")
+        goal.facts.append(
+            "Nurse: stand at (3,3), face up across the counter and press A"
+            if nurse
+            else f"Object at map tile ({tile[0]},{tile[1]}); face it and press A"
+        )
         if picture == 75:
             goal.facts.append("Fossil: approach from below and confirm YES; bag receipt opens the exit")
         if any(f"talk_{n.get('slot', 0)}" == key and not n.get("on_screen", True) for n in obs.npcs):
@@ -578,7 +619,9 @@ def _goal(
     actions = [_WALK[step] for step in walks[:MAX_BURST]]
     if finish is not None and path is not None and len(walks) <= MAX_BURST:
         actions.append(finish)
-    return Goal(key=key, kind=kind, label=label, actions=actions, facts=facts, path=walks, finish=finish)
+    return Goal(
+        key=key, kind=kind, label=label, actions=actions, facts=facts, path=walks, finish=finish if path is not None else None
+    )
 
 
 def _exit_step(obs: PlayerObservation, tile: Tile, path: list[str] | None) -> str:
@@ -741,6 +784,11 @@ def _mark_objective(
         )
     elif kind == "tile" and objective.get("x") is not None:
         tile = (int(objective["x"]), int(objective["y"]))
+        # Explicitly targeting a door permits that map transition. Ordinary
+        # walking paths exclude warps, which otherwise makes this tile unreachable.
+        if exit_goal := next((g for g in goals if g.kind == "exit" and tile in g.warp_tiles), None):
+            mark(exit_goal, objective_text)
+            return
         start = (obs.x, obs.y)
         path = routes.paths.get(tile)
         match = _goal(
@@ -760,7 +808,7 @@ def _mark_objective(
         prepare_first = needs_top_up(obs) and (objective["x"], objective.get("y")) == leader_position(obs.map_id, obs.badges)
         # Stand on a tile, turn, and press A: the nurse is answered across her counter.
         tile = (int(objective["x"]), int(objective["y"]))
-        path = routes.onto(tile)
+        path = routes.paths.get(tile)
         match = _goal(
             "objective",
             "objective",
@@ -771,6 +819,7 @@ def _mark_objective(
             finish=None if prepare_first else GameAction.PRESS_A,
             partial=None if path is not None else routes.closest(tile),
         )
+        match.target = tile
         goals.append(match)
     elif kind in ("wait", "explore"):
         match = next((g for g in goals if g.key == kind), None) or next(g for g in goals if g.key == "wait")

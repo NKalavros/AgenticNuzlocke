@@ -57,6 +57,7 @@ def test_current_map_tile_is_executable_and_cannot_follow_player_to_another_map(
     assert parse_target("G7") == {"kind": "cell", "cell": "G7"}
     assert parse_target({"kind": "cell", "value": "G7"}) == parse_target("G7")
     assert parse_target({"kind": "exit", "value": "Vermilion Gym"}) == {"kind": "warp", "dest_map": 92}
+    assert parse_target({"kind": "exit", "value": "Vermilion Pokecenter"}) == {"kind": "warp", "dest_map": 89}
 
 
 @pytest.mark.parametrize(

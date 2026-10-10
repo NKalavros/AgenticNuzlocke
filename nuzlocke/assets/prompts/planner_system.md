@@ -41,11 +41,13 @@ and `done_when`, e.g. {"map": "Viridian City"}, or {} when System 1 cannot tell.
 of walk_up, walk_down, walk_left, walk_right, press_a, press_b, press_start.
 Otherwise leave it [].
 
-For a destination behind a story obstacle, make the obstacle the immediate objective:
-approach a reachable interaction tile, perform the required interaction or field-menu action,
-verify its result, then target the destination. A learned HM is not a cleared tree.
-Keep the subgoal until its completion evidence is observed; do not send the walker
-toward an inaccessible door and expect it to invent the missing interaction.
+For an obstacle on the way to a code-owned destination, keep the destination objective.
+Use route_plan waypoints on reachable floor to approach the obstacle; a target cannot replace
+the code-owned destination. When the final waypoint is reached and the destination remains
+blocked, System 1 requests "route waypoint reached". Use steps for the required facing and
+interaction or field-menu action, then verify its result before resuming the destination.
+Do not create a temporary objective. A learned HM is not a cleared tree.
+Do not send the walker toward an inaccessible door and expect it to invent the missing interaction.
 
 If the journal shows the same text each time a goal is tried (someone blocking a
 road), that way is closed until a story event: set a different objective.

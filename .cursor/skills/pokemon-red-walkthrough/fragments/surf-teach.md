@@ -1,0 +1,3 @@
+## Surf: observed HM03, teaching still required
+
+HM03 is observed in the bag, but no living party member is observed with SURF. Use ITEM → HM03 → USE, accept teaching, and select a living member marked **ABLE** in the visible compatibility list. Do not guess compatibility from vanilla species. If replacement is required, preserve needed field moves and the planner's move bans. Verify learned SURF in the party observation; a successful-looking text page alone is insufficient. This guidance does not add a new destination or release mandatory healing/preparation. Before field use, require the observed Soul Badge and a living user. Keep the Koga route as the main objective until Soul is earned.

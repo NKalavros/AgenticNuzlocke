@@ -38,7 +38,8 @@ def test_healing_picks_reachable_ladder_in_same_connected_chamber():
     assert target.warp_tiles == [(21, 17)]
     assert target.complete
     assert target.actions[:3] == [A.WALK_LEFT] * 3
-    assert not next(g for g in goals if g.warp_tiles == [(25, 9)]).complete
+    inaccessible = next((g for g in goals if g.warp_tiles == [(25, 9)]), None)
+    assert inaccessible is None or not inaccessible.complete
 
 
 def test_missing_grid_does_not_erase_known_walls():

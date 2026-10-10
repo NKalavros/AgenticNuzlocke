@@ -31,7 +31,19 @@
     "rules": "fragments/rules.md",
     "introduction": "fragments/introduction.md",
     "surge-access": "fragments/surge-access.md",
-    "healing": "fragments/healing.md"
+    "healing": "fragments/healing.md",
+    "koga-intro": "fragments/koga-intro.md",
+    "koga-rocket-entry": "fragments/koga-rocket-entry.md",
+    "koga-rocket-key": "fragments/koga-rocket-key.md",
+    "koga-rocket-scope": "fragments/koga-rocket-scope.md",
+    "koga-tower": "fragments/koga-tower.md",
+    "koga-fuchsia-route": "fragments/koga-fuchsia-route.md",
+    "koga-fuchsia": "fragments/koga-fuchsia.md",
+    "koga-gym": "fragments/koga-gym.md",
+    "koga-notes": "fragments/koga-notes.md",
+    "surf-teach": "fragments/surf-teach.md",
+    "surf-locked": "fragments/surf-locked.md",
+    "surf-field": "fragments/surf-field.md"
   },
   "bundles": {
     "surge": [
@@ -70,6 +82,8 @@
       "misty",
       "surge",
       "erika",
+      "koga",
+      "surf",
       "stuck",
       "healing",
       "rules"
@@ -142,6 +156,68 @@
       "surge-intro",
       "surge-access",
       "surge-notes"
+    ],
+    "koga": [
+      "koga-intro",
+      "koga-rocket-entry",
+      "koga-rocket-key",
+      "koga-rocket-scope",
+      "koga-tower",
+      "koga-fuchsia-route",
+      "koga-fuchsia",
+      "koga-gym",
+      "koga-notes"
+    ],
+    "koga.rocket_entry": [
+      "koga-intro",
+      "koga-rocket-entry",
+      "koga-rocket-key",
+      "koga-notes"
+    ],
+    "koga.rocket_key": [
+      "koga-intro",
+      "koga-rocket-key",
+      "koga-notes"
+    ],
+    "koga.rocket_scope": [
+      "koga-intro",
+      "koga-rocket-scope",
+      "koga-notes"
+    ],
+    "koga.tower": [
+      "koga-intro",
+      "koga-tower",
+      "koga-notes"
+    ],
+    "koga.fuchsia_route": [
+      "koga-intro",
+      "koga-fuchsia-route",
+      "koga-notes"
+    ],
+    "koga.fuchsia": [
+      "koga-intro",
+      "koga-fuchsia",
+      "koga-gym",
+      "koga-notes"
+    ],
+    "koga.gym": [
+      "koga-intro",
+      "koga-gym",
+      "koga-notes"
+    ],
+    "surf.teach": [
+      "surf-teach"
+    ],
+    "surf.locked": [
+      "surf-locked"
+    ],
+    "surf.field": [
+      "surf-field"
+    ],
+    "surf": [
+      "surf-teach",
+      "surf-locked",
+      "surf-field"
     ]
   },
   "matches": [
@@ -280,6 +356,45 @@
       ],
       "include": [
         "erika"
+      ]
+    },
+    {
+      "keywords": [
+        "koga",
+        "fuchsia"
+      ],
+      "include": [
+        "koga.fuchsia"
+      ]
+    },
+    {
+      "keywords": [
+        "rocket hideout",
+        "game corner"
+      ],
+      "include": [
+        "koga.rocket_key"
+      ]
+    },
+    {
+      "keywords": [
+        "pok\u00e9mon tower",
+        "pokemon tower",
+        "fuji"
+      ],
+      "include": [
+        "koga.tower"
+      ]
+    },
+    {
+      "keywords": [
+        "route 12",
+        "route 13",
+        "route 14",
+        "route 15"
+      ],
+      "include": [
+        "koga.fuchsia_route"
       ]
     },
     {
