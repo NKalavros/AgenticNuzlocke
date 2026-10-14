@@ -179,3 +179,88 @@ def test_real_overlapping_use_info_toss_box_keeps_verified_flute_identity():
     assert decision(obs).validate([A.WALK_DOWN, A.WALK_DOWN, A.PRESS_A]) is not None
     obs.bag[19]["id"] = 20
     assert decision(obs).validate([A.PRESS_A]) is not None
+
+
+def test_cursor_progress_in_lower_screen_does_not_count_as_failed_walking():
+    from nuzlocke.orchestration.stuck import Fingerprint, StuckTracker
+
+    tracker = StuckTracker()
+    tracker.immobile_streak = 12
+    tracker.blocked_on_tile.add("walk_down")
+    obs = scene()
+    tracker.update_position(obs)
+    assert tracker.immobile_streak == 0 and not tracker.blocked_on_tile
+    before = Fingerprint("Route 12", 10, 61, "down", False, "frame0", "world", "dialog0")
+    for n in range(25):
+        after = before._replace(frame=f"frame{n + 1}", dialog=f"dialog{n + 1}")
+        tracker.update_position(obs)
+        tracker.record_result(before, after, executed=True, actions=["walk_down"], cursor_mode=True)
+        assert tracker.escalation_tier() == 0
+        assert tracker.immobile_streak == 0 and not tracker.blocked_on_tile
+        before = after
+
+
+def test_unchanged_cursor_menu_still_requests_recovery():
+    from nuzlocke.orchestration.stuck import StuckTracker
+
+    tracker = StuckTracker()
+    obs = scene()
+    fp = tracker.fingerprint(obs)
+    for _ in range(13):
+        tracker.update_position(obs)
+        tracker.record_result(fp, fp, executed=True, actions=["walk_down"], cursor_mode=True)
+    assert tracker.needs_recovery()
+    assert tracker.immobile_streak == 0 and not tracker.blocked_on_tile
+    assert not tracker.failed_approaches
+
+
+def test_cursorless_quantity_picker_is_not_overworld_walking():
+    from nuzlocke.environment.screen_text import is_cursor_screen
+    from nuzlocke.orchestration.stuck import StuckTracker
+
+    obs = scene()
+    obs.screen_rows = json.loads((Path(__file__).parents[1] / "fixtures/mart_screens.json").read_text())["quantity"]
+    assert parse_screen(obs.screen_rows).cursor_row is None
+    assert is_cursor_screen(obs.screen_rows)
+    tracker = StuckTracker()
+    tracker.immobile_streak = 12
+    tracker.blocked_on_tile.add("walk_up")
+    tracker.update_position(obs)
+    assert tracker.immobile_streak == 0 and not tracker.blocked_on_tile
+
+
+@pytest.mark.parametrize("tier", [2, 4])
+def test_frozen_menu_requests_screen_aware_system2_recovery(monkeypatch, tier):
+    from types import SimpleNamespace
+    from nuzlocke.orchestration.loop import RunLoop
+    from nuzlocke.agents.roles import make_task
+    from nuzlocke.state.models import DirectorDecision, GameMode, RecoveryAdvice
+
+    loop = RunLoop.__new__(RunLoop)
+    loop.jev = object()
+    loop.llm = object()
+    loop.stuck = SimpleNamespace(stuck_score=6, recent_positions=[], loop_streak=0)
+    loop.env = SimpleNamespace(vision_frame=lambda obs: obs, push_event=lambda *a: None)
+    loop.store = SimpleNamespace(append=lambda *a: None)
+    loop.arbiter = SimpleNamespace(set_owner=lambda *a: None)
+    loop._adopt_recovery_plan = lambda *a: None
+    seen = []
+
+    def advise(provider, **kwargs):
+        assert provider is loop.llm
+        assert not kwargs["reframe"]
+        seen.append(kwargs["obs"])
+        return RecoveryAdvice(diagnosis="The bag is frozen", reason="Close the bag", proposed_actions=[A.PRESS_B])
+
+    monkeypatch.setattr("nuzlocke.orchestration.loop.advise_recovery", advise)
+    decision = DirectorDecision(mode=GameMode.RECOVERY, owner=AgentRole.RECOVERY, objective="Resolve the current menu")
+    result, used, pause = loop._select_proposal(
+        tier=tier,
+        decision=decision,
+        task=make_task(decision),
+        obs=scene(),
+        steps=1,
+        context={"walkthrough_hint": "Read the menu", "memory": None},
+    )
+    assert len(seen) == 1 and used and not pause
+    assert result.actions == [A.PRESS_B]

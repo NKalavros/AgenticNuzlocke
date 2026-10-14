@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from nuzlocke.environment import screen
+from nuzlocke.environment.screen_text import is_cursor_screen
 from nuzlocke.state.models import GameAction, PlayerObservation
 
 
@@ -215,6 +216,10 @@ class StuckTracker:
         dwell outside dialog and battle. A few-tile ping-pong does not decay it either: that is
         loop_streak's job in record_result.
         """
+        if is_cursor_screen(obs.screen_rows):
+            self.immobile_streak = 0
+            self.last_immobile = False
+            self.blocked_on_tile.clear()
         pos = (obs.map_name, obs.x, obs.y)
         if self.recent_positions and self.recent_positions[-1] == pos:
             self.same_tile_streak += 1
@@ -264,6 +269,7 @@ class StuckTracker:
         executed: bool,
         actions: list[str] | None = None,
         allow_immobile: bool = True,
+        cursor_mode: bool = False,
     ) -> bool:
         """Update the streaks from a before/after pair. True when actions ran and the whole frame
         is unchanged (a noop).
@@ -274,14 +280,14 @@ class StuckTracker:
         """
         actions = actions or []
         is_noop = after_fp == before_fp and executed
-        no_progress = executed and world_static(before_fp, after_fp)
+        no_progress = executed and (before_fp.frame == after_fp.frame if cursor_mode else world_static(before_fp, after_fp))
         walked = any(label in _WALK_BASE for label in actions)
         coords_known = None not in (before_fp.x, before_fp.y, after_fp.x, after_fp.y)
         # A walk into a wall from another facing only turns the player, as planned in "walk_up to
         # face the ball, then press_a". The second press the same way is the failure.
         turned = None not in (before_fp.facing, after_fp.facing) and before_fp.facing != after_fp.facing
         self.last_immobile = False
-        if executed and coords_known and before_fp[:3] != after_fp[:3]:  # (map, x, y) changed
+        if cursor_mode or (executed and coords_known and before_fp[:3] != after_fp[:3]):
             self.immobile_streak = 0
             self.blocked_on_tile.clear()
         elif executed and coords_known and allow_immobile and walked and not turned:
@@ -296,7 +302,7 @@ class StuckTracker:
             sig = tuple(actions)
             self.recent_actions.append(sig)
             self.recent_actions = self.recent_actions[-self._action_window :]
-            if is_noop and walked and self.failed_approaches[-1:] != [actions]:
+            if is_noop and walked and not cursor_mode and self.failed_approaches[-1:] != [actions]:
                 self.failed_approaches.append(list(actions))
                 self.failed_approaches = self.failed_approaches[-self._failed_window :]
             if no_progress:

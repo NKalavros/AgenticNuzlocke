@@ -21,6 +21,10 @@ def is_naming_screen(rows: list[str]) -> bool:
     return any("A B C D E F G H I" in row for row in rows)
 
 
+def is_cursor_screen(rows: list[str]) -> bool:
+    return is_naming_screen(rows) or parse_screen(rows).cursor_row is not None or bool(re.search(r"×\s*\d+\s+¥", " ".join(rows)))
+
+
 def is_pokedex_page(rows: list[str]) -> bool:
     """Recognize the measurement labels, not WT inside a name such as MEOWTH."""
     if any("▶" in row for row in rows):

@@ -216,6 +216,8 @@ The objectives show the guardian battle, Fuji rescue, and Flute collection as se
 The models receive the full bag list, including items outside the visible menu.
 The agent can move the bag cursor one row at a time to find an item.
 The program checks item use as a separate action.
+A cursor change counts as menu progress even when the player stays on the same map tile.
+If a menu stops changing, System 2 checks it before recovery.
 It detects the naming screen from the letter grid.
 A required story battle can bypass the rule to escape from ordinary wild battles.
 The program still checks survival, deaths, and the level cap.

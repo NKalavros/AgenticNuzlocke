@@ -43,7 +43,7 @@ from nuzlocke.agents.system3 import current_beat, objective_window
 from nuzlocke.config import ensure_relay_routing, load_agents_config, load_project_env, load_rules, load_run_config, project_root
 from nuzlocke.environment.nous_red import NousRedEnvironment
 from nuzlocke.environment.screen import digests_from_path, prompt_box_open, text_box_open
-from nuzlocke.environment.screen_text import find_boxes, is_naming_screen, parse_screen
+from nuzlocke.environment.screen_text import find_boxes, is_cursor_screen, is_naming_screen, parse_screen
 from nuzlocke.knowledge.walkthrough import compose, excerpt_for_context, progression_hint, skill_dir
 from nuzlocke.llm.factory import create_jev, create_provider
 from nuzlocke.llm.settings import configured_roles, preflight, provider_identity, resolve_agents_config
@@ -703,7 +703,8 @@ class RunLoop:
             obs = self.object_trust.view(self.grid_trust.view(raw_obs))
             locked = obs.in_battle or is_naming_screen(obs.screen_rows)
             speech = not locked and text_box_open(obs.screenshot_path)
-            controllable = not locked and not speech
+            cursor_mode = is_cursor_screen(obs.screen_rows)
+            controllable = not locked and not speech and not cursor_mode
             console.print("[dim]speech on screen[/dim]" if speech else f"[dim]map={obs.map_name} battle={obs.in_battle}[/dim]")
             self.store.append("observation", raw_obs.model_dump(mode="json"))
             self._publish_navigation(obs)
@@ -846,6 +847,7 @@ class RunLoop:
                 executed=bool(executed),
                 actions=executed or None,
                 allow_immobile=controllable and not after.in_battle and not is_naming_screen(after.screen_rows) and not after_box,
+                cursor_mode=cursor_mode or is_cursor_screen(after.screen_rows),
             )
             if result.walks:
                 grid_disagreed = self.grid_trust.record_path(raw_obs, result.walks)
@@ -891,7 +893,7 @@ class RunLoop:
             console.print(
                 f"[green]step {steps}[/green] {task.owner.value} -> {result.status} {executed}" + (f" [{tag}]" if tag else "")
             )
-            if (before_fp.map_name, before_fp.x, before_fp.y) == (after_fp.map_name, after_fp.x, after_fp.y):
+            if not cursor_mode and not is_cursor_screen(after.screen_rows) and before_fp[:3] == after_fp[:3]:
                 for label in executed:
                     stuck.press_counts[label] = stuck.press_counts.get(label, 0) + 1
             else:
@@ -993,6 +995,8 @@ class RunLoop:
                 return intervention, False, False
         if obs.in_battle:
             tier = 0  # Battle menus never receive an overworld disengage.
+        elif tier in (2, 4) and is_cursor_screen(obs.screen_rows):
+            tier = 1  # A frozen menu needs a screen-aware decision, not blind overworld walking.
         elif getattr(self, "referee", None) is not None:
             self._objective(obs)
             if obs.policy.get("encounter_phase") == "pacing" and self.stuck.immobile_streak < 3:
