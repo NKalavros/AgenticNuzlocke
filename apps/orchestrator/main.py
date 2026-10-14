@@ -11,6 +11,7 @@ import typer
 from rich.console import Console
 
 from nuzlocke.config import ensure_relay_routing, load_project_env
+from nuzlocke.llm.settings import configured_roles
 from nuzlocke.orchestration.loop import RunLoop, scripted_smoke
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
@@ -28,10 +29,16 @@ S2_PROVIDER_OPTION = typer.Option(
     None, "--system2-provider", help="codex | claude_code | antigravity | gemini_cli | cursor | openai_compatible"
 )
 S2_MODEL_OPTION = typer.Option(None, "--system2-model")
+S4_PROVIDER_OPTION = typer.Option(None, "--system4-provider", help="Team strategist; inherits System 2")
+S4_MODEL_OPTION = typer.Option(None, "--system4-model")
 
 
-def _agent_overrides(s1_provider, s1_model, s2_provider, s2_model):
-    return {"system1": {"provider": s1_provider, "model": s1_model}, "system2": {"provider": s2_provider, "model": s2_model}}
+def _agent_overrides(s1_provider, s1_model, s2_provider, s2_model, s4_provider=None, s4_model=None):
+    return {
+        "system1": {"provider": s1_provider, "model": s1_model},
+        "system2": {"provider": s2_provider, "model": s2_model},
+        "system4": {"provider": s4_provider, "model": s4_model},
+    }
 
 
 @contextlib.contextmanager
@@ -62,6 +69,8 @@ def run(
     system1_model: str | None = S1_MODEL_OPTION,
     system2_provider: str | None = S2_PROVIDER_OPTION,
     system2_model: str | None = S2_MODEL_OPTION,
+    system4_provider: str | None = S4_PROVIDER_OPTION,
+    system4_model: str | None = S4_MODEL_OPTION,
     max_steps: int | None = typer.Option(
         -1, "--max-steps", help="Stop after N agent steps. Default -1 = no step limit; milestone/wipe/STOP still end play."
     ),
@@ -85,12 +94,14 @@ def run(
             resume=bool(resume),
             provider_override=provider,
             agents_config=agents_config,
-            agent_overrides=_agent_overrides(system1_provider, system1_model, system2_provider, system2_model),
+            agent_overrides=_agent_overrides(
+                system1_provider, system1_model, system2_provider, system2_model, system4_provider, system4_model
+            ),
             vision_only=vision_only,
         )
     cfg = loop.agents_cfg
     console.print(f"[cyan]Run directory:[/cyan] {loop.run_dir}")
-    for role in ("system1", "system2") if cfg["provider"] == "dual" else ("system2",):
+    for role in configured_roles(cfg):
         settings = cfg[role]
         console.print(f"[cyan]{role}:[/cyan] {settings['provider']} / {settings['model'] or 'vendor default'}")
     limit = "no step cap — configured milestone, wipe, or dashboard STOP ends play" if steps is None else f"{steps} agent steps"
@@ -124,6 +135,8 @@ def sandbox(
     system1_model: str | None = S1_MODEL_OPTION,
     system2_provider: str | None = S2_PROVIDER_OPTION,
     system2_model: str | None = S2_MODEL_OPTION,
+    system4_provider: str | None = S4_PROVIDER_OPTION,
+    system4_model: str | None = S4_MODEL_OPTION,
     rom: Path | None = ROM_OPTION,
 ) -> None:
     """Try the current code on a private emulator. The live run and its port are untouched."""
@@ -170,7 +183,9 @@ def sandbox(
             resume=bool(source),
             provider_override=provider,
             agents_config=agents_config,
-            agent_overrides=_agent_overrides(system1_provider, system1_model, system2_provider, system2_model),
+            agent_overrides=_agent_overrides(
+                system1_provider, system1_model, system2_provider, system2_model, system4_provider, system4_model
+            ),
             port=port,
             headless=True,
         )
@@ -195,6 +210,8 @@ def benchmark_command(
     system1_model: str | None = S1_MODEL_OPTION,
     system2_provider: str | None = S2_PROVIDER_OPTION,
     system2_model: str | None = S2_MODEL_OPTION,
+    system4_provider: str | None = S4_PROVIDER_OPTION,
+    system4_model: str | None = S4_MODEL_OPTION,
 ) -> None:
     """Verify fresh boots through Brock on private servers (real planner calls)."""
     from nuzlocke.orchestration.sandbox import benchmark
@@ -205,7 +222,9 @@ def benchmark_command(
         rom=rom,
         provider_override=provider,
         agents_config=agents_config,
-        agent_overrides=_agent_overrides(system1_provider, system1_model, system2_provider, system2_model),
+        agent_overrides=_agent_overrides(
+            system1_provider, system1_model, system2_provider, system2_model, system4_provider, system4_model
+        ),
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2))
@@ -225,6 +244,8 @@ def llm_doctor(
     system1_model: str | None = S1_MODEL_OPTION,
     system2_provider: str | None = S2_PROVIDER_OPTION,
     system2_model: str | None = S2_MODEL_OPTION,
+    system4_provider: str | None = S4_PROVIDER_OPTION,
+    system4_model: str | None = S4_MODEL_OPTION,
 ) -> None:
     from nuzlocke.config import load_agents_config
     from nuzlocke.llm.diagnostics import doctor
@@ -232,7 +253,8 @@ def llm_doctor(
 
     with _exit_on(ValueError, FileNotFoundError, RuntimeError):
         cfg = resolve_agents_config(
-            load_agents_config(agents_config), _agent_overrides(system1_provider, system1_model, system2_provider, system2_model)
+            load_agents_config(agents_config),
+            _agent_overrides(system1_provider, system1_model, system2_provider, system2_model, system4_provider, system4_model),
         )
         report = doctor(cfg)
     console.print_json(json.dumps(report))

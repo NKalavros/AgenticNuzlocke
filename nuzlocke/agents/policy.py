@@ -46,6 +46,19 @@ def decision(obs: PlayerObservation, *, first_encounter: bool = False) -> Policy
         return PolicyDecision(legal_sequences={"evolution": special.actions}, required="evolution")
     if "shop_actions" in obs.policy:
         return PolicyDecision(legal_sequences={"shop": [GameAction(a) for a in obs.policy["shop_actions"]]}, required="shop")
+    if "storage_actions" in obs.policy:
+        return PolicyDecision(
+            legal_sequences={"storage": [GameAction(a) for a in obs.policy["storage_actions"]]}, required="storage"
+        )
+    from nuzlocke.agents.inventory import teaching_actions
+
+    if (obs.policy.get("system4") or {}).get("teaching"):
+        try:
+            teaching = teaching_actions(obs)
+        except ValueError:
+            teaching = [GameAction.WAIT_60]
+        if teaching:
+            return PolicyDecision(legal_sequences={"teaching": teaching}, required="teaching")
     from nuzlocke.knowledge.objects import fossil_question, has_fossil
 
     if not obs.in_battle and fossil_question(obs.map_id, obs.screen_rows) and not has_fossil(obs):
@@ -59,7 +72,8 @@ def decision(obs: PlayerObservation, *, first_encounter: bool = False) -> Policy
     from nuzlocke.agents.gym_preparation import at_leader, needs_top_up
 
     stage = obs.policy.get("gym_preparation")
-    pending = stage and stage["phase"] != "challenge"
+    pending = bool(stage and stage["phase"] != "challenge")
+    pending |= bool(obs.policy.get("system4") and obs.policy["system4"]["phase"] != "ready")
     if at_leader(obs) and (needs_top_up(obs) or pending) and not obs.policy.get("preparing"):
         # Healing may require leaving this tile. Block the challenge, not the exit.
         return PolicyDecision(forbidden_actions=[GameAction.PRESS_A, GameAction.A_UNTIL_DIALOG_END])

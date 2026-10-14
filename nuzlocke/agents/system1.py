@@ -294,10 +294,13 @@ def _battle_turn(
                 return S1Turn([GameAction.PRESS_A, GameAction.WAIT_60], "battle text held; A", "page")
             return S1Turn([GameAction.SKIP_DIALOG], "battle text; skip_dialog", "page")
         return None
+    from nuzlocke.knowledge.walkthrough import story_battle
+
+    mandatory = story_battle(obs)
     trainer = (obs.battle or {}).get("type") == "trainer"
-    if screen.kind == "menu" and trainer and not battle_plan:
+    if screen.kind == "menu" and (trainer or mandatory) and not battle_plan:
         # A trainer battle cannot be fled and a faint is death: System 2 plans it once.
-        return _look("trainer battle")
+        return _look("mandatory story battle" if mandatory else "trainer battle")
     if screen.kind == "menu":
         questions = battle.menu_questions(obs, battle_plan)
     else:
@@ -334,7 +337,7 @@ def _battle_turn(
         if lead.get("hp", 0) / (lead.get("max_hp") or 1) < battle_plan.get("switch_below", 0):
             planned = "pkmn" if "pkmn" in criteria else None
     if planned in criteria:
-        return S1Turn(battle.actions_for(screen, planned), "execute System 2's conditional plan", "battle", choice=planned)
+        return S1Turn(battle.actions_for(screen, planned), "execute the conditional battle plan", "battle", choice=planned)
     state = {
         "battle": battle_facts(obs),
         "constraints": constraints,

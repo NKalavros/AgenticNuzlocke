@@ -1,0 +1,265 @@
+{
+  "source": "@smogon/calc 0.12.0, Gen 1, max DVs and zero effort; generated with check.cjs retained in private replay",
+  "cases": [
+    {
+      "attacker": "Drowzee",
+      "level": 43,
+      "defender": "Koffing",
+      "enemy_level": 37,
+      "move": 93,
+      "critical": false,
+      "status": "",
+      "expected": [
+        81,
+        96
+      ]
+    },
+    {
+      "attacker": "Drowzee",
+      "level": 43,
+      "defender": "Koffing",
+      "enemy_level": 37,
+      "move": 93,
+      "critical": false,
+      "status": "brn",
+      "expected": [
+        81,
+        96
+      ]
+    },
+    {
+      "attacker": "Drowzee",
+      "level": 43,
+      "defender": "Koffing",
+      "enemy_level": 37,
+      "move": 93,
+      "critical": true,
+      "status": "",
+      "expected": [
+        149,
+        176
+      ]
+    },
+    {
+      "attacker": "Drowzee",
+      "level": 43,
+      "defender": "Koffing",
+      "enemy_level": 37,
+      "move": 93,
+      "critical": true,
+      "status": "brn",
+      "expected": [
+        149,
+        176
+      ]
+    },
+    {
+      "attacker": "Weezing",
+      "level": 43,
+      "defender": "Hypno",
+      "enemy_level": 43,
+      "move": 120,
+      "critical": false,
+      "status": "",
+      "expected": [
+        103,
+        122
+      ]
+    },
+    {
+      "attacker": "Weezing",
+      "level": 43,
+      "defender": "Hypno",
+      "enemy_level": 43,
+      "move": 120,
+      "critical": false,
+      "status": "brn",
+      "expected": [
+        51,
+        61
+      ]
+    },
+    {
+      "attacker": "Weezing",
+      "level": 43,
+      "defender": "Hypno",
+      "enemy_level": 43,
+      "move": 120,
+      "critical": true,
+      "status": "",
+      "expected": [
+        195,
+        230
+      ]
+    },
+    {
+      "attacker": "Weezing",
+      "level": 43,
+      "defender": "Hypno",
+      "enemy_level": 43,
+      "move": 120,
+      "critical": true,
+      "status": "brn",
+      "expected": [
+        195,
+        230
+      ]
+    },
+    {
+      "attacker": "Pikachu",
+      "level": 43,
+      "defender": "Geodude",
+      "enemy_level": 43,
+      "move": 85,
+      "critical": false,
+      "status": "",
+      "expected": [
+        0,
+        0
+      ]
+    },
+    {
+      "attacker": "Pikachu",
+      "level": 43,
+      "defender": "Geodude",
+      "enemy_level": 43,
+      "move": 85,
+      "critical": false,
+      "status": "brn",
+      "expected": [
+        0,
+        0
+      ]
+    },
+    {
+      "attacker": "Pikachu",
+      "level": 43,
+      "defender": "Geodude",
+      "enemy_level": 43,
+      "move": 85,
+      "critical": true,
+      "status": "",
+      "expected": [
+        0,
+        0
+      ]
+    },
+    {
+      "attacker": "Pikachu",
+      "level": 43,
+      "defender": "Geodude",
+      "enemy_level": 43,
+      "move": 85,
+      "critical": true,
+      "status": "brn",
+      "expected": [
+        0,
+        0
+      ]
+    },
+    {
+      "attacker": "Charizard",
+      "level": 50,
+      "defender": "Parasect",
+      "enemy_level": 43,
+      "move": 53,
+      "critical": false,
+      "status": "",
+      "expected": [
+        268,
+        316
+      ]
+    },
+    {
+      "attacker": "Charizard",
+      "level": 50,
+      "defender": "Parasect",
+      "enemy_level": 43,
+      "move": 53,
+      "critical": false,
+      "status": "brn",
+      "expected": [
+        268,
+        316
+      ]
+    },
+    {
+      "attacker": "Charizard",
+      "level": 50,
+      "defender": "Parasect",
+      "enemy_level": 43,
+      "move": 53,
+      "critical": true,
+      "status": "",
+      "expected": [
+        503,
+        592
+      ]
+    },
+    {
+      "attacker": "Charizard",
+      "level": 50,
+      "defender": "Parasect",
+      "enemy_level": 43,
+      "move": 53,
+      "critical": true,
+      "status": "brn",
+      "expected": [
+        503,
+        592
+      ]
+    },
+    {
+      "attacker": "Machamp",
+      "level": 100,
+      "defender": "Chansey",
+      "enemy_level": 100,
+      "move": 66,
+      "critical": false,
+      "status": "",
+      "expected": [
+        1140,
+        1340
+      ]
+    },
+    {
+      "attacker": "Machamp",
+      "level": 100,
+      "defender": "Chansey",
+      "enemy_level": 100,
+      "move": 66,
+      "critical": false,
+      "status": "brn",
+      "expected": [
+        563,
+        662
+      ]
+    },
+    {
+      "attacker": "Machamp",
+      "level": 100,
+      "defender": "Chansey",
+      "enemy_level": 100,
+      "move": 66,
+      "critical": true,
+      "status": "",
+      "expected": [
+        2226,
+        2616
+      ]
+    },
+    {
+      "attacker": "Machamp",
+      "level": 100,
+      "defender": "Chansey",
+      "enemy_level": 100,
+      "move": 66,
+      "critical": true,
+      "status": "brn",
+      "expected": [
+        2226,
+        2616
+      ]
+    }
+  ]
+}

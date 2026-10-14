@@ -250,6 +250,8 @@ def _propose_action(llm, *, role, task, obs, vision_only=False, loop_streak=0, b
     payload = {"task": task.model_dump(mode="json"), **_obs_payload(obs, vision_only=vision_only)}
     if in_battle:
         payload["reminder"] = "ONE battle input only (optional wait_60 after)."
+        if obs.policy.get("team_plan"):
+            payload["system4"] = obs.policy["team_plan"]
         species = str(((obs.battle or {}).get("enemy") or {}).get("species") or "")
         if species and (matchup := battle_matchup(obs.party, species)):
             payload["type_matchup"] = matchup

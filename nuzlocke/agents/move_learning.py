@@ -189,7 +189,22 @@ class MoveLearner:
                 choices = legal_choices(mon, mid)
                 fallback = fallback_choice(mon, mid, choices)
                 choice = fallback
-                if decide:
+                planned = (obs.policy.get("team_plan") or {}).get("learn", {}).get(mon.get("capture_id"), {})
+                old = planned.get(str(mid), planned.get(mid))
+                if planned and old is None:
+                    protected = {int(v) for v in planned.values()}
+                    choices = {
+                        k: v
+                        for k, v in choices.items()
+                        if not k.startswith("replace_") or ids[int(k.split("_")[1])] not in protected
+                    }
+                    choice = fallback = fallback_choice(mon, mid, choices)
+                if old is not None:
+                    slot = next((i for i, move in enumerate(mon.get("moves", [])) if move.get("id") == old), None)
+                    choice = f"replace_{slot}"
+                    if choice not in choices:
+                        raise RuntimeError("System 4 replacement is unavailable or violates move preservation")
+                elif decide:
                     state = {
                         "scene": "move_learning",
                         "pokemon": {**mon, "moves": [facts(m) for m in mon.get("moves", [])]},

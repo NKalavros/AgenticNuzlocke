@@ -2,7 +2,7 @@
 
 These interfaces describe the implemented adapters. Verify model access with the installed vendor client.
 
-System 1 supports `jev`, `openai` (Responses API), `openai_compatible` (Chat Completions), and `codex` (subscription login). System 2 supports `codex`, `claude_code`, `antigravity`, `gemini_cli`, `cursor`, and `openai_compatible`. API and Codex actors require an explicit model; CLI planners accept `model: null` for the vendor default. Codex verifies image support through its model list. Compatible planners upload actual image content and require a vision-capable endpoint.
+System 1 supports `jev`, `openai` (Responses API), `openai_compatible` (Chat Completions), and `codex` (subscription login). Systems 2 and 4 support `codex`, `claude_code`, `antigravity`, `gemini_cli`, `cursor`, and `openai_compatible`. API and Codex actors require an explicit model; CLI planners accept `model: null` for the vendor default. Codex verifies image support through its model list. Compatible planners upload actual image content and require a vision-capable endpoint.
 
 ```yaml
 provider: dual
@@ -17,6 +17,8 @@ system2:
   params: {}              # Optional reasoning_effort for Codex or Claude
   timeout_s: 120
 ```
+
+System 4 is enabled by default and inherits the resolved System 2 settings. Configure `system4.provider`/`model` or `--system4-provider`/`--system4-model` independently; `system4.enabled: false` disables it. Its conversation and workspace are separate. It is invoked for team and battle strategy, not each navigation step. Provider or plan failures pause execution for inspection. See [System 4](system4.md).
 
 These overrides work for `run`, `sandbox`, `benchmark`, and `llm doctor`:
 

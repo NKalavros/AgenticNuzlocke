@@ -1,0 +1,27 @@
+[
+  {
+    "id": "tower_guardian",
+    "name": "Tower guardian",
+    "map": 147,
+    "positions": [
+      [
+        9,
+        16
+      ],
+      [
+        10,
+        16
+      ],
+      [
+        11,
+        16
+      ]
+    ],
+    "type": "wild",
+    "species": "Marowak",
+    "level": 30,
+    "required_item": 72,
+    "required_name": "SILPHSCOPE",
+    "notes": "Required uncapturable story battle: defeat the revealed guardian to reach 7F. Ordinary wild-grinding and duplicates escape rules do not apply; preserve survival, death and level-cap rules."
+  }
+]

@@ -25,7 +25,7 @@ def item_objective(loop, obs, beat):
     obs.policy["item_pickup"] = None
     if obs.in_battle or obs.cutscene or obs.x is None or obs.y is None or not obs.party or needs_heal(obs):
         return None
-    if beat and beat.id.startswith(("heal", "box_dead", "prepare", "buy_balls")):
+    if beat and beat.id.startswith(("heal", "box_dead", "prepare", "buy_balls", "bag_space")):
         return None
     if find_boxes(obs.screen_rows):
         return None

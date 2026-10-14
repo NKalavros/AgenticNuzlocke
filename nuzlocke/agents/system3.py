@@ -123,8 +123,12 @@ def heal_beat(obs: PlayerObservation) -> Beat | None:
 
 def current_beat(obs: PlayerObservation) -> Beat | None:
     """Healing outranks the story."""
+    from nuzlocke.agents.system4 import team_beat
+
+    if obs.policy.get("system4") and team_beat(obs):
+        return heal_beat(obs) or team_beat(obs)
     if any(m.get("dead") for m in obs.party) and not obs.in_battle:
-        if obs.map_id in POKECENTERS:
+        if obs.map_id in HEALING_CENTERS:
             return Beat(
                 "box_dead",
                 "Deposit permanently dead Pokémon in storage.",
@@ -134,9 +138,10 @@ def current_beat(obs: PlayerObservation) -> Beat | None:
         # Route to a Center even if the surviving party is healthy.
         hurt = obs.model_copy(update={"party": [{**m, "hp": 1} for m in obs.party if not m.get("dead")]})
         return heal_beat(hurt)
+    from nuzlocke.agents.bag_space import space_beat
     from nuzlocke.agents.gym_preparation import gym_beat
 
-    return heal_beat(obs) or supply_beat(obs) or gym_beat(obs) or beats.current_beat(obs)
+    return heal_beat(obs) or space_beat(obs) or supply_beat(obs) or gym_beat(obs) or beats.current_beat(obs)
 
 
 def supply_beat(obs: PlayerObservation) -> Beat | None:
@@ -158,12 +163,17 @@ def supply_beat(obs: PlayerObservation) -> Beat | None:
 
 
 def objective_window(obs: PlayerObservation) -> dict[str, str] | None:
+    from nuzlocke.agents.bag_space import space_beat
     from nuzlocke.agents.gym_preparation import gym_beat
+    from nuzlocke.agents.system4 import team_beat
 
-    heal = heal_beat(obs) or supply_beat(obs) or gym_beat(obs)
+    heal = heal_beat(obs) or team_beat(obs) or space_beat(obs) or supply_beat(obs) or gym_beat(obs)
     story = beats.objective_window(obs)
     if heal is None:
         return story
+    job = obs.policy.get("system4")
+    if job and job["phase"] != "ready":
+        return {"primary": heal.text, "secondary": f"Complete team preparation for {job['name']}; then resume progression."}
     state = obs.policy.get("gym_preparation")
     if state:
         remaining = [heal.text]
@@ -187,6 +197,9 @@ def forced_battle_choice(obs: PlayerObservation, first_encounter: bool = False) 
     - ITEM (a Poké Ball) at the area's first encounter: the Nuzlocke catch rule. No other item
       is ever used.
     """
+    from nuzlocke.knowledge.walkthrough import story_battle
+
+    mandatory = story_battle(obs)
     fraction = lead_fraction(obs)
     wild = (obs.battle or {}).get("type") == "wild"
     from nuzlocke.agents.battle import active_mon
@@ -197,15 +210,15 @@ def forced_battle_choice(obs: PlayerObservation, first_encounter: bool = False) 
         if any(i != (obs.active_party_slot or 0) and eligible(m) for i, m in enumerate(obs.party)):
             return "pkmn"
         return "run" if wild else None
-    if wild and obs.policy.get("duplicate_encounter"):
+    if wild and not mandatory and obs.policy.get("duplicate_encounter"):
         return "run"
-    if wild and obs.policy.get("avoid_wild_grinding") and not first_encounter:
+    if wild and not mandatory and obs.policy.get("avoid_wild_grinding") and not first_encounter:
         return "run"
     if wild and fraction is not None and fraction < RUN_BELOW:
-        if first_encounter and has_balls(obs) and switch_target(obs, first_encounter=True) is not None:
+        if (mandatory or (first_encounter and has_balls(obs))) and switch_target(obs, first_encounter=first_encounter) is not None:
             return "pkmn"
         return "run"
-    if wild and first_encounter and has_balls(obs):
+    if wild and not mandatory and first_encounter and has_balls(obs):
         return "item"
     if switch_target(obs) is not None:
         return "pkmn"
@@ -214,7 +227,16 @@ def forced_battle_choice(obs: PlayerObservation, first_encounter: bool = False) 
 
 def constraints(obs: PlayerObservation, cap: int | None, dead: list[str]) -> list[str]:
     """What System 1 and 2 must obey and know: the rules, the cap, the next boss, trainers here."""
+    from nuzlocke.knowledge.walkthrough import story_battle
+
     lines = [data("rule_briefing.json")]
+    lines.append(
+        "Observed complete bag (including off-screen items): "
+        + str(obs.bag)
+        + ". Use these quantities as evidence; do not open PACK just to verify ownership. Close inspection menus and continue the objective."
+    )
+    if encounter := story_battle(obs):
+        lines.append(encounter["notes"])
     from nuzlocke.agents.gym_preparation import party_ready
 
     if obs.map_id in HEALING_CENTERS and party_ready(obs):

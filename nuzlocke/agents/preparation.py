@@ -54,7 +54,7 @@ def preparation_turn(loop, obs):
     # Fixed menus with no strategic choice should never consume an LLM call.
     beat = current_beat(obs)
     nurse_prompt = obs.map_id in HEALING_CENTERS and (obs.x, obs.y) == (3, 3)
-    if beat and beat.id == "heal_nurse" and nurse_prompt and cursor is not None:
+    if beat and beat.id in {"heal_nurse", "heal_team"} and nurse_prompt and cursor is not None:
         choice = rows.index("HEAL") if "HEAL" in rows else 0 if rows == ["YES", "NO"] else None
         if choice is not None:
             preparation = getattr(loop, "gym_preparation", None)
@@ -62,33 +62,29 @@ def preparation_turn(loop, obs):
                 preparation.pending["accepted"] = True
             return menu_actions(f"choose_{choice}", cursor), "accept healing"
     dead = [m for m in obs.party if m.get("dead")]
-    if dead and obs.map_id in {41, 58, 64, 68}:
-        if rows and cursor is not None:
-            for label in ("SOMEONE", "BILL", "DEPOSIT"):
-                index = next((i for i, row in enumerate(rows) if label in row), None)
-                if index is not None:
-                    if rows[index] == "DEPOSIT":
-                        loop._closing_preparation = True
-                    return menu_actions(f"choose_{index}", cursor), "open storage for dead Pokémon"
-            for mon in dead:
-                index = next(
-                    (i for i, row in enumerate(rows) if str(mon.get("nickname") or mon.get("species")).upper() in row), None
-                )
-                if index is not None:
-                    return menu_actions(f"choose_{index}", cursor), "deposit permanently dead Pokémon"
-            return [A.PRESS_B], "close unrelated menu before using storage"
-        if "DEPOSIT" in text and "POK" in text and obs.menu_index is not None:
-            slot = next(i for i, m in enumerate(obs.party) if m.get("dead"))
-            return menu_actions(f"choose_{slot}", obs.menu_index), "select dead Pokémon for deposit"
+    storage = getattr(loop, "storage", None)
+    if (
+        (dead or storage and (storage.pending or storage.closing))
+        and obs.map_id in HEALING_CENTERS
+        and not obs.policy.get("system4")
+    ):
+        if storage is not None and (obs.x, obs.y) == (13, 4):
+            return storage.turn(obs, [m["capture_id"] for m in obs.party if not m.get("dead")], loop.store.append)
         return [], ""
     from nuzlocke.agents.gym_preparation import at_leader
 
     stage = obs.policy.get("gym_preparation")
+    team = obs.policy.get("system4")
+    team_levels = team and team["phase"] == "levels" and obs.map_id in HEALING_CENTERS
+    if team and not team_levels:
+        return [], ""
     if stage and stage["phase"] == "heal":
         return [], ""
     gym_top_up = at_leader(obs) and not stage
     gym_center = stage and stage["phase"] == "prepare" and obs.map_id == stage["center"]
-    if (obs.map_id not in {40, 41, 58, 64, 68} and not gym_top_up and not gym_center) or any(m.get("dead") for m in obs.party):
+    if (obs.map_id not in {40, 41, 58, 64, 68} and not gym_top_up and not gym_center and not team_levels) or any(
+        m.get("dead") for m in obs.party
+    ):
         return [], ""
     if obs.map_id == 40 and (len(obs.party) != 1 or obs.party[0].get("species") != "Bulbasaur"):
         return [], ""
@@ -109,9 +105,16 @@ def preparation_turn(loop, obs):
         target = loop.referee.current_cap
     if gym_center:
         target = min(stage["cap"], loop.referee.current_cap)
+    targets = (obs.policy.get("team_plan") or {}).get("levels", {}) if team_levels else {}
+    if targets:
+        target = max(targets.values())
     if loop._preparing_target:
         target = loop._preparing_target
-    candidates = [(i, m) for i, m in enumerate(obs.party) if (m.get("level") or target) < target]
+    candidates = [
+        (i, m)
+        for i, m in enumerate(obs.party)
+        if (m.get("level") or target) < targets.get(m.get("capture_id"), m["level"] if targets else target)
+    ]
     if not candidates:
         if loop._preparing_target:
             loop._preparing_target = None
@@ -119,6 +122,9 @@ def preparation_turn(loop, obs):
             return [A.PRESS_B], "preparation complete; close menu"
         return [], ""
     healthy = all(m.get("hp") == m.get("max_hp") and m.get("status", "OK") == "OK" for m in obs.party)
+    request = {"target": target}
+    if targets:
+        request["targets"] = [targets.get(m.get("capture_id"), m["level"]) for m in obs.party]
     if not loop._preparing_target:
         if not healthy or screen.text_lines or rows:
             return [], ""
@@ -126,7 +132,7 @@ def preparation_turn(loop, obs):
             if gym_top_up:
                 raise RuntimeError("Gym leader requires party at the cap; enable Rare Candy preparation")
             return [], ""
-        result = loop.env._post_json("/nuzlocke/prepare", {"target": target})
+        result = loop.env._post_json("/nuzlocke/prepare", request)
         loop.store.append("candy_grant", result)
         loop._preparing_target = target
         loop._preparation_wait_cycles = 0
@@ -140,6 +146,9 @@ def preparation_turn(loop, obs):
     bag_actions = candy_bag_actions(obs)
     if bag_actions is not None:
         if bag_actions == [A.WAIT_60]:
+            if team_levels and healthy:
+                loop.store.append("candy_grant", loop.env._post_json("/nuzlocke/prepare", request))
+                return [A.WAIT_60], "refill the remaining audited candy deficit"
             raise RuntimeError("Audited Rare Candies are missing from the bag before preparation finished")
         return bag_actions, "scroll bag to audited Rare Candy" if bag_actions != [A.PRESS_A] else "select audited Rare Candy"
     if cursor is not None and rows:

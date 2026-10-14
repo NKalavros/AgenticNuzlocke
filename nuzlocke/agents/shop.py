@@ -11,7 +11,7 @@ BALLS = {2: ("Ultra Ball", 1200), 3: ("Great Ball", 600), 4: ("Poke Ball", 200)}
 
 
 def normalize(text):
-    return re.sub(r"[^A-Z0-9]", "", text.upper().replace("É", "E"))
+    return re.sub(r"[^A-Z0-9]", "", text.upper().replace("É", "E")).replace("ELIXER", "ELIXIR")
 
 
 def ball_count(obs, item=None):
@@ -104,16 +104,24 @@ class ShopController:
         self.pending = None
         self.cycles = 0
         self.error = None
+        self.space = {"active": False, "pending": None}
 
     def snapshot(self):
-        return {"pending": self.pending, "cycles": self.cycles, "error": self.error}
+        return {"pending": self.pending, "cycles": self.cycles, "error": self.error, "space": self.space}
 
     def restore(self, data):
         self.pending = (data or {}).get("pending")
         self.cycles = (data or {}).get("cycles", 0)
         self.error = (data or {}).get("error")
+        self.space = (data or {}).get("space") or {"active": False, "pending": None}
 
     def observe(self, obs, record):
+        from nuzlocke.agents.bag_space import observe_space
+
+        was_active = self.space.get("active")
+        observe_space(self.space, obs, record)
+        if was_active != self.space.get("active"):
+            self.cycles = 0
         if not self.pending:
             return
         p = self.pending
@@ -123,14 +131,23 @@ class ShopController:
             record("shop_purchase_verified", {**p, "balls_after": ball_count(obs), "money_after": obs.money})
             self.pending = None
             self.cycles = 0
+        elif self.space.get("active") and added == spent == 0:
+            record("shop_purchase_blocked_capacity", dict(p))
+            self.pending = None
+            self.cycles = 0
         elif added not in {0, p["quantity"]} or spent not in {0, p["quantity"] * p["price"]}:
             raise RuntimeError("Mart bag/money change differs from the authorized purchase")
+
+    def choice(self, obs):
+        from nuzlocke.agents.bag_space import space_choice
+
+        return space_choice(self.space, obs) if self.space.get("active") else shop_choice(obs, self.pending)
 
     def actions(self, obs):
         if self.error:
             return [A.WAIT_60]
         try:
-            choice = shop_choice(obs, self.pending)
+            choice = self.choice(obs)
         except RuntimeError:
             # turn() reports the error and pauses. Permit the pause's released wait
             # through final policy instead of crashing while trying to preserve state.
@@ -141,7 +158,7 @@ class ShopController:
         if self.error:
             raise RuntimeError(self.error)
         self.observe(obs, record)
-        choice = shop_choice(obs, self.pending)
+        choice = self.choice(obs)
         if choice is None:
             if self.pending:
                 raise RuntimeError("Mart purchase ended without matching bag and money changes")
@@ -151,6 +168,21 @@ class ShopController:
         if self.cycles > 60:
             raise RuntimeError("Mart transaction did not progress after 60 cycles; paused for inspection")
         phase, actions = choice
+        if self.space.get("active"):
+            item = self.space.get("pending")
+            if phase == "select sale item" and actions == [A.PRESS_A] and item is None:
+                from nuzlocke.agents.bag_space import sale_item
+
+                self.space["pending"] = {
+                    **sale_item(obs),
+                    "money": obs.money,
+                    "bag": {str(i["id"]): i["quantity"] for i in obs.bag},
+                }
+                record("bag_sale_requested", dict(self.space["pending"]))
+            if phase == "confirm sale":
+                offer = re.search(r"¥\s*(\d+)", " ".join(parse_screen(obs.screen_rows).text_lines))
+                self.space["pending"]["offer"] = int(offer[1])
+            return actions, f"Bag space: {phase}"
         if phase == "cancel quantity":
             self.pending = None
         if phase == "quantity" and actions == [A.PRESS_A] and not self.pending:

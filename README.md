@@ -107,7 +107,7 @@ Healing still has priority.
 
 ## Select models
 
-Set `system1` and `system2` in [config/agents.yaml](config/agents.yaml).
+Set `system1`, `system2`, and `system4` in [config/agents.yaml](config/agents.yaml).
 You can also use command options.
 This example uses Codex login for both systems:
 
@@ -116,6 +116,10 @@ uv run nuzlocke run --rom /path/to/game.gb \
   --system1-provider codex --system1-model gpt-6-luna \
   --system2-provider codex --system2-model gpt-6.1-sol
 ```
+
+System 4 uses the System 2 provider and model unless you set different values.
+Use `--system4-provider codex --system4-model gpt-6.1-sol` to set it separately.
+Set `system4.enabled: false` to disable team planning.
 
 Use model names available to your account.
 Model changes take effect when a new process starts.
@@ -160,6 +164,7 @@ See [run operations](docs/operations.md) for saved-state selection and test repo
 | System 1 | Selects legal actions and operates paths, menus, and battles. |
 | System 2 | Reads screenshots and sets objectives and trainer battle plans. |
 | System 3 | Applies encounter, death, healing, and level-cap rules. |
+| System 4 | Selects the team and battle plan after a death or before a major challenge. |
 | Action Arbiter | Checks each proposed action against a fresh observation. |
 
 The emulator advances only when it receives actions.
@@ -175,12 +180,22 @@ It must check the required move and permission, then check the result.
 The controller records Rare Candy grants and use during preparation.
 When the next task is a gym leader challenge, the controller adds a healing objective.
 It keeps this objective until the nurse restores HP, status, and move PP.
-It then uses recorded Rare Candies to prepare the living party at the current level cap.
+System 4 can select living Pokémon from the party and storage.
+It checks the required field moves before it changes the team.
+The controller uses the PC menus and verifies each transfer.
+It then uses recorded Rare Candies to reach the planned levels, within the cap.
+System 4 can also request move changes and select the lead Pokémon.
+It checks the completed preparation before the party returns to the challenge.
+Damage estimates use reference data. They cannot guarantee survival.
+See [team planning](docs/system4.md) for supported operations and limits.
 For Lt. Surge, this cap is 24.
 The agent returns to the gym after preparation.
 These preparation steps cover Brock, Misty, Lt. Surge, Erika, and Koga.
 For Koga, the level cap is 43.
 A recorded death remains permanent after healing or evolution.
+
+The program checks each saved file before it continues.
+This check does not scan the full save history.
 
 Navigation uses observed terrain and reference maps.
 Observed movement has priority over reference maps.
@@ -189,12 +204,22 @@ If the terrain changes, old movement data cannot keep the path open.
 A return to a map also cancels old movement data for that map.
 The program keeps its exploration history.
 A partial path does not trigger the destination's interaction.
+If a known area has no exit path, System 1 asks System 2 for instructions.
+It does not search known floor again to find an exit.
 The agent can use route points to reach an obstacle and interact with it.
 The main objective stays the same.
 Walkthrough fragments supply guidance for the current stage.
 Before Lt. Surge, the agent must use CUT and enter the gym.
 A learned move does not confirm that the path is open.
 After Erika, the agent obtains the Silph Scope and the Poké Flute.
+The objectives show the guardian battle, Fuji rescue, and Flute collection as separate steps.
+The models receive the full bag list, including items outside the visible menu.
+A required story battle can bypass the rule to escape from ordinary wild battles.
+The program still checks survival, deaths, and the level cap.
+If the bag is full, System 2 makes room before it continues.
+The Mart helper sells approved surplus until two slots are free.
+It checks each sale and then resumes purchases and progress.
+It keeps keys, fossils, TMs, HMs, balls, and Rare Candies.
 It then follows the land route to Fuchsia and Koga.
 Observed items and location select the next objective.
 The Soul Badge confirms completion of Koga's gym.

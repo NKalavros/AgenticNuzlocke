@@ -19,9 +19,9 @@ def _api(options: dict):
     return cls(**{key: options[key] for key in keys.split()})
 
 
-def create_provider(agents_cfg: dict[str, Any], workspace: Path, *, on_stream=None) -> LLMProvider:
+def create_provider(agents_cfg: dict[str, Any], workspace: Path, *, on_stream=None, role="system2") -> LLMProvider:
     cfg = resolve_agents_config(agents_cfg)
-    options = cfg["system2"]
+    options = cfg[role]
     name = options["provider"]
     if name == "cursor":
         from nuzlocke.llm.cursor_provider import CursorProvider
@@ -30,7 +30,7 @@ def create_provider(agents_cfg: dict[str, Any], workspace: Path, *, on_stream=No
             model=options["model"],
             model_params=options["params"],
             api_key=os.environ.get(options["api_key_env"]),
-            workspace=Path(options["workspace"]) if options["workspace"] else workspace,
+            workspace=Path(options["workspace"]) if options["workspace"] and role == "system2" else workspace,
             on_stream=on_stream,
             max_retries=options["max_retries"],
             compact_at_tokens=options["compact_at_tokens"],

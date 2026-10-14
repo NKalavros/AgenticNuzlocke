@@ -33,6 +33,7 @@
   team: [[Geodude, 12], [Onix, 14]]
   avoidable: false
   note: "Rock/Ground. Water, Grass, Fighting, Ground are strong; Fire, Normal, Flying are weak against them. Onix may use BIDE: the damage it takes over the next two or three turns comes back doubled, so a status move or a switch during it is safer than a big hit."
+  reference_moves: [[33, 111], [33, 103, 117]]
 
 - map_id: 14
   map: Route 3
@@ -78,9 +79,11 @@
 - map_id: 3
   map: Cerulean City
   trainer: Rival
-  team: [[Pidgeotto, 18], [Abra, 15], [Rattata, 15], [Squirtle, 17]]
+  team: [[Pidgeotto, 18], [Abra, 15], [Rattata, 15], [Charmander, 17]]
   avoidable: false
-  note: "His starter is the one strong against yours (Squirtle if you took Charmander)."
+  note: "Bulbasaur starter branch used by this controller. Other starter choices change his starter; observed enemies override this prior."
+  reference_moves: [[16, 28, 98], [100], [33, 39, 98, 158], [10, 45, 52, 43]]
+
 - map_id: 65
   map: Cerulean Gym
   trainer: Misty
@@ -88,6 +91,7 @@
   team: [[Staryu, 18], [Starmie, 21]]
   avoidable: false
   note: "Water/Psychic. Grass and Electric are strong. Starmie is fast and uses BUBBLEBEAM."
+  reference_moves: [[33, 55], [33, 55, 61]]
 
 - map_id: 96
   map: S.S. Anne 2F
@@ -95,6 +99,8 @@
   team: [[Pidgeotto, 19], [Raticate, 16], [Kadabra, 18], [Charmeleon, 20]]
   avoidable: false
   note: "Captain corridor. Other starter choices change his starter; observed enemy data overrides this vanilla prior. Heal before approaching."
+  reference_moves: [[16, 28, 98], [33, 39, 98, 158], [100, 93, 50], [10, 45, 52, 43]]
+
 - map_id: 92
   map: Vermilion Gym
   trainer: Gentleman
@@ -117,6 +123,8 @@
   team: [[Voltorb, 21], [Pikachu, 18], [Raichu, 24]]
   avoidable: false
   note: "Electric damage threatens Flying/Water members. Ground is immune to Electric damage, but check the actual moves, HP and legal roster. No battle healing items."
+  reference_moves: [[33, 103, 49], [84, 45, 86, 98], [84, 45, 85]]
+
 - map_id: 134
   map: Celadon Gym
   trainer: Erika
@@ -124,6 +132,7 @@
   team: [[Victreebel, 29], [Tangela, 24], [Vileplume, 29]]
   avoidable: false
   note: "Grass with Poison on Victreebel/Vileplume. Consider legal healthy Flying/Fire/Psychic attackers; account for status and trapping, and trust live enemy data. No battle healing items."
+  reference_moves: [[75, 35, 77, 79], [132, 20], [80, 77, 72, 79]]
 
 - map_id: 202
   map: Rocket Hideout B4F
@@ -131,6 +140,8 @@
   team: [[Onix, 25], [Rhyhorn, 24], [Kangaskhan, 29]]
   avoidable: false
   note: "Silph Scope story battle, not Viridian Gym. Healthy Grass/Water attacks help against Rock/Ground; plan separately for Kangaskhan. Trust actual enemy data."
+  reference_moves: [[103, 20, 88, 99], [30], [4, 99, 44]]
+
 - map_id: 157
   map: Fuchsia Gym
   trainer: Koga
@@ -138,3 +149,4 @@
   team: [[Koffing, 37], [Muk, 39], [Koffing, 37], [Weezing, 43]]
   avoidable: false
   note: "Poison. Consider actual legal Psychic/Ground attacks; there are no abilities in Gen I. Plan for Toxic, accuracy loss and self-destructing foes; no battle healing items. Gym juniors can carry Psychic types. Trust live enemy data."
+  reference_moves: [[33, 123, 124, 108], [50, 139, 107, 124], [33, 123, 124, 108], [123, 124, 92, 120]]

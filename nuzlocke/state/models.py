@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class GameMode(str, Enum):
@@ -15,18 +15,19 @@ class GameMode(str, Enum):
     BOX = "box"
     MENU = "menu"
     RECOVERY = "recovery"
+
     WIPED = "wiped"
     PAUSED = "paused"
 
 
 class AgentRole(str, Enum):
-    """Task owners. Encounters, boxes and the team are referee bookkeeping (NuzlockeReferee,
-    LedgerTracker) and prompt playbooks, not agent roles."""
+    """Model roles; the referee and ledger retain ownership of permanent outcomes."""
 
     DIRECTOR = "director"
     OVERWORLD = "overworld"
     BATTLE = "battle"
     RECOVERY = "recovery"
+    STRATEGIST = "strategist"
 
 
 class ControlState(str, Enum):
@@ -136,6 +137,8 @@ class BattleMoveRule(BaseModel):
 class BattlePlan(BaseModel):
     """Conditional trainer strategy, with an opening consumed only on observed PP use."""
 
+    model_config = ConfigDict(extra="forbid")
+
     moves: list[str] = Field(default_factory=list)
     opening_moves: list[str] = Field(default_factory=list)
     move_rules: list[BattleMoveRule] = Field(default_factory=list)
@@ -143,6 +146,28 @@ class BattlePlan(BaseModel):
     switch_to: str | None = None
     switch_below: float = Field(default=0.3, ge=0, le=1)
     notes: str = ""
+
+
+class BattleLine(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enemy: str = Field(min_length=1)
+    active: str = Field(min_length=1)
+    hp_below: float = Field(default=1.01, gt=0, le=1.01)
+    enemy_status: list[Literal["OK", "SLP", "PSN", "BRN", "FRZ", "PAR", "UNKNOWN"]] = Field(default_factory=list)
+    switch_min_hp: float = Field(default=0.5, ge=0, le=1)
+    strategy: BattlePlan
+
+
+class TeamPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    party: list[str] = Field(min_length=1, max_length=6)
+    lead: str
+    levels: dict[str, int] = Field(default_factory=dict)
+    # capture ID -> {new move ID: replaced move ID, or 0 for an empty slot}.
+    learn: dict[str, dict[int, int]] = Field(default_factory=dict)
+    lines: list[BattleLine] = Field(min_length=1)
+    reasoning: str = Field(min_length=1)
+    uncertainties: list[str] = Field(default_factory=list)
 
 
 class PlanCard(BaseModel):
@@ -219,6 +244,7 @@ class PlayerObservation(BaseModel):
     in_battle: bool = False
     battle: dict[str, Any] | None = None
     party: list[dict[str, Any]] = Field(default_factory=list)
+    storage: dict[str, Any] | None = None
     bag: list[dict[str, Any]] = Field(default_factory=list)
     badges: list[str] = Field(default_factory=list)
     money: int | None = None

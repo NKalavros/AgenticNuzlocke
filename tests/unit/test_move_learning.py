@@ -50,8 +50,7 @@ def mon():
         "nickname": "BUTTERFREE",
         "capture_id": "capture-4",
         "moves": [
-            {"id": i, "name": n, "pp": 10}
-            for i, n in [(33, "Tackle"), (81, "String Shot"), (106, "Harden"), (93, "Confusion")]
+            {"id": i, "name": n, "pp": 10} for i, n in [(33, "Tackle"), (81, "String Shot"), (106, "Harden"), (93, "Confusion")]
         ],
     }
 
@@ -175,3 +174,18 @@ def test_failed_jev_call_can_retry_from_checkpoint():
     resumed.restore(json.loads(json.dumps(learner.snapshot())))
     assert resumed.turn(obs())[0] == [A.PRESS_A]
     assert resumed.pending["choice"] == "replace_2"
+
+
+def test_team_plan_keeps_future_replacement_available_for_its_planned_move():
+    state = obs()
+    state.policy["team_plan"] = {"learn": {"capture-4": {"79": 106}}}
+    learner = MoveLearner()
+    offered = []
+
+    def choose(**kw):
+        offered.append(kw["allowed"])
+        return SimpleNamespace(action="keep", confidence=1, probabilities={"keep": 1}, latency_s=0)
+
+    learner.turn(state, decide=choose)
+    assert "replace_2" not in offered[0]  # Harden is reserved for the planned Sleep Powder.
+    assert "replace_1" in offered[0]

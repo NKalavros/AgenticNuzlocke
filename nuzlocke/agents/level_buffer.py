@@ -62,6 +62,8 @@ def switch_target(obs, *, first_encounter=None):
         and has_balls(obs)
         and mon.get("hp", 0) / (mon.get("max_hp") or 1) < RUN_BELOW
     )
+    if obs.policy.get("strategic_battle") and not capture_rescue:
+        return None
     if not capture_rescue and not reserved(obs, mon) and eligible(mon):
         return None
     choices = alternatives(obs, active_slot=slot)
@@ -88,6 +90,9 @@ def switch_order(obs, desired=""):
         choices,
         key=lambda pair: (
             pair[0] != target if target is not None else False,
+            not any(str(pair[1].get(k, "")).upper() == desired.upper() for k in ("species", "nickname", "capture_id"))
+            if obs.policy.get("strategic_battle")
+            else False,
             pair[0] not in safe if safe else False,
             not any(str(pair[1].get(k, "")).upper() == desired.upper() for k in ("species", "nickname", "capture_id")),
             -(pair[1].get("hp", 0) / (pair[1].get("max_hp") or 1)),

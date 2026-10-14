@@ -349,7 +349,7 @@ def test_a_trainer_battle_asks_system_2_for_a_plan_once():
     assert system1_turn(obs=_obs(MENU), **args).trigger == "trainer battle"
     args, calls = _turn_args(battle_plan={"moves": ["SCRATCH", "GROWL"], "switch_below": 0.0})
     system1_turn(obs=_obs(MENU), **args)
-    assert "System 2's plan: SCRATCH" in calls[0]["action"]["criteria"]["fight"]
+    assert "Battle plan: SCRATCH" in calls[0]["action"]["criteria"]["fight"]
     moves = battle.move_questions(_obs(MOVES), ("SCRATCH", "GROWL"), {}, {"moves": ["GROWL"]})
     assert "move_1" not in moves["action"]["criteria"]
 

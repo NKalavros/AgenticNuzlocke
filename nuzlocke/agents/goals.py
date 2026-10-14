@@ -655,26 +655,33 @@ def _edge_goal(obs: PlayerObservation, side: str, routes: Routes) -> Goal:
         return {"up": tile[1], "down": height - 1 - tile[1], "left": tile[0], "right": width - 1 - tile[0]}[side]
 
     boundary = [t for t in routes.paths if width and height and distance(t) == 0 and (t[0], t[1], side) not in routes.blocked_edges]
+    path, partial, extra = None, None, []
     if guided:
         end = (obs.x + sum(step_delta(d)[0] for d in guided), obs.y + sum(step_delta(d)[1] for d in guided))
-        path, extra = guided, [side] if list(end) in connection["tiles"] else []
+        if list(end) in connection["tiles"]:
+            path, extra = guided, [side]
+        else:
+            partial = guided
     elif boundary:
         end = min(boundary, key=lambda t: len(routes.paths[t]))
         path, extra = routes.paths[end], [side]
-    elif width and height:
-        # A dead-end pocket can be closer to the boundary than the actual exit.
-        # Search new frontier tiles instead of returning to that visited pocket
-        # after every perpendicular detour (the old wider-side rule oscillated).
-        fresh = [t for t in routes.paths if t != routes.start and t not in routes.seen]
-        frontier = [t for t in fresh if routes._borders_unknown(t)]
-        pool = frontier or fresh
-        end = min(pool, key=lambda t: (distance(t), len(routes.paths[t]))) if pool else None
-        path, extra = routes.paths[end] if end is not None else None, []
     else:
-        path, extra = routes.furthest(side), [side]
-        if path is None:
-            path, extra = routes.slide(side, _wider(obs, side)), []
-    return _goal(
+        # Only explore where movement can reveal geometry, not every unvisited floor tile.
+        frontier = [t for t in routes.paths if t != routes.start and routes._borders_unknown(t)]
+        if frontier:
+            end = min(frontier, key=lambda t: (t in routes.seen, distance(t), len(routes.paths[t])))
+            partial = routes.paths[end]
+    # With no approach, probe one adjacent unknown tile. Known floor cannot bypass a blocked exit.
+    probe = None
+    if path is None and not partial:
+        for direction in (side, *[d for d in DIRS if d != side]):
+            dx, dy = DIRS[direction]
+            tile = (obs.x + dx, obs.y + dy)
+            inside = not (width and height) or (0 <= tile[0] < width and 0 <= tile[1] < height)
+            if inside and tile not in routes.walkable and routes.step(direction):
+                probe = direction
+                break
+    goal = _goal(
         f"edge_{side}",
         "edge",
         (
@@ -684,19 +691,13 @@ def _edge_goal(obs: PlayerObservation, side: str, routes: Routes) -> Goal:
         ),
         path,
         extra=extra,
-        fallback=routes.step(side),
+        partial=partial,
+        fallback=probe,
         distance=_edge_distance(obs, side),
         more=[f"Known exit tiles: {connection['tiles']} (vanilla map reference)"] if connection else None,
     )
-
-
-def _wider(obs: PlayerObservation, side: str) -> str:
-    """The perpendicular direction with more map left in it."""
-    width = (obs.map_size or {}).get("w", 0)
-    height = (obs.map_size or {}).get("h", 0)
-    if side in ("up", "down"):
-        return "right" if obs.x < width / 2 else "left"
-    return "down" if obs.y < height / 2 else "up"
+    goal.complete = path is not None
+    return goal
 
 
 def _edge_distance(obs: PlayerObservation, side: str) -> int:

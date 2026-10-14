@@ -22,7 +22,7 @@ uv run nuzlocke llm doctor
 uv run nuzlocke --help
 ```
 
-`config/agents.yaml` selects independent `system1` and `system2` providers. The default pair is Jev and Codex. Sol 6.1/Luna is an explicit override, not the checked-in default. Use `--system1-provider codex --system1-model gpt-6-luna --system2-provider codex --system2-model gpt-6.1-sol` when requested. See [providers](docs/providers.md) for authentication, supported combinations, and endpoint contracts. Credentials stay with vendor clients; API providers use separate keys. No silent fallback to another provider or billing method.
+`config/agents.yaml` selects independent `system1`, `system2`, and `system4` providers. The default pair is Jev and Codex; System 4 inherits System 2 settings unless explicitly configured and uses a separate context. Sol 6.1/Luna is an explicit override, not the checked-in default. Use `--system1-provider codex --system1-model gpt-6-luna --system2-provider codex --system2-model gpt-6.1-sol` when requested. See [providers](docs/providers.md) for authentication, supported combinations, and endpoint contracts. Credentials stay with vendor clients; API providers use separate keys. No silent fallback to another provider or billing method.
 
 `config/run.yaml` controls ROM, port, timing, preparation, and `stop_after`; the default stop is `misty`. `config/rules_red.yaml` defines hashed rules and caps. Environment overrides are in `nuzlocke/config.py`. `.env` does not replace existing environment values. Leave `NUZLOCKE_RELAY` unset on an open network.
 
@@ -32,15 +32,19 @@ Use the printed Route monitor URL; port 8766 is only the configured default. `/n
 
 Order: settle → atomic observation → rule/ledger update → mandatory interventions and objectives → System 1 → System 2 when required → arbiter → fresh policy check → action → journal → paired checkpoint.
 
-- System 1 owns paths, menus, and battle execution. System 2 owns strategic objectives and structured trainer plans. System 3 constrains both before decisions.
+- System 1 owns paths, menus, and battle execution. System 2 owns strategic objectives and structured trainer plans. System 4 owns persistent team preparation and battle lines for marked major challenges and death recovery. System 3 constrains all model systems before decisions.
 - Recovery routing is deterministic; it does not require a separate Director provider. Tiers 1/3 call the configured System 2 provider even with a fast System 1 actor; tiers 2/4 mechanically disengage. Do not silently send tier 1 back to the stale actor plan. An explicit tile target on a known warp uses that exit's route; incidental paths still exclude other warps. See [regression replay](docs/validation.md#recovery-handoff-and-explicit-door-targets-2026-10-05).
+- System 4 reads the complete owned roster only for the verified ROM. It never reads new hidden enemy stats/moves/RNG. All PC transfers, teaching, lead changes and candy use go through normal menus and the final arbiter; only the existing audited candy grant writes preparation inventory. Transfers and plans persist in paired checkpoints. Preserve living HM capabilities, verify exact transfer identities, and pause on ambiguity. See [System 4](docs/system4.md) for triggers, plan validation and calculation boundaries.
 - Deaths and encounter outcomes are permanent. Capture identities, the balls-acquired latch, battle-entry eligibility, and event-chain history survive checkpoints.
 - Only capture balls are legal battle items. Healing is Centers/Mom; candy preparation uses audited grants and normal menus. Never bypass the final arbiter to make a test pass.
 - Healing, dead storage, preparation, and supplies take priority over optional pickups and progression. A mandatory healing objective persists when a route is unknown or blocked. System 2 may set route and field-move subgoals while the displayed healing objective stays locked. Check actual living move users and field permission; do not invent an ability. Only observed recovery releases healing. See [healing guidance](.cursor/skills/pokemon-red-walkthrough/fragments/healing.md).
 - When Brock/Misty/Surge/Erika/Koga is ready to challenge, checkpointed `GymPreparation` inserts heal → prepare → challenge. Require nurse acceptance, restored living HP/status/observed PP, and closed text before preparation. Use audited candies at the leader's Center to the current cap (Surge 24, Koga 43); preserve the stage across planner updates and resumes. Leader A stays blocked until ready. Surge's verified open-lock flag can establish readiness in the gym, city, or Center; hidden can indices remain gym-only. Koga preparation starts on arrival in Fuchsia city/Center/gym, before its strong maze trainers.
+- Full bags activate a checkpointed capacity beat, after party safety and before supplies/pickups/progression. System 2 routes to a Mart; the shop helper sells full stacks only from `walkthrough/inventory_space.json`, verifies the visible quote and exact bag/money changes, and preserves all unapproved inventory. Keep two free slots before normal purchases resume. No tossing or important-item disposal; pause when no safe surplus exists.
 - Pick up available items only with a complete legal approach. Off-screen NPCs can block paths. Do not repeatedly select an unreachable item or treat its absence as successful collection.
 - Known encounter grass with no walking route retains a stable checkpointed grass destination and requests System 2 access planning. Validated route waypoints can approach a blocker under that encounter; final approach arrival requests the field action even during planning cooldown. Menus preserve the mandatory objective and planner card. Resume grass walking only from observed access; no tree coordinates or temporary objectives are installed. See [encounter handoff](docs/validation.md#blocked-encounter-access-handoff-2026-10-10).
 - Post-Rainbow guidance uses inventory-confirmed Lift Key → Silph Scope → Poké Flute, then the land route to Fuchsia and Koga. Observed arrival beyond Snorlax bypasses obsolete key errands. `stop_after: koga` ends only on Soul. Surf guidance requires positive HM03 inventory or SURF on a living member; field guidance additionally requires Soul. Do not inject Surf from keywords or add a Safari/sea-travel objective. See [Koga guidance](docs/runtime.md#guidance-after-erika).
+- Required uncapturable story battles are matched by the data catalog’s public map/position, enemy identity/level, and positive item prerequisite. They do not spend an encounter slot or force an ordinary duplicates/grinding escape; survival, eligibility, and death tracking still apply. System 2 supplies their battle plan. Do not erase existing encounter outcomes.
+- Models receive the complete observed bag in constraints; do not reopen PACK solely to inspect quantities already supplied.
 - Retire objectives from observed evidence: badges, inventory, learned moves, and committed encounter outcomes. Planner prose cannot establish completion.
 - Preserve trainer plan conditions, bans, allowlists, and opener counts. An opener is consumed only after observed PP loss. Malformed conditions invalidate the plan.
 
@@ -61,6 +65,7 @@ See [runtime reference](docs/runtime.md) for preparation targets, encounter cove
 - `settle()` precedes observation. `/snapshot` reads under the action lock without advancing frames. Every internal action feeds rule tracking.
 - Reference geometry is advisory. Observed terrain restrictions and directed blockers apply to all paths. Temporary bumps expire; never turn a held-input scene into permanent walls.
 - Exploration history does not prove current walkability. `RoomMap.floor` refreshes observed geometry; successful floor/edge overrides are scoped to the current map visit and invalidated at either changed endpoint. Preserve remembered layouts and exploration history on reentry. Checkpoint `walked` and `active_map`; legacy `visited` must not become new traversal proof. Paths, waypoint admission and planner map rows share this evidence. Do not add tree-specific objectives to repair stale geometry.
+- Edge goals distinguish complete exits from partial approaches. Without an exit path, explore only unknown geometry or probe one adjacent unknown tile; fully mapped enclosures request System 2 instead of cycling through known floor.
 - Partial routes reveal unknown geometry; unvisited but already mapped floor is not a frontier. Only full interaction routes retain a final A; `face` positions cannot use the blocked-door exception. Planner `route_plan` waypoints may approach an obstacle while preserving the code-owned destination. Final waypoint arrival with no full route triggers `route waypoint reached` immediately, without exploration cooldown or a temporary objective. Keep route identity separate from an empty route and include the interaction position and facing.
 - Overworld menus receive the current planner execution text, bans and System 3 constraints alongside the unchanged destination objective. Do not drop execution intent when the destination is code-owned; doing so can turn a planned field action into START → EXIT.
 - Overworld goal decisions receive the same execution text and bans. Restoring a reachable healing destination must retain the planner card. Planning does not erase unresolved goal failures; a burst that moves and then hits a blocker still counts the failed goal. Choice-only actors request System 2 after two failures rather than inventing a runner-up distribution.
@@ -71,7 +76,7 @@ Read [debugging notes](docs/debugging.md) before changing movement or menus. The
 
 ## Checkpoints and private tests
 
-Each completed cycle commits an immutable emulator/controller pair and atomically updates `checkpoints/current.json`. The `auto.state` file is a convenience copy. `checkpoints/pending.json` marks an in-flight mutation. Never delete it to force legal resume. Resume checks ROM/rules hashes, state checksum, and the event chain. Wipes and unpaired legacy states refuse legal resume.
+Each completed cycle commits an immutable emulator/controller pair and atomically updates `checkpoints/current.json`. Save verification checks one flat save and its checksum through `/nuzlocke/saves/{name}`; do not enumerate `/saves` on every commit. The `auto.state` file is a convenience copy. `checkpoints/pending.json` marks an in-flight mutation. Never delete it to force legal resume. Resume checks ROM/rules hashes, state checksum, and the event chain. Wipes and unpaired legacy states refuse legal resume.
 
 ```bash
 uv run nuzlocke sandbox --from RUN_ID --script "wait_60*3"
@@ -107,10 +112,10 @@ Static story/healing catalogs are in `nuzlocke/assets/walkthrough/`. Static prom
 |---|---|
 | `apps/orchestrator/main.py` | CLI and commands |
 | `nuzlocke/orchestration/` | Run loop, arbiter, ledger, checkpoint, journal, objectives, sandbox |
-| `nuzlocke/agents/` | Systems 1–3, navigation, battle, menus, preparation, final policy |
+| `nuzlocke/agents/` | Systems 1–4, navigation, battle, menus, preparation, final policy |
 | `nuzlocke/environment/` | Emulator adapter, server extensions, screen parsing, dashboard |
 | `nuzlocke/knowledge/` | Stage selectors, encounters, items, maps, trainers |
 | `nuzlocke/llm/` | Provider configuration, transports, decisions, diagnostics |
 | `nuzlocke/referee/`, `state/`, `memory/` | Rules, typed contracts, event store, optional OptMem |
 
-Known limits: later route validation, general box/team management, damage calculations, unusual duplicate capture identities, FireRed, and automatic checkpoint pruning. Consult the validation record before making acceptance claims.
+Known limits: later route validation, unusual PC layouts and duplicate capture identities, calculation effects outside the documented Gen I bounds, FireRed, and automatic checkpoint pruning. Consult the validation record before making acceptance claims.

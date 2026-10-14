@@ -47,7 +47,7 @@ from nuzlocke.environment.screen import digests_from_path, prompt_box_open, text
 from nuzlocke.environment.screen_text import find_boxes, parse_screen
 from nuzlocke.knowledge.walkthrough import compose, excerpt_for_context, progression_hint, skill_dir
 from nuzlocke.llm.factory import create_jev, create_provider
-from nuzlocke.llm.settings import preflight, provider_identity, resolve_agents_config
+from nuzlocke.llm.settings import configured_roles, preflight, provider_identity, resolve_agents_config
 from nuzlocke.memory import OptMem
 from nuzlocke.orchestration.arbiter import ActionArbiter
 from nuzlocke.orchestration.checkpoint import CHECKPOINT_NAME, RunCheckpoint, stage_for_boot
@@ -309,6 +309,11 @@ class RunLoop:
         from nuzlocke.agents.gym_preparation import GymPreparation
 
         self.gym_preparation = GymPreparation()
+        from nuzlocke.agents.storage import StorageController
+        from nuzlocke.agents.system4 import System4
+
+        self.system4 = System4() if self.agents_cfg["system4"]["enabled"] else None
+        self.storage = StorageController()
         self._rejected_starters = set()
         self._last_search_cycle = None
         self._force_planner_refresh = False
@@ -336,7 +341,7 @@ class RunLoop:
             self._low_confidence_streak = 0
             self.store.append("provider_change", {"system": "system2", "previous": previous, "current": current})
         self.store.append(
-            "provider_configuration", {role: provider_identity(self.agents_cfg[role]) for role in ("system1", "system2")}
+            "provider_configuration", {role: provider_identity(self.agents_cfg[role]) for role in configured_roles(self.agents_cfg)}
         )
 
     def _ingest(self, obs: PlayerObservation) -> None:
@@ -361,6 +366,8 @@ class RunLoop:
         if self.ledger.update(obs, step=self._cycle):
             self.store.append("ledger_commit", self.referee.snapshot())
         self.referee.identify(obs)
+        if getattr(self, "system4", None) is not None:
+            self.system4.annotate(obs)
         if getattr(self, "gym_preparation", None) is not None:
             self.gym_preparation.observe(
                 obs,
@@ -368,6 +375,8 @@ class RunLoop:
                 candy_enabled=bool((self.run_cfg.get("rare_candy") or {}).get("enabled")),
                 record=self.store.append,
             )
+        if getattr(self, "system4", None) is not None:
+            self.system4.observe(obs, self)
         if getattr(self, "move_learner", None) is not None:
             self.move_learner.observe(obs, self.store.append)
         if getattr(self, "lead_rotation", None) is not None:
@@ -383,16 +392,12 @@ class RunLoop:
                 old = previous.get(mon.get("capture_id"))
                 if old and mon.get("level", 0) > old.get("level", 0):
                     self._preparation_wait_cycles = 0
+                    target = (obs.policy.get("team_plan") or {}).get("levels", {}).get(mon["capture_id"], self._preparing_target)
                     self.store.append(
                         "candy_use",
-                        {
-                            "capture_id": mon["capture_id"],
-                            "before": old["level"],
-                            "after": mon["level"],
-                            "target": self._preparing_target,
-                        },
+                        {"capture_id": mon["capture_id"], "before": old["level"], "after": mon["level"], "target": target},
                     )
-                    if mon["level"] > self._preparing_target or mon.get("dead"):
+                    if mon["level"] > target or mon.get("dead"):
                         raise RuntimeError("candy preparation violated its authorization")
         self._previous_party = [dict(m) for m in obs.party]
         preparation = self.run_cfg.get("rare_candy") or {}
@@ -413,7 +418,7 @@ class RunLoop:
         from nuzlocke.agents.policy import decision
 
         self.referee.identify(obs)
-        for name, key in (("move_learner", "learning"), ("lead_rotation", "rotation"), ("shop", "shop")):
+        for name, key in (("move_learner", "learning"), ("lead_rotation", "rotation"), ("shop", "shop"), ("storage", "storage")):
             controller = getattr(self, name, None)
             actions = controller.actions(obs) if controller is not None else None
             if actions is not None:
@@ -422,6 +427,8 @@ class RunLoop:
         return decision(obs, first_encounter=self.ledger.first_encounter)
 
     def _annotate_policy(self, obs):
+        if getattr(self, "system4", None) is not None:
+            self.system4.annotate(obs)
         if getattr(self, "gym_preparation", None) is not None:
             self.gym_preparation.annotate(obs)
         obs.policy.update(
@@ -454,6 +461,8 @@ class RunLoop:
             "objectives": self.objectives,
             "move_types": self.move_types,
             "move_learning": self.move_learner.snapshot(),
+            "system4": self.system4.snapshot() if getattr(self, "system4", None) else None,
+            "storage": self.storage.snapshot() if getattr(self, "storage", None) else None,
             "shop": self.shop.snapshot() if getattr(self, "shop", None) else None,
             "lead_rotation": self.lead_rotation.snapshot() if getattr(self, "lead_rotation", None) else None,
             "gym_preparation": self.gym_preparation.snapshot() if getattr(self, "gym_preparation", None) else None,
@@ -486,6 +495,9 @@ class RunLoop:
         self.objectives = data["objectives"]
         self.move_types = data["move_types"]
         self.move_learner.restore(data.get("move_learning"))
+        for name in ("system4", "storage"):
+            if getattr(self, name, None) is not None:
+                getattr(self, name).restore(data.get(name))
         if getattr(self, "gym_preparation", None) is not None:
             self.gym_preparation.restore(data.get("gym_preparation"))
         if getattr(self, "shop", None) is not None:
@@ -534,6 +546,11 @@ class RunLoop:
             )
             if actions:
                 return ActionProposal(task_id=task.task_id, agent=task.owner, actions=actions, reason=reason)
+        if getattr(self, "system4", None) is not None:
+            actions, reason = self.system4.turn(self, obs)
+            self.system4.annotate(obs)
+            if actions:
+                return ActionProposal(task_id=task.task_id, agent=task.owner, actions=actions, reason=reason)
         if getattr(self, "shop", None) is not None:
             actions, reason = self.shop.turn(obs, record=self.store.append)
             if actions:
@@ -543,6 +560,7 @@ class RunLoop:
         if (
             not (at_leader(obs) and needs_top_up(obs))
             and not obs.policy.get("gym_preparation")
+            and not obs.policy.get("system4")
             and getattr(self, "lead_rotation", None) is not None
             and not self._preparing_target
             and not self._closing_preparation
@@ -583,7 +601,7 @@ class RunLoop:
             "memory_enabled": self.memory.enabled,
             "rom_path": str(rom) if rom else None,
             "provider": self.agents_cfg.get("provider"),
-            "model": {role: provider_identity(self.agents_cfg[role]) for role in ("system1", "system2")},
+            "model": {role: provider_identity(self.agents_cfg[role]) for role in configured_roles(self.agents_cfg)},
             "rules": self.rules,
         }
         (self.run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -603,6 +621,7 @@ class RunLoop:
             badges=obs.badges,
             encounters=coverage(self),
             capture_count=capture_count(self.referee.encounter_ledger),
+            system4=obs.policy.get("system4"),
             updated_at=time.time(),
         )
         self.env.publish_navigation(payload)
@@ -613,7 +632,11 @@ class RunLoop:
         if obs is not None:
             self._objectives_observation = obs
         progression = progression_objectives(getattr(self, "_objectives_observation", None))
-        if progression and not self._beat_locked:
+        if getattr(self, "shop", None) and self.shop.space.get("active"):
+            from nuzlocke.agents.system3 import objective_window
+
+            progression = objective_window(getattr(self, "_objectives_observation", None)) or progression
+        if progression and (not self._beat_locked or (getattr(self, "shop", None) and self.shop.space.get("active"))):
             # Planner updates often repeat broad gym milestones. Keep the actual
             # prerequisite shared by the dashboard and future planner context.
             self.objectives = progression
@@ -922,7 +945,9 @@ class RunLoop:
     def _fallback_proposal(self, task: Any, err: Exception) -> ActionProposal:
         from nuzlocke.agents.lead_rotation import LeadRotationError
 
-        intervention_error = isinstance(err, LeadRotationError)
+        intervention_error = isinstance(err, LeadRotationError) or bool(
+            getattr(self, "system4", None) and self.system4.state["job"]
+        )
         self.store.append("controller_error" if intervention_error else "llm_error", {"error": str(err), "owner": task.owner.value})
         if intervention_error or getattr(self, "jev", None) is not None:
             self.env.set_control(ControlState.PAUSED)
@@ -1275,6 +1300,8 @@ class RunLoop:
 
     def _battle_plan(self, obs: PlayerObservation) -> dict[str, Any] | None:
         """System 2's plan for this trainer battle; dropped once the battle is over."""
+        if getattr(self, "system4", None) is not None and self.system4.owns_battle(obs):
+            return self.system4.battle_plan(obs)
         if self.plan is None:
             return None
         from nuzlocke.agents.battle import active_mon
@@ -1598,6 +1625,8 @@ class RunLoop:
 
     def close(self) -> None:
         try:
+            if getattr(self, "system4", None) and self.system4.llm:
+                self.system4.llm.close()
             self.llm.close()
         finally:
             try:

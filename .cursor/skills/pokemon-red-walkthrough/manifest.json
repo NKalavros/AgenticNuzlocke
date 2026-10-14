@@ -43,7 +43,8 @@
     "koga-notes": "fragments/koga-notes.md",
     "surf-teach": "fragments/surf-teach.md",
     "surf-locked": "fragments/surf-locked.md",
-    "surf-field": "fragments/surf-field.md"
+    "surf-field": "fragments/surf-field.md",
+    "team": "fragments/team.md"
   },
   "bundles": {
     "surge": [
@@ -86,6 +87,7 @@
       "surf",
       "stuck",
       "healing",
+      "team",
       "rules"
     ],
     "surge.bill": [

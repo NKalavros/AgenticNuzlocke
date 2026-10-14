@@ -1,0 +1,9 @@
+## Team preparation and PC storage
+
+Use the complete owned roster, permanent death ledger, current cap, actual moves, and the relevant trainer reference. A reference team is a prior; Red Star can differ. Preserve a living user of each currently available HM. A dead Pokémon must be stored and cannot fight, even if a nurse restores its displayed HP.
+
+At a Pokémon Center, approach the PC at `(13,4)` facing up. Choose BILL's PC or SOMEONE's PC. DEPOSIT moves a party member into the active box; WITHDRAW appends a boxed member to the party. Select the intended nickname, then confirm DEPOSIT/WITHDRAW in its submenu. The list scrolls beyond the visible rows. CHANGE BOX asks to save before selecting another box. Keep at least one legal survivor in the party, keep space for withdrawals, and verify each transfer by capture identity. Do not use RELEASE. Leave all PC menus before healing or training.
+
+Heal the selected party, then use audited Rare Candies through the normal bag and party menus. A target must not exceed the current cap. Allow evolution. During a move offer, use the planned replacement only when the displayed Pokémon and move agree. Keep HMs. For a TM/HM, check the displayed ABLE list; an incompatible request needs a new plan, not repeated menu attempts. Verify the final team, levels, moves and lead before returning to the challenge.
+
+For Koga, compare a trained Drowzee/Hypno's actual Psychic attacks with the legal alternatives. Geodude's Rock typing can help against Selfdestruct, but a switch takes a turn. Do not assume a reference range guarantees survival: accuracy changes, critical hits, Toxic and undocumented Red Star moves remain risks. Gen I has no abilities. Use the Koga fragment for the trainer team and approach. Keep experience headroom if maze trainers remain.

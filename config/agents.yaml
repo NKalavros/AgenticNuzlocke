@@ -18,6 +18,10 @@ system2:
   model: null
   timeout_s: 120
 
+# Team preparation and battle strategy. Omitted provider/model inherit System 2.
+system4:
+  enabled: true
+
 # Legacy/provider settings below are retained for backwards compatibility.
 
 cursor:

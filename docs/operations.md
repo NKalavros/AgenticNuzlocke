@@ -32,7 +32,9 @@ uv run nuzlocke run --resume <run-id>
 
 Each completed cycle writes an immutable savestate and controller record, then atomically publishes `checkpoints/current.json`. Controller state includes the encounter/death ledgers, battle eligibility and plans, navigation memory/trust, preparation/search state, pending move-learning and shop transactions, and lead rotation. Mid-battle commits are supported. `savestates/auto.state` is a convenience copy for diagnostics.
 
-Resume validates ROM/rules identity, savestate checksum, and the chained rule-event history against its stored head. A pending-action marker, missing paired history, changed identity, corrupted history, or a terminal wipe refuses legal continuation. A crash during an action therefore may require diagnostic inspection instead of automatic resume.
+Resume validates ROM/rules identity, savestate checksum, and the chained rule-event history against its stored head. A pending-action marker, missing paired history, changed identity, corrupted history, or a terminal wipe refuses legal continuation. A crash during an action therefore may require diagnostic inspection instead of automatic resume. Checkpoint writes verify the named flat save through `/nuzlocke/saves/{name}` and compare its SHA-256 with the local mirrored file; they do not enumerate the full save history. `/saves` remains available for explicit listings.
+
+Recovery requires evidence, not removal of `pending.json`. For the inspected Tower interruption, the completed arbiter action and journal were durable, and an orphan save survived. A private replay of that one recorded cycle reproduced the orphan save byte for byte and retained all rule and team state. The recovered controller was then paired with the existing state through the normal commit path. This is a specific audited repair, not automatic recovery for arbitrary interrupted actions.
 
 `checkpoint.every_steps` and `checkpoint.enabled` remain legacy configuration fields; the active paired-commit path runs every completed cycle regardless of those values. Old unpaired states can be inspected with `sandbox --from`.
 

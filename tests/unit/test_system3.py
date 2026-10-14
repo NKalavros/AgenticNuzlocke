@@ -99,3 +99,91 @@ def test_hp_zero_is_a_faint_even_when_status_says_ok():
     ledger.update(_obs(0, party=two), step=1)
     assert [entry["species"] for entry in referee.death_ledger] == ["Charmander"]
     assert referee.wiped is None
+
+
+def guardian(**changes):
+    obs = _obs(
+        29,
+        map_id=147,
+        x=10,
+        y=16,
+        in_battle=True,
+        battle={"type": "wild", "enemy": {"species": "Marowak", "level": 30}},
+        bag=[{"id": 72, "item": "Silph Scope", "quantity": 1}],
+        policy={"avoid_wild_grinding": True, "duplicate_encounter": True},
+    )
+    return obs.model_copy(update=changes)
+
+
+def test_required_guardian_is_not_forced_to_escape_or_catch():
+    assert system3.forced_battle_choice(guardian()) is None
+    assert system3.forced_battle_choice(guardian(), first_encounter=True) is None
+    obs = guardian()
+    obs.party[0]["hp"] = 1
+    assert system3.forced_battle_choice(obs) == "run"  # Survival still applies.
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"map_id": 146},
+        {"x": 1},
+        {"bag": []},
+        {"bag": [{"id": 72, "item": "Silph Scope", "quantity": 0}]},
+        {"battle": {"type": "wild", "enemy": {"species": "Gastly", "level": 30}}},
+        {"battle": {"type": "wild", "enemy": {"species": "Marowak", "level": 29}}},
+    ],
+)
+def test_required_guardian_match_does_not_relax_ordinary_wild_rules(changes):
+    assert system3.forced_battle_choice(guardian(**changes)) == "run"
+
+
+def test_guardian_does_not_spend_an_area_encounter_or_reset_its_outcome():
+    referee = NuzlockeReferee({"level_caps": {"brock": 43}})
+    ledger = LedgerTracker(referee)
+    obs = guardian()
+    obs.bag.append({"id": 4, "item": "Poké Ball", "quantity": 10})
+    ledger.update(obs, step=0)
+    assert not ledger.first_encounter and not ledger.duplicate_encounter
+    assert not referee.encounter_ledger
+    obs.in_battle = False
+    ledger.update(obs, step=1)
+    assert not referee.encounter_ledger
+
+
+def test_constraints_supply_full_offscreen_inventory_evidence():
+    obs = guardian(in_battle=False)
+    obs.bag.insert(0, {"id": 234, "item": "TM34", "quantity": 1})
+    briefing = "\n".join(system3.constraints(obs, 43, []))
+    assert "Silph Scope" in briefing and "complete bag" in briefing and "do not open PACK" in briefing
+
+
+def test_guardian_requests_a_plan_and_final_policy_allows_fighting():
+    from nuzlocke.agents.policy import decision
+    from nuzlocke.agents.system1 import _battle_turn
+    from nuzlocke.state.models import GameAction
+
+    obs = guardian()
+    obs.screen_rows = ["┌───────┌──────────┐", "│       │▶FIGHT PM │", "│       │ ITEM  RUN│", "└───────└──────────┘"]
+
+    def no_actor(*args):
+        raise AssertionError("Required battle must ask System 2 for a plan first")
+
+    turn = _battle_turn(obs, False, False, {}, [], [], 0.55, no_actor)
+    assert turn.trigger == "mandatory story battle"
+    policy = decision(obs, first_encounter=True)
+    assert policy.required is None
+    assert policy.validate([GameAction.PRESS_A]) is None
+    assert "item" not in policy.legal_sequences
+
+
+def test_guardian_preserves_existing_encounter_outcome_and_death_tracking():
+    referee = NuzlockeReferee({"level_caps": {"brock": 43}})
+    referee.freeze_encounter(area="147", species="Gastly", outcome="forfeited")
+    ledger = LedgerTracker(referee)
+    obs = guardian()
+    ledger.update(obs, step=0)
+    obs.party[0]["hp"] = 0
+    ledger.update(obs, step=1)
+    assert len(referee.death_ledger) == 1
+    assert referee.encounter_ledger["147"]["outcome"] == "forfeited"

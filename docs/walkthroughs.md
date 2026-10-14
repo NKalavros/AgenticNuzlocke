@@ -14,6 +14,7 @@ The canonical guide lives in [the walkthrough skill](../.cursor/skills/pokemon-r
 uv run python tools/walkthrough.py surge.bill
 uv run python tools/walkthrough.py erika.rock_tunnel rules
 uv run python tools/walkthrough.py koga.rocket_key
+uv run python tools/walkthrough.py koga.gym team
 ```
 
 In Python:
@@ -55,3 +56,5 @@ All Python loaders and selectors count toward the core source limit. Markdown an
 The `koga.*` stages share one observed selector with the Objectives panel. Add prerequisites to `knowledge/walkthrough.py`, stage prose to the fragments, and display text to `assets/walkthrough/objectives.json`. Inventory proves keys; map arrival can prove a blocked route has already been passed. Soul is the chapter's completion evidence.
 
 `surf.teach`, `surf.locked` and `surf.field` belong in the complete reference but have no keyword recovery match. Runtime selection needs positive HM03 inventory or a living observed SURF move. Field use additionally needs Soul. Pass the current observation to `excerpt_for_context`; it preserves the current Koga stage and applies the Surf gate. A planner's mention of Surf cannot activate a bundle or change a destination.
+
+System 4 composes the relevant challenge fragment with `rules` and `team`. Static species stats, learnsets, teaching-item IDs and challenge triggers live under `nuzlocke/assets/walkthrough/`; trainer reference moves stay with the trainer teams. Executable selection, legality, calculation and transfer logic remains counted core Python.

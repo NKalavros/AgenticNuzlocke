@@ -1,0 +1,33 @@
+[
+  {
+    "id": "cerulean_rival",
+    "map": 3,
+    "center": 64,
+    "badges": 1,
+    "trainer": "Rival",
+    "complete_item": 63,
+    "complete_maps": [
+      35,
+      36
+    ],
+    "section": "misty"
+  },
+  {
+    "id": "anne_rival",
+    "map": 96,
+    "center": 89,
+    "badges": 2,
+    "trainer": "Rival (Bulbasaur starter branch)",
+    "complete_item": 196,
+    "section": "surge.captain"
+  },
+  {
+    "id": "rocket_giovanni",
+    "map": 202,
+    "center": 133,
+    "badges": 4,
+    "trainer": "Giovanni (Rocket Hideout)",
+    "complete_item": 72,
+    "section": "koga.rocket_scope"
+  }
+]

@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 
 from nuzlocke.llm.cli_providers import client_env
+from nuzlocke.llm.settings import configured_roles
 
 LOGIN = {
     "codex": "codex login",
@@ -20,7 +21,7 @@ LOGIN = {
 
 def doctor(cfg: dict) -> dict:
     rows = {}
-    for role in ("system1", "system2") if cfg["provider"] == "dual" else ("system2",):
+    for role in configured_roles(cfg):
         options = cfg[role]
         name = options["provider"]
         row = {"provider": name, "model": options["model"] or "vendor default", "ready": False}

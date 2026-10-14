@@ -67,6 +67,10 @@ class GymPreparation:
                     }
                     record("gym_preparation_started", state)
         if state and not obs.in_battle:
+            team = obs.policy.get("system4")
+            if team and team["phase"] != "ready" and state["phase"] != "heal":
+                self.annotate(obs)
+                return
             before = state["phase"]
             clear = not find_boxes(obs.screen_rows)
             if before == "heal" and state["accepted"] and party_ready(obs) and clear:
@@ -74,7 +78,12 @@ class GymPreparation:
             elif (
                 before == "prepare"
                 and clear
-                and not any(not m.get("dead") and (m.get("level") or 0) < state["cap"] for m in obs.party)
+                and not any(
+                    not m.get("dead")
+                    and m.get("level", 0)
+                    < (obs.policy.get("team_plan") or {}).get("levels", {}).get(m.get("capture_id"), state["cap"])
+                    for m in obs.party
+                )
             ):
                 state["phase"] = "challenge" if party_ready(obs) else "heal"
                 state["accepted"] = False
@@ -122,10 +131,11 @@ def gym_beat(obs):
 
 def needs_top_up(obs):
     cap = obs.policy.get("level_cap")
+    targets = (obs.policy.get("team_plan") or {}).get("levels", {})
     return bool(
         cap
-        and leader_position(obs.map_id, obs.badges)
-        and any(not m.get("dead") and 0 < m.get("level", 0) < cap for m in obs.party)
+        and (leader_position(obs.map_id, obs.badges) or obs.policy.get("gym_preparation"))
+        and any(not m.get("dead") and 0 < m.get("level", 0) < targets.get(m.get("capture_id"), cap) for m in obs.party)
     )
 
 

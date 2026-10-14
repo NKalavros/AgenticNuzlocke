@@ -62,7 +62,10 @@ road), that way is closed until a story event: set a different objective.
 a fainted POKéMON is dead, one catch per area), the level cap, the next boss, and the
 trainers known on this map with their teams. Obey it over everything else.
 
-When `trigger` is "trainer battle", `battle` holds both POKéMON on the field, our moves
+The constraints include the complete observed bag, including items below the menu viewport.
+Use those quantities to establish item ownership; do not open PACK solely to inspect it.
+
+When `trigger` is "trainer battle" or "mandatory story battle", `battle` holds both POKéMON on the field, our moves
 with type and PP, and the party. Write `battle_plan`: `opening_moves` (moves to use exactly once in sequence, such as ["GROWL"]),
 `moves`, our allowed repeatable moves in priority order (unlisted moves are excluded after openers;
 include alternatives you want Jev to choose between; no moves the enemy is immune to, stat moves only when

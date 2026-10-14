@@ -78,20 +78,31 @@ class NuzlockeReferee:
         )
 
     def identify(self, obs: PlayerObservation) -> None:
+        from nuzlocke.environment.storage import boxed
         from nuzlocke.referee.families import family
 
         used: set[str] = set()
-        for mon in obs.party:
+        fingerprints = set()
+        for mon in [*obs.party, *boxed(obs)]:
             fam = family(str(mon.get("species") or mon.get("nickname") or "unknown"))
             ot = mon.get("ot_id")
-            match = next(
-                (
-                    key
-                    for key, value in self.roster.items()
-                    if key not in used and value["family"] == fam and value.get("ot_id") == ot
-                ),
-                None,
-            )
+            fingerprint = (fam, ot, tuple(mon.get("dvs") or []))
+            if mon.get("dvs") and fingerprint in fingerprints:
+                raise RuntimeError("Ambiguous duplicate capture identity; roster transfer paused")
+            fingerprints.add(fingerprint)
+            matches = [
+                key
+                for key, value in self.roster.items()
+                if key not in used
+                and value["family"] == fam
+                and value.get("ot_id") == ot
+                and (not value.get("dvs") or not mon.get("dvs") or value["dvs"] == mon["dvs"])
+            ]
+            exact = [key for key in matches if self.roster[key].get("dvs") == mon.get("dvs") and mon.get("dvs")]
+            matches = exact or matches
+            if len(matches) > 1:
+                raise RuntimeError("Ambiguous capture identity; roster transfer paused")
+            match = matches[0] if matches else None
             if match is None:
                 match = f"capture-{len(self.roster) + 1:04d}"
                 self.roster[match] = {"family": fam, "ot_id": ot}
@@ -102,6 +113,8 @@ class NuzlockeReferee:
                 (mon.get("level") or 0) > self.current_cap and not (obs.in_battle and match in self.battle_eligible)
             )
             self.roster[match].update(species=mon.get("species"), nickname=mon.get("nickname"))
+            if mon.get("dvs"):
+                self.roster[match]["dvs"] = mon["dvs"]
             pp_ceiling = self.roster[match].setdefault("observed_max_pp", {})
             for move in mon.get("moves", []):
                 key = str(move.get("id") or move.get("name"))

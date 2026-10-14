@@ -436,3 +436,17 @@ def test_meowth_battle_bag_throws_legal_ball_instead_of_waiting_on_pokedex():
     # Recognition fixes the actor; it must not loosen the battle item policy.
     assert decision(obs, first_encounter=False).validate(turn.actions) is not None
     assert preparation_turn(SimpleNamespace(), obs) == ([], "")
+
+
+def test_enclosed_edge_objective_requests_planner_before_actor():
+    from nuzlocke.agents.navigation import Navigator
+
+    obs = PlayerObservation(map_id=19, map_name="Route 8", x=2, y=2, map_size={"w": 7, "h": 7}, connections=["right"])
+    obs.raw_player = {"name": "RED"}
+    obs.party = _obs().party
+    room = RoomMap()
+    room.known[19] = {(x, y): 1 <= x <= 5 and 1 <= y <= 5 for x in range(7) for y in range(7)}
+    decide, calls = _jev("edge_right")
+    turn = _turn(obs, room=room, objective={"kind": "edge", "dir": "right"}, navigator=Navigator(), jev_decide=decide)
+    assert turn.trigger == "objective path blocked"
+    assert not turn.actions and not calls

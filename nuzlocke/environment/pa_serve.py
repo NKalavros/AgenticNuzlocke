@@ -363,7 +363,10 @@ def _mount() -> None:
     def snapshot_data():
         from pokemon_agent.collision import build_collision_grid, render_ascii_map
 
+        from nuzlocke.environment.storage import read_storage
+
         state = server._get_state_dict()
+        state["storage"] = read_storage(server._reader.emu, state.get("party", []))
         state.setdefault("metadata", {})["frame_count"] = server._emulator.frame_count
         return {
             "state": state,
@@ -371,6 +374,14 @@ def _mount() -> None:
             "screenshot": base64.b64encode(server._get_screenshot_bytes()).decode(),
             "collision": render_ascii_map(build_collision_grid(server._reader.emu), legend=True),
         }
+
+    @server.app.get("/nuzlocke/saves/{name}")
+    async def checkpoint_info(name: str):
+        from pathlib import Path
+
+        if not server._config:
+            raise HTTPException(status_code=503, detail="Server not configured")
+        return saved_checkpoint(Path(server._config.data_dir).expanduser().resolve(), name)
 
     @server.app.get("/snapshot")
     async def snapshot():
@@ -392,6 +403,19 @@ def _mount() -> None:
             return await server._run_sync(read_map_objects, server._reader.emu)
         except Exception as err:
             raise HTTPException(status_code=500, detail=f"map objects error: {err}") from err
+
+
+def saved_checkpoint(data_dir, name: str) -> dict:
+    import hashlib
+
+    from fastapi import HTTPException
+
+    if not name or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for c in name):
+        raise HTTPException(status_code=400, detail="Invalid checkpoint name")
+    path = data_dir / "saves" / f"{name}.state"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Checkpoint unavailable in flat saves directory")
+    return {"name": name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
 
 
 def prepare_items(reader: Any, request: dict) -> dict:
@@ -428,16 +452,23 @@ def prepare_items(reader: Any, request: dict) -> dict:
         raise ValueError("lab preparation is limited to a lone Bulbasaur through level 8")
     if not party or any(m["hp"] != m["max_hp"] or m["status"] != "OK" for m in party):
         raise ValueError("heal the whole party before preparing")
-    need = sum(max(0, target - m["level"]) for m in party)
+    targets = request.get("targets", [target] * len(party))
+    if (
+        not isinstance(targets, list)
+        or len(targets) != len(party)
+        or any(type(t) is not int or not 1 <= t <= target for t in targets)
+    ):
+        raise ValueError("invalid per-member candy targets")
+    need = sum(max(0, t - m["level"]) for t, m in zip(targets, party))
     count = emu.read_u8(0xD31D)
     if count > 20:
         raise ValueError("unverified bag layout")
     rows = [list(emu.read_range(0xD31E + 2 * i, 2)) for i in range(count)]
     row = next((r for r in rows if r[0] == 0x28), None)
     held = row[1] if row else 0
-    grant = max(0, need - held)
+    grant = max(0, min(99, need) - held)
     if grant:
-        if held + grant > 99 or (row is None and count == 20):
+        if row is None and count == 20:
             raise ValueError("bag has no room for audited candies")
         if row is None:
             rows.append([0x28, grant])
@@ -448,7 +479,7 @@ def prepare_items(reader: Any, request: dict) -> dict:
             memory[0xD31E + i * 2] = item
             memory[0xD31F + i * 2] = quantity
         memory[0xD31E + 2 * len(rows)] = 0xFF
-    return {"item": "Rare Candy", "granted": grant, "held_before": held, "target": target}
+    return {"item": "Rare Candy", "granted": grant, "held_before": held, "target": target, "targets": targets}
 
 
 def main() -> None:

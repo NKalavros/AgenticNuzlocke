@@ -481,3 +481,69 @@ Private probes, all retained:
 Validation: **666 tests passed**, including eight added cases for stable blocked encounter destinations, unknown-grass exploration, mandatory approach routing, field-menu execution intent, planner cooldown, approach-arrival handoff and cursorless menu transitions. Core Python: **10,502 executable source lines**, a net addition of 27, below 12,000. Required Ruff lint/format, walkthrough composition and `git diff --check` passed. These are private diagnostic replays, not fresh-run acceptance trials.
 
 The watched run remains paused on port 8767 at `commit-00017962`, with matching emulator checksum and no pending action. No live restart, commit or push was performed in this pass.
+
+## System 4 private validation (2026-10-11)
+
+These are private diagnostic replays, not the five-run fresh-start benchmark. The watched run `sandbox-20261001-115259-60ac` was not stopped, restarted or sent actions.
+
+- Owned storage: the immutable Celadon Center checkpoint `commit-00017826` exposed 11 boxed Pokémon and six party members. Active WRAM and banked SRAM are read under the snapshot lock. No new hidden enemy data or memory writes were added.
+- PC transfer: `sandbox-20261010-235049-f4a5` used the normal arbiter, deposited `capture-0001` (Ivysaur), scrolled the active box list and withdrew `capture-0011` (Drowzee). The final six IDs matched the requested team. `pc-replay.json` and `probe.py` remain in the run directory.
+- Cross-box transfer: `sandbox-20261010-235518-04b7` accepted the observed save request, changed to Box 2, deposited and withdrew Drowzee, and verified the original six IDs. The controller transaction was serialized and restored between the save text and its YES/NO prompt. Inactive Box 1 remained readable after the change.
+- Real providers: the bounded run `sandbox-20261010-235408-aa72` used Codex Sol 6.1 for Systems 2 and 4 and Luna for System 1. A diagnostic Koga preparation request was inserted at the copied Celadon Center; no badge, encounter or game outcome was fabricated. Sol selected Geodude/Drowzee and retained Beedrill's CUT. The controller deposited Nidorino/Butterfree, withdrew the selected replacements, granted the audited candy deficit in a batch capped at 99, and ran 300 controller steps with four verified transfers, 29 audited candy uses, and zero controller errors or arbiter rejections. Ivysaur evolved to Venusaur and reached level 43; Raticate learned the planned Super Fang. This does not establish a completed Koga preparation or a Koga victory.
+- Preparation mechanics: `sandbox-20261011-000051-148b` and the final-code repeat `sandbox-20261011-000744-cda3` copied private checkpoint `commit-00000187` and used an explicitly bounded diagnostic plan. Drowzee alone advanced from 11 to 12, Venusaur used owned TM21 to replace Tackle with Mega Drain, and Drowzee became lead. All other levels stayed at their requested values. The final-review response was a deterministic test double accepting the observed result; this replay does not claim a model-approved Koga team. `probe.py` and `prep-final.json` retain the setup and assertions.
+- Battle execution: `sandbox-20261011-000411-a0a7` copied `commit-00017586`, during Giovanni’s Kangaskhan battle. Sol produced System 4 lines for the current legal party; Luna selected FIGHT and Hyper Fang through the normal System 1/arbiter path. The remaining battle ended with all six party members alive, zero controller errors and zero rejected proposals. This tests one resumed battle finish, not an entire boss fight or optimal strategy.
+- Calculation fixtures: 20 normal/critical and burn cases match `@smogon/calc` 0.12.0, Gen I with maximum DVs and zero effort. They cover Psychic STAB/super-effectiveness, Selfdestruct, Ground immunity to Electric damage, dual weaknesses and physical stat overflow. Special damage formulas and explosion with overflowing stats return unknown. The library was installed only in `/tmp/nuzlocke-calc-check`; no dependency was added.
+
+Retained failures informed the fixes: four early PC harness probes stopped on NPCs/chairs or a missing harness identity annotation; `sandbox-20261010-234627-2710` exposed the `BILL PC` label/text overlay, and `sandbox-20261010-234834-454b` exposed `DEPOSIT PM` ligatures. The first box-change replay declined a save because the final prompt no longer contained “save”; the controller now retains the observed save request. A simultaneous startup selected an already claimed private port and was rejected by the writer token; subsequent probes used explicit separate ports. One full-loop harness initially stopped at the already-earned default Misty milestone; the diagnostic stop was then set to Koga. None of these failures changed the watched source.
+
+Final checks: `uv run pytest -q` passed **695 tests**; Ruff lint/format, walkthrough composition, JavaScript syntax and `git diff --check` passed. Core Python is **11,383** counted source lines, up **881** from 10,502 and strictly below 12,000. The watched source still points to `commit-00017962`, with state SHA-256 `219885191ae56ce257604ae5475d32c1f688bb2916d208486e4628265abc73b9` and no pending mutation marker. The five-run benchmark and a complete Koga preparation/battle were not run.
+
+
+## Enclosed exit routing (2026-10-12)
+
+Route 8's committed Growlithe capture was followed by repeated `edge_right` walks inside the enclosed grass area. The exit fallback treated unvisited known floor as a full path, then proposed single eastward steps when that pool ran out. Successful local movement masked the blocked destination.
+
+The fix applies to all edge directions and maps: only a path reaching the boundary is complete; unknown-geometry approaches stay partial; blind steps require an adjacent unknown tile. No known path or useful frontier means System 1 requests `objective path blocked`. Navigator terminal-step exceptions require a complete edge path. No tree coordinates or new objectives were added.
+
+Private emulator replay `sandbox-20261012-214642-eb32` restored the watched run's immutable `commit-00018103`. After an arbiter-approved `wait_60`, Route 8 remained at `(37,15)`. With the saved room and navigator state, System 1 returned `objective path blocked`, with zero actions and no actor call. Evidence: `exit-routing-replay.json` in that sandbox. No model calls or live-run actions were used. This verifies the handoff, not subsequent autonomous CUT execution or arrival in Lavender.
+
+Earlier probes are retained: `sandbox-20261012-214535-c7ce` restored `commit-00018080` but encountered a transitional text screen; `sandbox-20261012-214612-ed0e` then entered battle while settling that grass state. Neither was a valid overworld handoff test. The final probe used the later checkpoint on clear floor.
+
+Validation: 698 tests passed, including all-direction enclosed exits, partial frontier approaches, one-tile unknown probes, and System 1 escalation before actor selection. Ruff and walkthrough checks passed. The watched process was not restarted.
+
+
+## Tower checkpoint recovery (2026-10-13)
+
+The watched controller stopped during commit after cycle 20236 on Pokémon Tower 5F. Its pending marker referred to sequence 20239; the pointer still selected `commit-00020239`. The next emulator state, `commit-00020240.state`, had been written and mirrored, but `/saves` listing verification timed out before publishing its controller record. The completed arbiter result and journal retained the eight walking inputs and observed end position `(11,9)`, with text open.
+
+Two independent private replays, `sandbox-20261013-234609-2083` and `sandbox-20261013-234748-1944`, restored the preceding paired checkpoint and ran exactly one controller cycle with the recorded Luna choice (`exit_147`), no model calls, and the normal final policy/arbiter. Both reproduced the orphan state byte for byte: SHA-256 `eefc485f6ebfb14c67b6964521eb830dad98e5b456b065cd971913c1b7c14489`. The latter used the new single-file save verification. Both completed at cycle 20237. Referee, ledger, party, System 4, planner card, objectives, and preparation/menu controllers were unchanged from the prior pair. Navigation/traversal evidence was reconstructed by that replay.
+
+The source event chain verified with its prior head. The old pointer, pending marker, orphan save, and server log were retained under `runs/sandbox-20261001-115259-60ac/recovery-20261013/`. The original orphan state was loaded without advancing frames, then saved and checked against the same hash. The reconstructed controller used the source integrity head. A `checkpoint_recovery` event records the proof; normal `RunCheckpoint.commit` published sequence 20240 and cleared the pending marker. No rollback or manual pending-marker deletion occurred. Legal checkpoint load validation passed before resuming the watched run.
+
+The save adapter now checks one server flat file and compares its checksum with the mirrored local file. `/saves` remains for explicit history listings. Tests cover correct verification, stale checksum rejection, missing local state, flat-vs-session storage, and invalid names. Full validation: 700 tests passed, Ruff check/format and walkthrough composition passed, core source 11,406 lines. This proof applies to this completed walking cycle; it does not authorize generic interrupted-action recovery or establish Koga completion.
+
+
+## Tower guardian and objectives (2026-10-14)
+
+The watched run repeatedly fled the revealed level-30 Marowak at Tower 6F `(10,16)` because `avoid_wild_grinding` overrode the walkthrough’s required fight. It retreated to Lavender and then opened/backed out of PACK to inspect off-screen story items. Observed inventory already proved positive Silph Scope and absent Poké Flute.
+
+The declarative story-battle catalog matches the public map, approach positions, battle type, enemy species/level, and positive Scope prerequisite. A match bypasses ordinary duplicates/grinding escapes and capture scheduling; it does not change survival, battle eligibility, deaths, or caps. An uncapturable guardian does not consume an encounter slot, and prior committed outcomes are retained. System 1 requests `mandatory story battle` for a System 2 strategy. Both model systems receive the full observed bag in constraints. Tower objectives now distinguish 6F guardian, 7F rescue, Fuji’s house reward, and onward travel.
+
+Private replay `sandbox-20261014-004120-42d6` restored watched `commit-00021204` (cycle 21201). System 1 requested the mandatory battle plan. A private deterministic strategy selected FIGHT then Razor Leaf, followed by normal battle paging. Every action passed the existing final policy and arbiter; Marowak’s observed HP fell from 83 to 0. The probe made no model calls and did not modify the watched run or assume that Fuji or the Flute was obtained. Evidence: `guardian-probe.json`.
+
+Regression tests cover wrong map/position/species/level and missing/zero Scope, survival escape, capture exclusion, unchanged encounter outcomes, death recording, planner handoff, final arbiter fight admission, and full inventory briefing. Full validation: 711 tests passed; Ruff, walkthrough composition, and budget checks passed at 11,440 core source lines. The watched run was explicitly restarted with the stale bag-inspection card replaced by the requested rescue intent.
+
+
+## Bag capacity sales (2026-10-14)
+
+The watched run paused at Lavender Mart, `commit-00022450` (cycle 22447), after 60 purchase-helper cycles. The bag had 20 stacks and no balls. System 2’s sale intent was overridden by repeated BUY attempts; no bag or money change proved completion.
+
+Capacity now latches until two slots are free, preserves party-safety priority, and requests Mart routing from System 2. The shop helper owns only allowlisted full-stack sales, with normal menus, fresh final policy, and arbiter checks. Transactions preserve all other bag entries and verify the quoted proceeds. Missing safe surplus or ambiguity pauses. No important items are sold or tossed, and no inventory memory is written.
+
+Deterministic private replay `sandbox-20261014-015321-1f10` restored the watched pair and sold two Nuggets for ¥10,000, then one Awakening for ¥100. The bag fell from 20 to 18 slots. It then purchased ten Great Balls for ¥6,000, finishing with 19 occupied slots and ¥61,333 (initial ¥57,233). Exact sale/purchase verification events and `bag-space-replay.json` record the result. No model calls or watched-run actions were made.
+
+A second replay, `sandbox-20261014-015455-9ff4`, committed and restarted at the pending Nugget-sale confirmation. It restored the exact pending authorization, completed both sales once, and reached the same 19 slots, ten Great Balls, and ¥61,333.
+
+Earlier probes are retained: `sandbox-20261014-015027-4344` stopped at the `ELIXER` label mismatch; `sandbox-20261014-015055-0063` reached the sale quote but rejected an occluded Awakening label. The final fix uses canonical spelling and permits only a unique visible name prefix resolving to the approved item. `sandbox-20261014-015202-2567` verified cleanup alone; the later replay also verified restocking.
+
+Validation: 718 tests passed; Ruff, walkthrough composition, and source budget checks passed at 11,583 core source lines. This is a capacity/transaction diagnostic, not proof of receiving the Flute or completing Koga. The watched run remains paused until explicitly restarted.

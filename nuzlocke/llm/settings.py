@@ -41,8 +41,10 @@ def resolve_agents_config(cfg: dict, overrides: dict | None = None) -> dict:
     if mode not in {"dual", "cursor", "openai_compatible"}:
         raise ValueError(f"Unknown orchestration provider: {mode}")
     result["provider"] = mode
-    for role in ("system1", "system2"):
-        if role == "system1":
+    for role in ("system1", "system2", "system4"):
+        if role == "system4":
+            legacy = result["system2"]
+        elif role == "system1":
             legacy = {**(cfg.get("jev") or {}), "provider": "jev"}
         elif mode == "openai_compatible":
             legacy = {"model": "qwen3", **(cfg.get("openai_compatible") or {}), "provider": "openai_compatible"}
@@ -55,6 +57,8 @@ def resolve_agents_config(cfg: dict, overrides: dict | None = None) -> dict:
         explicit = cfg.get(role) or {}
         if not isinstance(explicit, dict):
             raise ValueError(f"{role} must be a mapping")  # noqa: TRY004 — CLI configuration error
+        enabled = explicit.get("enabled", True)
+        explicit = {k: v for k, v in explicit.items() if role != "system4" or k != "enabled"}
         values = legacy if explicit.get("provider", legacy["provider"]) == legacy["provider"] else {}
         values = {**values, **explicit}
         override = (overrides or {}).get(role) or {}
@@ -103,13 +107,20 @@ def resolve_agents_config(cfg: dict, overrides: dict | None = None) -> dict:
         if parsed.provider == "gemini_cli" and parsed.params:
             raise ValueError(f"{role}: gemini_cli uses --model; params must be empty")
         result[role] = parsed.model_dump()
+        if role == "system4":
+            result[role]["enabled"] = bool(enabled)
     return result
+
+
+def configured_roles(cfg):
+    return (("system1", "system2") if cfg["provider"] == "dual" else ("system2",)) + (
+        ("system4",) if cfg.get("system4", {}).get("enabled") else ()
+    )
 
 
 def preflight(cfg: dict) -> None:
     """Check local setup before starting an emulator; never call inference."""
-    roles = ("system1", "system2") if cfg["provider"] == "dual" else ("system2",)
-    for role in roles:
+    for role in configured_roles(cfg):
         options = cfg[role]
         binary = options.get("binary")
         if binary and not shutil.which(binary):

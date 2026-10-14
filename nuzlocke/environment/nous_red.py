@@ -210,6 +210,7 @@ class NousRedEnvironment:
                 if not str(m.get("species", "")).startswith("???") and m.get("max_hp", 1) > 0 and 1 <= m.get("level", 1) <= 100
             ],
             bag=list(state.get("bag") or []),
+            storage=state.get("storage"),
             badges=list(player.get("badges") or player.get("badges_list") or []),
             money=player.get("money"),
             collision_ascii=collision_ascii,
@@ -361,21 +362,24 @@ class NousRedEnvironment:
     def save_checkpoint(self, name: str) -> dict[str, Any]:
         """Crash-recovery only, never to undo a committed outcome.
 
-        While a dashboard game session is active, /save writes a session-scoped folder that /load
-        never reads, so a save missing from /saves raises instead of passing silently.
+        Verify one file where /load reads, without enumerating the full checkpoint history.
         """
         result = self._post_json("/save", {"name": name})
+        copied = None
         if saved := result.get("path"):
             from nuzlocke.orchestration.checkpoint import mirror_save
 
-            mirror_save(Path(saved), run_dir=self.run_dir, name=name)
-        if name not in {s.get("name") for s in self.list_checkpoints()}:
-            raise RuntimeError(
-                f"checkpoint '{name}' saved to a session-scoped path that "
-                "pokemon-agent's /load cannot read (a dashboard game session "
-                "is active) — close the active dashboard session for "
-                "checkpointing to work"
-            )
+            copied = mirror_save(Path(saved), run_dir=self.run_dir, name=name)
+        try:
+            verified = self._get(f"/nuzlocke/saves/{name}").json()
+        except httpx.HTTPStatusError as err:
+            raise RuntimeError(f"checkpoint '{name}' unavailable for verification in the server's flat saves directory") from err
+        if copied is None or verified.get("name") != name:
+            raise RuntimeError(f"checkpoint '{name}' lacks a verifiable local save")
+        import hashlib
+
+        if verified.get("sha256") != hashlib.sha256(copied.read_bytes()).hexdigest():
+            raise RuntimeError(f"checkpoint '{name}' differs from the server's loadable save")
         return result
 
     def load_checkpoint(self, name: str) -> dict[str, Any]:

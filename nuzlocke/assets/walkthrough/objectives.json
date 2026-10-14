@@ -190,11 +190,31 @@
   },
   "koga.tower": {
     "default": {
-      "primary": "Return to Lavender, climb Pokémon Tower, rescue Mr. Fuji and receive the Poké Flute at his house.",
-      "secondary": "Heal and prepare the living party for Koga at the current level-43 cap.",
+      "primary": "Silph Scope is confirmed. Return to Pokémon Tower, defeat the revealed guardian, rescue Mr. Fuji on 7F, then speak to him at his house for the Poké Flute.",
+      "secondary": "After observed Poké Flute acquisition, pass Route 12’s Snorlax and follow Routes 13–15 to Fuchsia; heal and prepare there for Koga.",
       "tertiary": "Defeat Koga and verify the Soul Badge."
     },
     "variants": [
+      {
+        "maps": [
+          147
+        ],
+        "objectives": {
+          "primary": "Defeat the revealed level-30 Marowak guardian at the 6F stairs; do not catch it or flee merely to avoid wild grinding.",
+          "secondary": "Ascend to 7F, defeat the Rockets and rescue Mr. Fuji; speak to him again at his house for the Poké Flute.",
+          "tertiary": "Verify the Poké Flute in observed inventory, then travel to Fuchsia for Koga."
+        }
+      },
+      {
+        "maps": [
+          148
+        ],
+        "objectives": {
+          "primary": "Defeat the three Rockets on 7F and speak to Mr. Fuji to rescue him.",
+          "secondary": "Speak to Mr. Fuji again at his house for the Poké Flute; verify positive quantity in observed inventory.",
+          "tertiary": "Pass Route 12’s Snorlax, follow Routes 13–15 to Fuchsia, and prepare for Koga."
+        }
+      },
       {
         "maps": [
           149

@@ -60,6 +60,28 @@ def holds(obs, item_id, name):
     )
 
 
+def story_battle(obs):
+    """Match required battles using public observed identity, location and prerequisites."""
+    from nuzlocke.assets import data
+
+    battle = obs.battle or {}
+    enemy = battle.get("enemy") or {}
+    return next(
+        (
+            entry
+            for entry in data("walkthrough/story_battles.json")
+            if obs.in_battle
+            and obs.map_id == entry["map"]
+            and [obs.x, obs.y] in entry["positions"]
+            and battle.get("type") == entry["type"]
+            and enemy.get("species") == entry["species"]
+            and enemy.get("level") == entry["level"]
+            and holds(obs, entry["required_item"], entry["required_name"])
+        ),
+        None,
+    )
+
+
 def living_move(obs, move_id, name):
     return any(
         move.get("id") == move_id or str(move.get("name", "")).upper() == name

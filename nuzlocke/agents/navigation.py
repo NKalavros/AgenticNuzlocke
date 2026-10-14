@@ -138,7 +138,7 @@ class Navigator:
         suffix: list[str] = []
         reached_waypoint = False
         allow_terminal = (
-            goal.finish is not None or (goal.kind == "exit" and goal.complete) or (goal.kind == "edge" and len(goal.path) > 1)
+            goal.finish is not None or (goal.kind == "exit" and goal.complete) or (goal.kind == "edge" and goal.complete)
         )
         if self.route and not failed:
             tiles = [tuple(t) for t in self.route["tiles"]]

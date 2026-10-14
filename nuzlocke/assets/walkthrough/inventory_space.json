@@ -1,0 +1,74 @@
+{
+  "capacity": 20,
+  "reserve_slots": 2,
+  "sale_items": [
+    {
+      "id": 49,
+      "item": "Nugget"
+    },
+    {
+      "id": 14,
+      "item": "Awakening"
+    },
+    {
+      "id": 11,
+      "item": "Antidote"
+    },
+    {
+      "id": 12,
+      "item": "Burn Heal"
+    },
+    {
+      "id": 13,
+      "item": "Ice Heal"
+    },
+    {
+      "id": 15,
+      "item": "Parlyz Heal"
+    },
+    {
+      "id": 20,
+      "item": "Potion"
+    },
+    {
+      "id": 19,
+      "item": "Super Potion"
+    },
+    {
+      "id": 18,
+      "item": "Hyper Potion"
+    },
+    {
+      "id": 17,
+      "item": "Max Potion"
+    },
+    {
+      "id": 16,
+      "item": "Full Restore"
+    },
+    {
+      "id": 53,
+      "item": "Revive"
+    },
+    {
+      "id": 54,
+      "item": "Max Revive"
+    },
+    {
+      "id": 81,
+      "item": "Ether"
+    },
+    {
+      "id": 82,
+      "item": "Elixir"
+    }
+  ],
+  "marts": {
+    "1": 42,
+    "2": 56,
+    "3": 67,
+    "4": 150,
+    "5": 91,
+    "7": 156
+  }
+}

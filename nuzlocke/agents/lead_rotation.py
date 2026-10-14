@@ -49,14 +49,16 @@ class LeadRotation:
             self.pending["verified"] = True
             record("lead_rotated", dict(self.pending))
 
-    def turn(self, obs, record=lambda *_: None):
+    def turn(self, obs, record=lambda *_: None, target=None):
         self.observe(obs, record)
         if obs.in_battle or obs.cutscene or evolution_phase(obs.screen_rows):
             return [], ""
         if self.pending is None:
             if obs.policy.get("preparing") or find_boxes(obs.screen_rows):
                 return [], ""
-            slot = switch_target(obs)
+            slot = (
+                next((i for i, m in enumerate(obs.party) if m.get("capture_id") == target), None) if target else switch_target(obs)
+            )
             if slot is None or not obs.party[slot].get("capture_id"):
                 return [], ""
             self.pending = {

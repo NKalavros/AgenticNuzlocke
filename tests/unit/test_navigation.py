@@ -317,3 +317,28 @@ def test_continuation_atlas_connects_tunnels_and_rock_tunnel_chambers():
         assert path and path[-1] == end
     # Header declares two extra rows with no source blocks: never invent floor.
     assert atlas()["maps"]["119"]["rows"][-2:] == ["?" * 8] * 2
+
+
+def test_enclosed_exit_never_offers_known_floor_as_exit_progress():
+    obs = PlayerObservation(x=2, y=2, map_size={"w": 7, "h": 7})
+    grid = {(x, y): 1 <= x <= 5 and 1 <= y <= 5 for x in range(7) for y in range(7)}
+    for seen in (set(), set(grid)):
+        routes = Routes((2, 2), grid, seen=seen, size=(7, 7))
+        for side in ("up", "down", "left", "right"):
+            goal = _edge_goal(obs, side, routes)
+            assert not goal.actions and not goal.path and not goal.complete
+
+
+def test_exit_unknown_approach_is_partial_and_adjacent_probe_is_one_step():
+    obs = PlayerObservation(x=2, y=3, map_size={"w": 7, "h": 7})
+    grid = {(x, y): False for x in range(7) for y in range(7)}
+    grid.update({(2, 3): True, (3, 3): True})
+    del grid[4, 3]
+    goal = _edge_goal(obs, "right", Routes((2, 3), grid, size=(7, 7)))
+    assert goal.actions == [A.WALK_RIGHT] and not goal.complete
+    assert "no full path yet" in goal.facts[0]
+    obs.x = 3
+    goal = _edge_goal(obs, "right", Routes((3, 3), grid, size=(7, 7)))
+    assert goal.actions == [A.WALK_RIGHT] and not goal.complete
+    grid[4, 3] = False
+    assert not _edge_goal(obs, "right", Routes((3, 3), grid, size=(7, 7))).actions

@@ -42,6 +42,7 @@ class LedgerTracker:
 
     def _track_encounter(self, obs: PlayerObservation) -> None:
         from nuzlocke.knowledge.encounters import area_key, resolved
+        from nuzlocke.knowledge.walkthrough import story_battle
         from nuzlocke.referee.families import family
 
         battle = obs.battle or {}
@@ -74,7 +75,10 @@ class LedgerTracker:
                 species
             ) in self.referee.owned_families
             self.duplicate_encounter = duplicate
-            if battle.get("type") == "wild" and area and self.referee.balls_acquired and not duplicate:
+            if story_battle(obs):
+                self.duplicate_encounter = False
+                self.first_encounter = False
+            elif battle.get("type") == "wild" and area and self.referee.balls_acquired and not duplicate:
                 self.first_encounter = (
                     not resolved(self.referee.encounter_ledger, obs.map_id)
                     if obs.map_id is not None

@@ -66,14 +66,14 @@ def move_facts(obs: PlayerObservation, name: str, move_types=None, plan=None) ->
     plan = plan or {}
     repeatable = plan.get("moves") or []
     if repeatable and normalized(name) not in {normalized(m) for m in [*repeatable, *(plan.get("opening_moves") or [])]}:
-        blocked = "not in System 2's remaining opening or repeatable moves"
+        blocked = "not in the strategy’s remaining opening or repeatable moves"
     if normalized(name) in {normalized(m) for m in plan.get("avoid_moves", [])}:
-        blocked = "System 2 forbids this move"
+        blocked = "Strategy forbids this move"
     rules = [r for r in plan.get("move_rules", []) if normalized(r["move"]) == normalized(name)]
     if rules:
         result["conditions"] = rules
         if any(status not in r["enemy_status"] for r in rules):
-            blocked = f"System 2's condition is not met: enemy status is {status}"
+            blocked = f"Strategy condition is not met: enemy status is {status}"
     result["unavailable_reason"] = blocked
     return result
 
@@ -150,9 +150,9 @@ def menu_questions(obs: PlayerObservation, plan: dict[str, Any] | None = None) -
     plan = plan or {}
     lead_hp = (lead.get("hp") or 0) / (lead.get("max_hp") or 1)
     if "pkmn" in criteria and plan.get("switch_to") and lead_hp < plan.get("switch_below", 0):
-        criteria["pkmn"] += f"; System 2's plan: switch to {plan['switch_to']} now"
+        criteria["pkmn"] += f"; Battle plan: switch to {plan['switch_to']} now"
     elif plan.get("moves"):
-        criteria["fight"] += f"; System 2's plan: {', '.join(plan['moves'][:2])}"
+        criteria["fight"] += f"; Battle plan: {', '.join(plan['moves'][:2])}"
     moves = active_mon(obs).get("moves") or []
     if (
         moves
@@ -166,7 +166,7 @@ def menu_questions(obs: PlayerObservation, plan: dict[str, Any] | None = None) -
             "instructions": (
                 "A battle turn. Pick what to do. `constraints` are Nuzlocke rules that override "
                 "everything else. Fight unless our POKéMON is about to faint or the rules say "
-                "to catch or run. Consult system2's strategy, notes, do_not, and switch conditions "
+                "to catch or run. Consult the battle strategy, notes, do_not, and switch conditions "
                 "against the current HP and status before choosing."
             ),
             "criteria": criteria,
@@ -203,19 +203,19 @@ def move_questions(
         if info["pp"] is not None:
             facts.append(f"{info['pp']} PP left")
         for rule in info.get("conditions", []):
-            facts.append(f"System 2 condition met: enemy status in {rule['enemy_status']}; {rule['reason']}")
+            facts.append(f"Strategy condition met: enemy status in {rule['enemy_status']}; {rule['reason']}")
         ranked = (plan or {}).get("moves") or []
         if move.upper() in ranked:
-            facts.append(f"System 2's plan: choice {ranked.index(move.upper()) + 1}")
+            facts.append(f"Battle plan: choice {ranked.index(move.upper()) + 1}")
         criteria[f"move_{index}"] = "; ".join(facts)
     return {
         "action": {
             "type": "choice",
             "instructions": (
-                "Pick the move using system2's strategy, notes, do_not, and the current battle facts. "
+                "Pick the move using the battle strategy, notes, do_not, and the current battle facts. "
                 "Nuzlocke constraints override strategy. Status moves do no direct damage; damage "
                 "type effectiveness does not measure their usefulness. Attack while the enemy "
-                "is asleep. Only offered moves satisfy observed status and System 2's move rules."
+                "is asleep. Only offered moves satisfy observed status and the strategy’s move rules."
             ),
             "criteria": criteria,
         }

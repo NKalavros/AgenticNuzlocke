@@ -156,6 +156,8 @@ After Giovanni leaves, pick up the revealed Silph Scope `(25,2)` and verify it i
 
 ### Lavender: rescue Mr. Fuji and receive the Poké Flute
 
+Use the complete observed inventory supplied in constraints, including off-screen bag entries. A positive Silph Scope quantity with no Poké Flute means the rescue is unfinished; do not reopen PACK just to recheck it.
+
 With the observed Silph Scope and no Poké Flute, leave Celadon EAST to Route 7 (18). Use its Underground Path building `(5,13)` → 77, descend to tunnel 121, travel EAST to stairs `(47,2)` → 80, exit to Route 8 (19), then go EAST to Lavender (4). Use this bypass; no Saffron guard errand is needed. Heal at Lavender Center `(3,5)` → 141, then enter Pokémon Tower `(14,5)` → 142. Expect the rival on 2F; heal first and trust observed teams.
 
 Ascending stairs: 1F `(18,9)` → 143; 2F `(3,9)` → 144; 3F `(18,9)` → 145; 4F `(3,9)` → 146; 5F `(18,9)` → 147; 6F `(9,16)` → 148. Use each current-map destination, not a previous floor's target. Channelers and normal wild encounters obey the live ledger. The scripted level-30 Marowak ghost guarding 6F's last stairs cannot be caught; defeat it after the Silph Scope reveals it. Do not spend capture balls on this story ghost. Heal at the Center as needed; do not assume a healing-looking tile is an allowed substitute.
@@ -231,6 +233,16 @@ Choose one concrete subgoal at a time:
 Obstacles may reset on map transitions. Recheck them when leaving a building or cave. In the tested Vermilion gym enclosure, the tree returns at `(15,18)` after leaving the gym. From the **gym side**, approach `(15,19)` and face **UP**; the earlier town-side approach `(14,18)` facing right is across the obstacle. Cut it using the living learned-CUT user, verify passage, then continue to Vermilion's Center `(11,3)`, destination map 89. Do not go back into the gym or attempt its switches while healing is active. These coordinates are a checked local example; use observed geometry for other obstacles.
 
 Prefer the shortest safe route. Poison can cause fainting during travel, so unnecessary steps are dangerous. If menu or narration is still open, complete that interaction before walking. The existing battle, death, level-cap and final action checks always apply.
+
+## Team preparation and PC storage
+
+Use the complete owned roster, permanent death ledger, current cap, actual moves, and the relevant trainer reference. A reference team is a prior; Red Star can differ. Preserve a living user of each currently available HM. A dead Pokémon must be stored and cannot fight, even if a nurse restores its displayed HP.
+
+At a Pokémon Center, approach the PC at `(13,4)` facing up. Choose BILL's PC or SOMEONE's PC. DEPOSIT moves a party member into the active box; WITHDRAW appends a boxed member to the party. Select the intended nickname, then confirm DEPOSIT/WITHDRAW in its submenu. The list scrolls beyond the visible rows. CHANGE BOX asks to save before selecting another box. Keep at least one legal survivor in the party, keep space for withdrawals, and verify each transfer by capture identity. Do not use RELEASE. Leave all PC menus before healing or training.
+
+Heal the selected party, then use audited Rare Candies through the normal bag and party menus. A target must not exceed the current cap. Allow evolution. During a move offer, use the planned replacement only when the displayed Pokémon and move agree. Keep HMs. For a TM/HM, check the displayed ABLE list; an incompatible request needs a new plan, not repeated menu attempts. Verify the final team, levels, moves and lead before returning to the challenge.
+
+For Koga, compare a trained Drowzee/Hypno's actual Psychic attacks with the legal alternatives. Geodude's Rock typing can help against Selfdestruct, but a switch takes a turn. Do not assume a reference range guarantees survival: accuracy changes, critical hits, Toxic and undocumented Red Star moves remain risks. Gen I has no abilities. Use the Koga fragment for the trainer team and approach. Keep experience headroom if maze trainers remain.
 
 ## Nuzlocke reminders
 
