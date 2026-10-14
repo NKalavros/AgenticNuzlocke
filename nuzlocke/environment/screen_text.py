@@ -16,6 +16,11 @@ _CURSORS = "▶▷"
 _TEXT_TOP = 12
 
 
+def is_naming_screen(rows: list[str]) -> bool:
+    """The letter grid identifies naming; the instant-text bit also appears on bags."""
+    return any("A B C D E F G H I" in row for row in rows)
+
+
 def is_pokedex_page(rows: list[str]) -> bool:
     """Recognize the measurement labels, not WT inside a name such as MEOWTH."""
     if any("▶" in row for row in rows):

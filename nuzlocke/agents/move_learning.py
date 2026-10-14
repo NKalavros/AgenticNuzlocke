@@ -15,7 +15,7 @@ import yaml
 
 from nuzlocke.agents.jev_policy import accepts
 from nuzlocke.assets import data as asset_data
-from nuzlocke.environment.screen_text import parse_screen
+from nuzlocke.environment.screen_text import find_boxes, parse_screen
 from nuzlocke.state.models import GameAction as A
 
 HM = {15, 19, 57, 70, 148}
@@ -45,6 +45,20 @@ def learning_phase(obs, pending=None):
     compact = normalized(text)
     if not text:
         return None
+    if not pending:
+        mid, slot = obs.learning_move_id, obs.learning_party_slot
+        if mid not in move_data() or slot is None or not 0 <= slot < len(obs.party):
+            return None
+        mon = obs.party[slot]
+        learner_named = any(n and normalized(n) in compact for n in (mon.get("nickname"), mon.get("species")))
+        identity = normalized(move_data()[mid]["name"]) in compact or (
+            learner_named
+            and ("TRYINGTOLEARN" in compact or ("LEARNED" in compact and any(m.get("id") == mid for m in mon.get("moves", []))))
+        )
+        moves = {normalized(m.get("name")) for m in mon.get("moves", [])}
+        forget_list = len(screen.menu_rows) >= 2 and all(normalized(row) in moves for row in screen.menu_rows)
+        if not identity and not forget_list:
+            return None  # Scratch RAM alone cannot turn ordinary NPC prose into a transaction.
     if (
         any(word in compact for word in ("FORGET", "FORGOTTEN", "WHICHMOVE"))
         and screen.menu_rows
@@ -166,6 +180,20 @@ class MoveLearner:
             if self.pending and self.pending.get("verified"):
                 self.pending = None
             elif self.pending and not parse_screen(obs.screen_rows).menu_rows:
+                p = self.pending
+                p["wait_cycles"] = p.get("wait_cycles", 0) + 1
+                mon = next((m for m in obs.party if m.get("capture_id") == p.get("capture_id")), None)
+                if mon is None and not p.get("capture_id") and p["slot"] < len(obs.party):
+                    mon = obs.party[p["slot"]]
+                closed = not obs.in_battle and not obs.cutscene and not find_boxes(obs.screen_rows)
+                if closed and mon and [m.get("id") for m in mon.get("moves", [])] == p["before"] and p["wait_cycles"] >= 2:
+                    record(
+                        "move_learning_interrupted", {**p, "reason": "closed UI with unchanged moves; no learning result committed"}
+                    )
+                    self.pending = None
+                    return [], "release closed move-learning transaction"
+                if p["wait_cycles"] >= 24:
+                    raise RuntimeError("Move-learning result unresolved after 24 waits; pause for inspection")
                 return [A.WAIT_60], "wait for move-learning result"
             elif self.pending:
                 raise RuntimeError("move-learning UI closed without a verified result")
@@ -243,6 +271,9 @@ class MoveLearner:
                     self.pending["replace_slot"] = int(choice.split("_")[1])
             record("move_learning_choice", dict(self.pending))
         actions = self.actions(obs)
+        self.pending["wait_cycles"] = self.pending.get("wait_cycles", 0) + 1 if actions == [A.WAIT_60] else 0
+        if self.pending["wait_cycles"] >= 24:
+            raise RuntimeError("Move-learning menu made no progress after 24 waits; pause for inspection")
         return (
             actions or [A.WAIT_60],
             f"move learning: {self.pending['species']} {self.pending['new_move']} ({self.pending['choice']}); {phase}",

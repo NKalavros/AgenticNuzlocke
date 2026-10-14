@@ -119,7 +119,7 @@ class ShopController:
         from nuzlocke.agents.bag_space import observe_space
 
         was_active = self.space.get("active")
-        observe_space(self.space, obs, record)
+        observe_space(self.space, obs, record, self.pending)
         if was_active != self.space.get("active"):
             self.cycles = 0
         if not self.pending:

@@ -22,7 +22,7 @@ from typing import Any
 from nuzlocke.agents.locomotion import _parsed_grid
 from nuzlocke.environment.maps import map_name
 from nuzlocke.environment.terrain import step_delta
-from nuzlocke.knowledge.objects import field_item, interaction_sides, nurse_interaction, object_available, object_facts
+from nuzlocke.knowledge.objects import counter_interaction, field_item, interaction_sides, object_available, object_facts
 from nuzlocke.state.models import GameAction, PlayerObservation
 
 DIRS = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}
@@ -503,22 +503,22 @@ def build_goals(
     talkers += [(f"sign_{s['x']}_{s['y']}", "sign", (int(s["x"]), int(s["y"])), ("down",), None) for s in obs.signs]
     talkers.sort(key=lambda item: (item[0] not in wanted_keys, _manhattan(start, item[2])))
     for key, label, tile, sides, picture in talkers[:6]:
-        nurse = nurse_interaction(obs, {"picture": picture, "x": tile[0], "y": tile[1]})
-        approach = nurse or tile
-        path = routes.onto(nurse) if nurse else routes.facing(tile, sides)
+        counter = counter_interaction(obs, {"picture": picture, "x": tile[0], "y": tile[1]})
+        approach = counter[0] if counter else tile
+        path = routes.paths.get(approach) if counter else routes.facing(tile, sides)
         goal = _goal(
             key,
             "talk",
             f"talk to the {label}" if label != "sign" else "read the sign",
             path,
-            extra=["up"] if nurse else [],
+            extra=[counter[1]] if counter else [],
             fallback=toward(approach),
             distance=_manhattan(start, tile),
             finish=GameAction.PRESS_A,
             partial=None
             if path is not None
             else (
-                guided_path(obs, routes, [nurse] if nurse else [(tile[0] + DIRS[s][0], tile[1] + DIRS[s][1]) for s in sides])
+                guided_path(obs, routes, [approach] if counter else [(tile[0] + DIRS[s][0], tile[1] + DIRS[s][1]) for s in sides])
                 or routes.closest(approach)
             ),
         )
@@ -527,8 +527,8 @@ def build_goals(
         if any(f"talk_{n.get('slot', 0)}" == key and field_item(n) for n in available_npcs):
             goal.label = f"pick up {label}"
         goal.facts.append(
-            "Nurse: stand at (3,3), face up across the counter and press A"
-            if nurse
+            f"Counter: stand at {approach}, face {counter[1]} across the counter and press A"
+            if counter
             else f"Object at map tile ({tile[0]},{tile[1]}); face it and press A"
         )
         if picture == 75:

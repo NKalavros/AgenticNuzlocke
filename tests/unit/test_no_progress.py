@@ -350,11 +350,11 @@ def test_no_progress_evidence_reaches_the_recovery_prompt():
 
 
 def test_naming_keyboard_is_stated_outright_in_vision_only():
-    """joy_ignore bit 6 held up all run; the agent was never told about it."""
+    """A visible letter grid must identify naming even in vision-only prompts."""
     from nuzlocke.agents.roles import _obs_payload
 
     grid = _obs_payload(
-        PlayerObservation(map_name="Red's House 2F", joy_ignore=0x40), vision_only=True
+        PlayerObservation(map_name="Red's House 2F", joy_ignore=0x40, screen_rows=["A B C D E F G H I"]), vision_only=True
     )
     assert "NAMING KEYBOARD" in grid["hard_signal"]
 

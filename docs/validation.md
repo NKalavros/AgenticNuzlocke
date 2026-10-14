@@ -547,3 +547,51 @@ A second replay, `sandbox-20261014-015455-9ff4`, committed and restarted at the 
 Earlier probes are retained: `sandbox-20261014-015027-4344` stopped at the `ELIXER` label mismatch; `sandbox-20261014-015055-0063` reached the sale quote but rejected an occluded Awakening label. The final fix uses canonical spelling and permits only a unique visible name prefix resolving to the approved item. `sandbox-20261014-015202-2567` verified cleanup alone; the later replay also verified restocking.
 
 Validation: 718 tests passed; Ruff, walkthrough composition, and source budget checks passed at 11,583 core source lines. This is a capacity/transaction diagnostic, not proof of receiving the Flute or completing Koga. The watched run remains paused until explicitly restarted.
+
+
+## Demand-driven bag capacity (2026-10-14)
+
+User correction: a full bag should interrupt only a needed purchase or item acquisition, rather than every progression route. The previous reserve-two-slots policy is superseded. Requests now retain the blocked item/quantity or observed refusal. Existing-stack capacity can satisfy a purchase even with 20 occupied slots. Cleanup releases as soon as that operation fits; filling the bag afterward does not create a new job. Legacy fullness-only state retires unless a sale was already authorized, and the controller drops its stale cleanup planner card and route.
+
+Private transaction replay `sandbox-20261014-021352-f853` restored watched `commit-00022450`, sold only the two Nuggets for ¥10,000, and immediately resumed the blocked ten-Great-Ball purchase for ¥6,000. It finished at 20 slots and ¥61,233, with cleanup inactive and Awakening preserved. All presses passed the final policy and arbiter; no model calls or watched actions were made.
+
+Private retirement replay `sandbox-20261014-021359-cba1` restored the later watched `commit-00022574`, at Tower 3F with 20 occupied slots, ten Great Balls, and a legacy fullness-only job. Observation retired the job, cleared the old planner card and Mart route, and offered no shop actions. The bag stayed full and money stayed ¥61,333. Evidence: `capacity-retirement.json`. The watched run remains paused until explicitly restarted.
+
+Validation: 723 tests passed, including ordinary fullness, blocked purchase persistence, stacking into a full bag, no repeat cleanup after restocking, observed acquisition refusal, and legacy-job retirement. Ruff, walkthrough composition, and budget checks passed at 11,620 core source lines.
+
+
+## False move-learning transaction (2026-10-14)
+
+At Mr. Fuji’s house, the visible dialogue “You must make room for this!” was misclassified as a learning page by a bare `MAKEROOM` match. The unrelated scratch values indicated party slot 5 and move 75; the controller created an unverified Pidgeotto Razor Leaf replacement and kept issuing `wait_60` after dialogue closed. Because that mandatory intervention ran before the escalation ladder, normal recovery never selected actions.
+
+Recognition now requires a visible move name, a named learner trying to learn, a result backed by the observed learned move, or a forget list matching the learner’s current moves. Generic room-making dialogue is ordinary speech. Fuji’s exact capacity refusal is included in the just-in-time capacity-message catalog. Closed overworld learning UI with the original moves unchanged releases the stale transaction after two observations, recording interruption without claiming learning or decline. Ambiguous result/menu waits preserve the transaction but pause after 24 cycles.
+
+Private replay `sandbox-20261014-114526-aa66` restored the watched `commit-00024199`. One normal arbiter-approved wait and a second observation released the phantom transaction with every move unchanged. System 1 then requested `objective tile reached`, returning control to planner routing. The replay made no model calls and did not send watched-run actions. Evidence: `move-learning-idle-replay.json`.
+
+Regression tests cover Fuji’s literal text, room-making prose containing a species name, the shared final policy, capacity refusal recognition, closed-UI release through a checkpoint restore, and bounded ambiguous waiting. All 728 tests passed, with Ruff, walkthrough, and budget checks passing at 11,651 core source lines. The watched run remains paused until explicitly restarted.
+
+
+## Mart clerk handoff (2026-10-14)
+
+The watched `commit-00024240` had a capacity job after Fuji refused the Flute, but inside Lavender Mart it retained a previous plan to leave Fuji’s house. The cleanup beat had no clerk target and no stage change, so it reused that exit plan. Arrival now changes `bag_space_route` to `bag_space_sell`, supplies the clerk target, and clears the stale planner card. Nurse and clerk interaction share a counter-approach contract backed by game data; final facing/A requires a complete observed path to the stand position. Capacity beats also preempt optional encounter searches.
+
+Private replay `sandbox-20261014-131739-ee0a` reached the clerk and selected Elixir, then stopped because the valid offer was ¥0. The failure and screenshot are retained. Ether and Elixir now explicitly permit that normal zero-price sale; Nuggets and other unmarked surplus still require a positive quote. The existing verifier requires exact item removal, the quoted money delta (including zero), and all other inventory entries unchanged.
+
+Final deterministic private replay `sandbox-20261014-132033-d70b`, from the same watched pair, entered the Mart, reached `(2,5)`, faced left across the counter, opened SELL, scrolled to Elixir, and sold its one-unit stack in 25 cycles. Occupied slots fell from 20 to 19, money stayed ¥64,503, and all other inventory was unchanged. Cleanup released as soon as Fuji’s refused item could fit. All actions used the normal arbiter and fresh policy, with no model calls or watched-run mutations. Evidence: `clerk-handoff-replay.json` and `clerk-handoff-summary.json`. This is a transaction replay, not proof of Flute collection or Koga completion.
+
+Validation: all 733 tests passed. Ruff, formatting, walkthrough composition, and source-budget checks passed at 11,669 core source lines.
+
+The watched controller was restarted from its own `commit-00024240` with System 1 Luna, System 2 Sol 6.1, inherited System 4, and `stop_after: koga`. By `commit-00024274` (cycle 24271), the normal live sale had removed Elixir, left 19 slots, and released cleanup. No private state replaced the source checkpoint.
+
+
+## Field bag scrolling and Flute use (2026-10-14)
+
+At watched `commit-00024521` (cycle 24518), Route 12 `(10,61)`, the agent owned the Flute at bag index 19 but stayed on TM34. System 2 explicitly requested DOWN. System 1’s generic menu offered only visible rows; the final bag policy allowed only BACK and replaced DOWN with WAIT. Private diagnostic `sandbox-20261014-133521-6536` reproduced that replacement and unchanged cursor. The instant-text flag also incorrectly forced the fallback card to `naming`.
+
+Actor and final policy now share field bag choices: one-row scrolling uses the visible label and full bag order, independently of selection/use permission. Selection and USE require an exact positive-quantity catalog identity; preparation additionally gates Rare Candy. Game-specific permissions stay in `walkthrough/field_items.json`. Battle capture, preparation, teaching and transaction controllers keep priority. TOSS remains excluded. Naming scene/hints/locks/paging require the visible letter grid, while an actual active menu is classified as MENU. Existing keyboard tests now supply visible grid evidence.
+
+Earlier probe `sandbox-20261014-134104-dd10` reached the Flute but exposed a USE box covering the bag border. The fix verifies the underlying hollow-cursor label directly and uniquely. Probe `sandbox-20261014-134255-2171` successfully played the Flute, then stopped because the diagnostic harness expected an immediate Snorlax battle; that expectation was removed, with the replay scope restricted to verified menu execution. No battle completion or blocker removal is inferred from playing the item. Both probe failures are retained.
+
+Final deterministic replay `sandbox-20261014-134541-67a1`, from the watched pair, completed 19 one-row DOWN presses, selected the Flute, confirmed USE, observed “RED played the POKé FLUTE,” and closed the resulting text. It finished in 23 cycles with zero policy rejections and unchanged full inventory. It made no model calls, sent no watched-run actions, and used the normal final arbiter throughout. Evidence: `flute-menu-replay.json`, `flute-menu-summary.json`, and per-step screenshots. This verifies item scrolling and use; it does not prove a Snorlax encounter or progress to Koga.
+
+Regressions cover the real bag and overlapping USE/INFO/TOSS frame, actor/policy agreement, scroll boundaries, CANCEL, unreliable scratch indices, counterfeit/empty/forbidden items, fresh-policy rejection of an unsafe confirmation, and visible-grid naming. All 747 tests passed. Ruff, formatting, walkthrough composition and source-budget checks passed at 11,732 core source lines. The watched run was left paused and unchanged.

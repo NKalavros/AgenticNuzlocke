@@ -92,7 +92,7 @@ def encounter_objective(loop, obs, beat):
     obs.policy["encounter_phase"] = None
     if obs.in_battle or not obs.flags.get("has_pokedex") or not has_balls(obs):
         return None
-    if beat and beat.id.startswith(("heal", "box_dead", "prepare", "buy_balls")):
+    if beat and beat.id.startswith(("heal", "box_dead", "prepare", "buy_balls", "bag_space")):
         return None
     # Route 5's side lanes cannot enter its central grass against the ledges.
     # Re-enter above them via Cerulean's southern apron. Observed Route 5 grass

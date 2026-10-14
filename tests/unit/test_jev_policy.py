@@ -221,7 +221,7 @@ def test_open_speech_is_not_replanned_just_because_time_passed():
 
 def test_naming_plan_presses_down_once_then_must_look_again():
     plan = _plan(scene=PlanScene.NAMING, plan="Press DOWN once to move the cursor toward END.")
-    obs = _obs(joy_ignore=0x40)
+    obs = _obs(joy_ignore=0x40, screen_rows=["A B C D E F G H I"])
     signals = _signals(text_box=True)
     assert replan_reason(plan, obs, signals, now=NOW, plan_every_s=45) is None
 
@@ -539,7 +539,7 @@ def test_text_box_overrides_a_latched_walk():
 
 def test_naming_low_confidence_waits_instead_of_pressing_b():
     plan = _plan(scene=PlanScene.NAMING)
-    obs = _obs(joy_ignore=0x40)
+    obs = _obs(joy_ignore=0x40, screen_rows=["A B C D E F G H I"])
     turn, planned = _turn(plan, obs, _signals(), [_answers("press_a", confidence=0.1)])
     assert planned == 0
     assert turn.actions == [GameAction.WAIT_60]

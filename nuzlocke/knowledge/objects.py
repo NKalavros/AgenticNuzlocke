@@ -18,8 +18,11 @@ def object_available(obs, npc):
 def object_facts(obs, npc):
     picture = int(npc.get("picture", 0))
     facts = {**npc, "name": PICTURES.get(picture, "person"), "source": "live object table; sprite label"}
-    if nurse_interaction(obs, npc):
-        facts["interaction"] = "Stand at (3,3), face up across the counter, press A and select HEAL or YES."
+    if counter := counter_interaction(obs, npc):
+        (x, y), direction = counter
+        facts["interaction"] = f"Stand at ({x},{y}), face {direction} across the counter and press A."
+        if picture == 41:
+            facts["interaction"] += " Select HEAL or YES."
     elif field_item(npc):
         facts.update(name=npc["item_name"], source="live map item ID", collectible=True, available=object_available(obs, npc))
         facts["interaction"] = "Face the item from any reachable adjacent tile and press A."
@@ -46,6 +49,15 @@ def nurse_interaction(obs, npc):
     from nuzlocke.agents.system3 import HEALING_CENTERS
 
     return (3, 3) if obs.map_id in HEALING_CENTERS and npc.get("picture") == 41 and (npc["x"], npc["y"]) == (3, 1) else None
+
+
+def counter_interaction(obs, npc):
+    if nurse := nurse_interaction(obs, npc):
+        return nurse, "up"
+    clerk = asset_data("walkthrough/inventory_space.json")["clerk_interactions"].get(str(obs.map_id))
+    if clerk and npc.get("picture") == clerk["picture"] and [npc["x"], npc["y"]] == clerk["npc"]:
+        return tuple(clerk["stand"]), clerk["dir"]
+    return None
 
 
 def field_item(npc):

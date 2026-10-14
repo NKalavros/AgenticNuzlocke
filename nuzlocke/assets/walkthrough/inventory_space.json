@@ -1,6 +1,5 @@
 {
   "capacity": 20,
-  "reserve_slots": 2,
   "sale_items": [
     {
       "id": 49,
@@ -56,11 +55,13 @@
     },
     {
       "id": 81,
-      "item": "Ether"
+      "item": "Ether",
+      "allow_zero": true
     },
     {
       "id": 82,
-      "item": "Elixir"
+      "item": "Elixir",
+      "allow_zero": true
     }
   ],
   "marts": {
@@ -70,5 +71,91 @@
     "4": 150,
     "5": 91,
     "7": 156
+  },
+  "capacity_messages": [
+    "CARRYANYMOREITEMS",
+    "NOROOM",
+    "PACKISFULL",
+    "BAGISFULL",
+    "CANTTAKEANYMORE",
+    "DONTHAVEROOM",
+    "NOTENOUGHROOM",
+    "NOMOREROOM",
+    "CANTCARRYANY",
+    "MUSTMAKEROOMFORTHIS"
+  ],
+  "clerk_interactions": {
+    "42": {
+      "picture": 38,
+      "npc": [
+        0,
+        5
+      ],
+      "stand": [
+        2,
+        5
+      ],
+      "dir": "left"
+    },
+    "56": {
+      "picture": 38,
+      "npc": [
+        0,
+        5
+      ],
+      "stand": [
+        2,
+        5
+      ],
+      "dir": "left"
+    },
+    "67": {
+      "picture": 38,
+      "npc": [
+        0,
+        5
+      ],
+      "stand": [
+        2,
+        5
+      ],
+      "dir": "left"
+    },
+    "150": {
+      "picture": 38,
+      "npc": [
+        0,
+        5
+      ],
+      "stand": [
+        2,
+        5
+      ],
+      "dir": "left"
+    },
+    "91": {
+      "picture": 38,
+      "npc": [
+        0,
+        5
+      ],
+      "stand": [
+        2,
+        5
+      ],
+      "dir": "left"
+    },
+    "156": {
+      "picture": 38,
+      "npc": [
+        0,
+        5
+      ],
+      "stand": [
+        2,
+        5
+      ],
+      "dir": "left"
+    }
   }
 }

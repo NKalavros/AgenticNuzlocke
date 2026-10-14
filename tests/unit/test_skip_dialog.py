@@ -156,10 +156,10 @@ def test_skip_dialog_keeps_mashing_while_text_advances(env: NousRedEnvironment):
 
 
 def test_skip_dialog_yields_to_the_naming_keyboard(env: NousRedEnvironment):
-    """Bit 6 is the one joy_ignore bit that held up across a full run."""
+    """A visible naming grid stops paging before B can delete a letter."""
     post = MagicMock()
     env._client.post = post
-    env._joy_ignore = MagicMock(return_value=0x40)  # type: ignore[method-assign]
+    env._map_objects.return_value = {"screen": ["A B C D E F G H I"]}
     _frames(env, ("x", True))
 
     env.execute_skip_dialog()

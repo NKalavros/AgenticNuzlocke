@@ -1,0 +1,259 @@
+[
+  {
+    "id": 5,
+    "item": "Town Map"
+  },
+  {
+    "id": 6,
+    "item": "Bicycle"
+  },
+  {
+    "id": 29,
+    "item": "Escape Rope"
+  },
+  {
+    "id": 71,
+    "item": "Itemfinder"
+  },
+  {
+    "id": 73,
+    "item": "Poke Flute"
+  },
+  {
+    "id": 76,
+    "item": "Old Rod"
+  },
+  {
+    "id": 77,
+    "item": "Good Rod"
+  },
+  {
+    "id": 78,
+    "item": "Super Rod"
+  },
+  {
+    "id": 196,
+    "item": "HM01"
+  },
+  {
+    "id": 197,
+    "item": "HM02"
+  },
+  {
+    "id": 198,
+    "item": "HM03"
+  },
+  {
+    "id": 199,
+    "item": "HM04"
+  },
+  {
+    "id": 200,
+    "item": "HM05"
+  },
+  {
+    "id": 201,
+    "item": "TM01"
+  },
+  {
+    "id": 202,
+    "item": "TM02"
+  },
+  {
+    "id": 203,
+    "item": "TM03"
+  },
+  {
+    "id": 204,
+    "item": "TM04"
+  },
+  {
+    "id": 205,
+    "item": "TM05"
+  },
+  {
+    "id": 206,
+    "item": "TM06"
+  },
+  {
+    "id": 207,
+    "item": "TM07"
+  },
+  {
+    "id": 208,
+    "item": "TM08"
+  },
+  {
+    "id": 209,
+    "item": "TM09"
+  },
+  {
+    "id": 210,
+    "item": "TM10"
+  },
+  {
+    "id": 211,
+    "item": "TM11"
+  },
+  {
+    "id": 212,
+    "item": "TM12"
+  },
+  {
+    "id": 213,
+    "item": "TM13"
+  },
+  {
+    "id": 214,
+    "item": "TM14"
+  },
+  {
+    "id": 215,
+    "item": "TM15"
+  },
+  {
+    "id": 216,
+    "item": "TM16"
+  },
+  {
+    "id": 217,
+    "item": "TM17"
+  },
+  {
+    "id": 218,
+    "item": "TM18"
+  },
+  {
+    "id": 219,
+    "item": "TM19"
+  },
+  {
+    "id": 220,
+    "item": "TM20"
+  },
+  {
+    "id": 221,
+    "item": "TM21"
+  },
+  {
+    "id": 222,
+    "item": "TM22"
+  },
+  {
+    "id": 223,
+    "item": "TM23"
+  },
+  {
+    "id": 224,
+    "item": "TM24"
+  },
+  {
+    "id": 225,
+    "item": "TM25"
+  },
+  {
+    "id": 226,
+    "item": "TM26"
+  },
+  {
+    "id": 227,
+    "item": "TM27"
+  },
+  {
+    "id": 228,
+    "item": "TM28"
+  },
+  {
+    "id": 229,
+    "item": "TM29"
+  },
+  {
+    "id": 230,
+    "item": "TM30"
+  },
+  {
+    "id": 231,
+    "item": "TM31"
+  },
+  {
+    "id": 232,
+    "item": "TM32"
+  },
+  {
+    "id": 233,
+    "item": "TM33"
+  },
+  {
+    "id": 234,
+    "item": "TM34"
+  },
+  {
+    "id": 235,
+    "item": "TM35"
+  },
+  {
+    "id": 236,
+    "item": "TM36"
+  },
+  {
+    "id": 237,
+    "item": "TM37"
+  },
+  {
+    "id": 238,
+    "item": "TM38"
+  },
+  {
+    "id": 239,
+    "item": "TM39"
+  },
+  {
+    "id": 240,
+    "item": "TM40"
+  },
+  {
+    "id": 241,
+    "item": "TM41"
+  },
+  {
+    "id": 242,
+    "item": "TM42"
+  },
+  {
+    "id": 243,
+    "item": "TM43"
+  },
+  {
+    "id": 244,
+    "item": "TM44"
+  },
+  {
+    "id": 245,
+    "item": "TM45"
+  },
+  {
+    "id": 246,
+    "item": "TM46"
+  },
+  {
+    "id": 247,
+    "item": "TM47"
+  },
+  {
+    "id": 248,
+    "item": "TM48"
+  },
+  {
+    "id": 249,
+    "item": "TM49"
+  },
+  {
+    "id": 250,
+    "item": "TM50"
+  },
+  {
+    "id": 40,
+    "item": "Rare Candy",
+    "preparing": true
+  }
+]

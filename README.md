@@ -214,10 +214,19 @@ A learned move does not confirm that the path is open.
 After Erika, the agent obtains the Silph Scope and the Poké Flute.
 The objectives show the guardian battle, Fuji rescue, and Flute collection as separate steps.
 The models receive the full bag list, including items outside the visible menu.
+The agent can move the bag cursor one row at a time to find an item.
+The program checks item use as a separate action.
+It detects the naming screen from the letter grid.
 A required story battle can bypass the rule to escape from ordinary wild battles.
 The program still checks survival, deaths, and the level cap.
-If the bag is full, System 2 makes room before it continues.
-The Mart helper sells approved surplus until two slots are free.
+Move learning requires evidence on the screen.
+An item reward message cannot start move learning.
+The program releases a stale learning request after the menu closes and the moves stay the same.
+If a purchase or item reward cannot fit in the bag, System 2 makes room.
+On arrival, the agent speaks to the clerk across the counter.
+The Mart helper sells approved surplus until that operation can continue.
+It can sell Ether and Elixir for zero because the rules do not permit their use.
+A full bag alone does not stop progress.
 It checks each sale and then resumes purchases and progress.
 It keeps keys, fossils, TMs, HMs, balls, and Rare Candies.
 It then follows the land route to Fuchsia and Koga.

@@ -26,7 +26,7 @@ from nuzlocke.agents.goals import Goal, RoomMap, build_goals, goal_questions, ma
 from nuzlocke.agents.jev_policy import accepts, battle_facts, confidence_note
 from nuzlocke.agents.system3 import forced_battle_choice
 from nuzlocke.environment.joypad import is_naming_lock
-from nuzlocke.environment.screen_text import ScreenText, parse_screen
+from nuzlocke.environment.screen_text import ScreenText, is_naming_screen, parse_screen
 from nuzlocke.knowledge.beats import is_intro_boot
 from nuzlocke.llm.jev import JevAnswers, JevDecisionError
 from nuzlocke.state.models import GameAction, PlayerObservation
@@ -97,8 +97,8 @@ def system1_turn(
 
         if is_pokedex_page(obs.screen_rows):
             return S1Turn([GameAction.PRESS_A, GameAction.WAIT_60], "Pokédex page; A", "page")
-        if any("A B C D E F G H I" in row for row in obs.screen_rows):
-            return None
+    if is_naming_screen(obs.screen_rows):
+        return None
     if obs.in_battle:
         return _battle_turn(
             obs,
@@ -115,7 +115,7 @@ def system1_turn(
     intro = is_intro_boot(obs)
     goal_text = objective_text or (INTRO_GOAL if intro else None)
     if screen.menu_rows and screen.cursor_row is not None:
-        from nuzlocke.agents.inventory import cut_bag_actions, tm_party_choices
+        from nuzlocke.agents.inventory import cut_bag_actions, field_bag_choices, tm_party_choices
 
         if actions := cut_bag_actions(obs):
             return S1Turn(actions, "select HM01 from the full bag to teach CUT", "menu")
@@ -129,6 +129,7 @@ def system1_turn(
             tm_party_choices(obs),
             plan=execution_plan,
             constraints=constraints,
+            sequences=field_bag_choices(obs),
         )
     if text_box:
         special = _special_page(obs.screen_rows)
@@ -438,6 +439,7 @@ def _menu_turn(
     *,
     plan: str | None = None,
     constraints: list[str] | None = None,
+    sequences: dict | None = None,
 ) -> S1Turn:
     rows, cursor = screen.menu_rows, screen.cursor_row
     yes_no = [row.upper() for row in rows] == ["YES", "NO"]
@@ -445,6 +447,8 @@ def _menu_turn(
         # System 3: catches keep their species name.
         return S1Turn(menu_actions("choose_1", cursor), "nickname: NO", "menu", choice="choose_1")
     questions = menu_questions(rows, cursor, yes_no=yes_no, goal=goal_text, can_back=screen.menu_title != "NAME")
+    if sequences is not None:
+        questions["action"]["criteria"] = {key: description for key, (description, _) in sequences.items()}
     if options is not None:
         questions["action"]["criteria"] = {**options, "back": "Choose a different item; this cancels teaching."}
         questions["action"]["instructions"] = (
@@ -461,7 +465,7 @@ def _menu_turn(
     assert read is not None
     label = questions["action"]["criteria"].get(read.action, read.action)
     return S1Turn(
-        menu_actions(read.action, cursor),
+        sequences[read.action][1] if sequences is not None else menu_actions(read.action, cursor),
         f"menu: {label}{confidence_note(read)}",
         "menu",
         choice=read.action,

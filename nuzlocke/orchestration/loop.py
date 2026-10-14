@@ -41,10 +41,9 @@ from nuzlocke.agents.system1 import S1Turn, system1_turn
 from nuzlocke.agents.system3 import constraints as nuzlocke_constraints
 from nuzlocke.agents.system3 import current_beat, objective_window
 from nuzlocke.config import ensure_relay_routing, load_agents_config, load_project_env, load_rules, load_run_config, project_root
-from nuzlocke.environment.joypad import is_naming_lock
 from nuzlocke.environment.nous_red import NousRedEnvironment
 from nuzlocke.environment.screen import digests_from_path, prompt_box_open, text_box_open
-from nuzlocke.environment.screen_text import find_boxes, parse_screen
+from nuzlocke.environment.screen_text import find_boxes, is_naming_screen, parse_screen
 from nuzlocke.knowledge.walkthrough import compose, excerpt_for_context, progression_hint, skill_dir
 from nuzlocke.llm.factory import create_jev, create_provider
 from nuzlocke.llm.settings import configured_roles, preflight, provider_identity, resolve_agents_config
@@ -383,7 +382,11 @@ class RunLoop:
             self.lead_rotation.observe(obs, self.store.append)
         if getattr(self, "shop", None) is not None:
             try:
+                active = self.shop.space.get("active")
                 self.shop.observe(obs, self.store.append)
+                if active and not self.shop.space.get("active"):
+                    self.plan = None
+                    self.navigator.route = {}
             except RuntimeError as err:
                 self.shop.error = str(err)
         if self._preparing_target and not obs.in_battle:
@@ -698,7 +701,7 @@ class RunLoop:
             # Prompts and the step picker see the grid only while this map's
             # grid has matched real movement. The event log keeps the raw read.
             obs = self.object_trust.view(self.grid_trust.view(raw_obs))
-            locked = obs.in_battle or is_naming_lock(obs.joy_ignore)
+            locked = obs.in_battle or is_naming_screen(obs.screen_rows)
             speech = not locked and text_box_open(obs.screenshot_path)
             controllable = not locked and not speech
             console.print("[dim]speech on screen[/dim]" if speech else f"[dim]map={obs.map_name} battle={obs.in_battle}[/dim]")
@@ -842,7 +845,7 @@ class RunLoop:
                 after_fp,
                 executed=bool(executed),
                 actions=executed or None,
-                allow_immobile=controllable and not after.in_battle and not is_naming_lock(after.joy_ignore) and not after_box,
+                allow_immobile=controllable and not after.in_battle and not is_naming_screen(after.screen_rows) and not after_box,
             )
             if result.walks:
                 grid_disagreed = self.grid_trust.record_path(raw_obs, result.walks)

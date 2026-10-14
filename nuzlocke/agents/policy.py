@@ -123,7 +123,13 @@ def decision(obs: PlayerObservation, *, first_encounter: bool = False) -> Policy
         # A conditional planner strategy may leave no useful move despite remaining PP.
         sequences["back"] = [GameAction.PRESS_B]
         return PolicyDecision(legal_sequences=sequences)
-    from nuzlocke.agents.inventory import candy_bag_actions, capture_ball_actions, cut_bag_actions, tm_party_choices
+    from nuzlocke.agents.inventory import (
+        candy_bag_actions,
+        capture_ball_actions,
+        cut_bag_actions,
+        field_bag_choices,
+        tm_party_choices,
+    )
 
     capture_actions = capture_ball_actions(obs, first_encounter)
     if capture_actions is not None:
@@ -139,6 +145,8 @@ def decision(obs: PlayerObservation, *, first_encounter: bool = False) -> Policy
     bag_actions = candy_bag_actions(obs)
     if bag_actions is not None:
         return PolicyDecision(legal_sequences={"candy_bag": bag_actions}, required="candy_bag")
+    if choices := field_bag_choices(obs):
+        return PolicyDecision(legal_sequences={key: actions for key, (_, actions) in choices.items()})
     menu = parse_screen(obs.screen_rows)
     if menu.menu_rows and menu.cursor_row is not None:
         rows = menu.menu_rows

@@ -189,3 +189,40 @@ def test_team_plan_keeps_future_replacement_available_for_its_planned_move():
     learner.turn(state, decide=choose)
     assert "replace_2" not in offered[0]  # Harden is reserved for the planned Sleep Powder.
     assert "replace_1" in offered[0]
+
+
+def test_fuji_capacity_message_cannot_open_a_learning_transaction():
+    state = obs(page("You must make", "room for this!"))
+    assert learning_phase(state) is None
+    learner = MoveLearner()
+    assert learner.turn(state)[0] == []
+    assert learner.pending is None
+    assert decision(state).required != "learn_move"
+
+
+def test_generic_room_message_naming_a_pokemon_still_is_not_learning():
+    assert learning_phase(obs(page("Make room for", "BUTTERFREE!"))) is None
+
+
+def test_closed_unverified_transaction_releases_after_observed_unchanged_moves():
+    learner = MoveLearner()
+    learner.turn(obs())
+    events = []
+    closed = obs([" " * 20] * 18, in_battle=False, cutscene=False)
+    assert learner.turn(closed, record=lambda k, d: events.append(k))[0] == [A.WAIT_60]
+    resumed = MoveLearner()
+    resumed.restore(json.loads(json.dumps(learner.snapshot())))
+    assert resumed.turn(closed, record=lambda k, d: events.append(k))[0] == []
+    assert resumed.pending is None and "move_learning_interrupted" in events
+    assert "move_learned" not in events and "move_declined" not in events
+
+
+def test_unresolved_learning_waits_are_bounded_without_dropping_ambiguous_state():
+    learner = MoveLearner()
+    learner.turn(obs())
+    animated = obs([" " * 20] * 18, in_battle=True)
+    for _ in range(23):
+        assert learner.turn(animated)[0] == [A.WAIT_60]
+    with pytest.raises(RuntimeError, match="unresolved after 24"):
+        learner.turn(animated)
+    assert learner.pending is not None

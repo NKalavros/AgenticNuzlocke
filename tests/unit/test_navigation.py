@@ -342,3 +342,27 @@ def test_exit_unknown_approach_is_partial_and_adjacent_probe_is_one_step():
     assert goal.actions == [A.WALK_RIGHT] and not goal.complete
     grid[4, 3] = False
     assert not _edge_goal(obs, "right", Routes((3, 3), grid, size=(7, 7))).actions
+
+
+def test_clerk_route_uses_verified_counter_approach_and_facing():
+    from nuzlocke.agents.goals import build_goals
+    from nuzlocke.knowledge.objects import object_facts
+
+    obs = PlayerObservation(
+        map_id=150,
+        map_name="Lavender Mart",
+        x=3,
+        y=7,
+        map_size={"w": 8, "h": 8},
+        npcs=[{"slot": 1, "picture": 38, "x": 0, "y": 5, "on_screen": True}],
+    )
+    room = RoomMap()
+    room.known[150] = {(x, y): x >= 2 and y >= 1 for x in range(8) for y in range(8)}
+    goal = next(g for g in build_goals(obs, room, objective={"kind": "npc", "name": "clerk"}) if g.objective)
+    assert goal.path[-1] == "left" and goal.actions[-1] == A.PRESS_A
+    assert "Counter" in " ".join(goal.facts)
+    assert "(2,5)" in object_facts(obs, obs.npcs[0])["interaction"]
+    # No observed path to the required stand: no final interaction is legal.
+    room.known[150][2, 5] = False
+    goal = next(g for g in build_goals(obs, room, objective={"kind": "npc", "name": "clerk"}) if g.objective)
+    assert A.PRESS_A not in goal.actions

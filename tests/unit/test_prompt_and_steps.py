@@ -250,7 +250,7 @@ def test_a_text_box_under_a_walking_path_is_paged_not_walked():
 
 def test_naming_steps_type_then_finish():
     plan = _plan(scene=PlanScene.NAMING, steps=[GameAction.PRESS_A, GameAction.PRESS_START])
-    obs = _obs(joy_ignore=0x40)
+    obs = _obs(joy_ignore=0x40, screen_rows=["A B C D E F G H I"])
     first = _turn(plan, _signals(text_box=True), obs=obs)
     second = _turn(first.plan, _signals(text_box=True), obs=obs)
     assert first.actions[0] == GameAction.PRESS_A

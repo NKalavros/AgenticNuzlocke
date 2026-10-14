@@ -20,10 +20,10 @@ import httpx
 
 from nuzlocke.environment import screen
 from nuzlocke.environment.base import ActionResult
-from nuzlocke.environment.joypad import agent_can_act, is_naming_lock
+from nuzlocke.environment.joypad import agent_can_act
 from nuzlocke.environment.macros import drop_naming_confirm_if_walking, expand_actions
 from nuzlocke.environment.maps import map_name
-from nuzlocke.environment.screen_text import parse_screen
+from nuzlocke.environment.screen_text import is_naming_screen, parse_screen
 from nuzlocke.environment.terrain import terrain_tiles
 from nuzlocke.state.models import ControlState, GameAction, PlayerObservation
 
@@ -409,13 +409,6 @@ class NousRedEnvironment:
     def list_checkpoints(self) -> list[dict[str, Any]]:
         return list(self._get("/saves").json().get("saves") or [])
 
-    def _joy_ignore(self) -> int:
-        try:
-            dialog = self._get("/state").json().get("dialog") or {}
-            return int(dialog.get("joy_ignore") or 0)
-        except (httpx.HTTPError, TypeError, ValueError):
-            return 0
-
     def _live_frame(self, name: str) -> tuple[bytes, str] | None:
         """The live frame and the file it was saved to, or None when it cannot be read."""
         path = self.run_dir / "screenshots" / f"{name}.png"
@@ -456,9 +449,11 @@ class NousRedEnvironment:
         for _ in range(max_rounds):
             if getattr(self, "terminal", False):
                 break
-            if is_naming_lock(self._joy_ignore()) or self._prompt_up():
+            if self._prompt_up():
                 break
             objects = self._map_objects() or {}
+            if is_naming_screen(objects.get("screen", [])):
+                break
             from nuzlocke.environment.evolution import evolution_phase
 
             # A battle's final text can start evolution inside this macro. Never hold B
@@ -542,7 +537,7 @@ class NousRedEnvironment:
     def execute(self, actions: list[GameAction]) -> ActionResult:
         before = self.snapshot() if getattr(self, "on_transition", None) else self.peek_state()
         rows = before.screen_rows or (self._map_objects() or {}).get("screen", [])
-        naming = is_naming_lock(before.joy_ignore) and any("A B C D E F G H I" in row for row in rows)
+        naming = is_naming_screen(rows)
         # Naming and an open menu move a cursor: an unchanged map tile there is not a failed walk.
         cursor = naming or self._frame_blocks_walk() or self._menu_cursor_open()
         if naming:
@@ -560,7 +555,7 @@ class NousRedEnvironment:
             if action in (GameAction.SKIP_DIALOG, GameAction.A_UNTIL_DIALOG_END):
                 after = self.execute_skip_dialog()
                 stopped = _transition(before, after) or "skip_dialog"
-                if is_naming_lock(after.joy_ignore):
+                if is_naming_screen(after.screen_rows):
                     stopped = "naming_screen"
                 return ActionResult(executed=executed, stopped_early_because=stopped, observation=after, walks=walks)
             opcodes = [action.value]

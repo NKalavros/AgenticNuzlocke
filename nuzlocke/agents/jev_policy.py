@@ -13,7 +13,7 @@ from itertools import takewhile
 from typing import Any
 
 from nuzlocke.assets import data
-from nuzlocke.environment.joypad import is_naming_lock
+from nuzlocke.environment.screen_text import is_naming_screen, parse_screen
 from nuzlocke.llm.jev import JevAnswers, JevDecisionError
 from nuzlocke.referee.type_chart import matchup_hint, types_for_species
 from nuzlocke.state.models import (
@@ -66,10 +66,12 @@ class FastTurn:
 
 def classify_scene(obs: PlayerObservation, plan: PlanCard | None, signals: FrameSignals) -> str:
     """Menu to show Jev. Hard signals win; a held dialog plan survives text animation."""
-    if is_naming_lock(obs.joy_ignore):
+    if is_naming_screen(obs.screen_rows):
         return PlanScene.NAMING.value
     if obs.in_battle:
         return PlanScene.BATTLE.value
+    if parse_screen(obs.screen_rows).cursor_row is not None:
+        return PlanScene.MENU.value
     if plan is not None:
         same_world = signals.world_digest == plan.world_digest
         if plan.scene in _HELD_SCENES and signals.text_box:
@@ -89,7 +91,7 @@ def classify_scene(obs: PlayerObservation, plan: PlanCard | None, signals: Frame
 
 def scene_changed(plan: PlanCard, obs: PlayerObservation, signals: FrameSignals) -> bool:
     """Naming, battle, or walking out of a menu, dialog, or title plan."""
-    if is_naming_lock(obs.joy_ignore) != (plan.scene == PlanScene.NAMING):
+    if is_naming_screen(obs.screen_rows) != (plan.scene == PlanScene.NAMING):
         return True
     if bool(obs.in_battle) != (plan.scene == PlanScene.BATTLE):
         return True
@@ -137,17 +139,19 @@ def pages_without_a_look(plan: PlanCard, obs: PlayerObservation, signals: FrameS
     is paged too: the FIGHT menu and the move list do not read as a text box,
     so the mash stops at them.
     """
-    if not signals.text_box or signals.prompt_box or is_naming_lock(obs.joy_ignore):
+    if not signals.text_box or signals.prompt_box or is_naming_screen(obs.screen_rows):
         return False
     return plan.scene != PlanScene.MENU or bool(plan.prompt_digest)
 
 
 def reconcile_plan(plan: PlanCard, obs: PlayerObservation) -> PlanCard:
-    """Naming lock and battle are mechanical. Don't spend another vision call to notice them."""
-    if is_naming_lock(obs.joy_ignore):
+    """Recognize the visible naming grid, battle, and active menus without another vision call."""
+    if is_naming_screen(obs.screen_rows):
         plan.scene = PlanScene.NAMING
     elif obs.in_battle:
         plan.scene = PlanScene.BATTLE
+    elif parse_screen(obs.screen_rows).cursor_row is not None:
+        plan.scene = PlanScene.MENU
     return plan
 
 
@@ -225,7 +229,7 @@ def build_jev_state(
     **_planner_only: Any,
 ) -> dict[str, Any]:
     """Only what this scene's button choice needs. Memory and bookkeeping stay with the planner."""
-    naming = is_naming_lock(obs.joy_ignore)
+    naming = is_naming_screen(obs.screen_rows)
     state: dict[str, Any] = {
         "plan": {"scene": plan.scene.value, "see": plan.see, "plan": plan.plan, "do_not": list(plan.do_not)},
         "scene": scene,
@@ -247,7 +251,7 @@ def build_jev_state(
     state.update({key: value for key, value in optional.items() if value})
     if naming:
         state["hard_signal"] = (
-            "Instant-text mode: the NAMING KEYBOARD or a Pokédex page. On the "
+            "The visible letter grid is the NAMING KEYBOARD. On the "
             "keyboard walk_* moves the letter cursor and press_a types; on a "
             "Pokédex page press_a turns the page. Never skip_dialog."
         )

@@ -1,6 +1,9 @@
 """Select a known bag item even when its row is below the visible menu."""
 
+import re
+
 from nuzlocke.agents.shop import normalize
+from nuzlocke.assets import data
 from nuzlocke.environment.screen_text import parse_screen
 from nuzlocke.state.models import GameAction as A
 
@@ -43,7 +46,7 @@ def cut_bag_actions(obs):
     return _bag_actions(obs, "HM01")
 
 
-def _bag_actions(obs, wanted, *, missing_action=A.WAIT_60):
+def _bag_menu(obs):
     screen = parse_screen(obs.screen_rows)
     rows = screen.menu_rows
     if not rows or screen.cursor_row is None or any("¥" in row for row in rows):
@@ -53,12 +56,68 @@ def _bag_actions(obs, wanted, *, missing_action=A.WAIT_60):
     # Distinguish the inventory from START, USE/TOSS, and Pokémon-selection menus.
     if not all(label in bag or label == "CANCEL" for label in labels):
         return None
+    if len(set(bag)) != len(bag):
+        return None  # A repeated label cannot establish an absolute cursor.
+    return screen, bag, labels
+
+
+def _bag_actions(obs, wanted, *, missing_action=A.WAIT_60):
+    menu = _bag_menu(obs)
+    if menu is None:
+        return None
+    screen, bag, labels = menu
     target = next((i for i, item in enumerate(obs.bag) if bag[i] == wanted and item.get("quantity", 0) > 0), None)
     if target is None:
         return [missing_action]  # Missing candy pauses preparation; an unauthorized battle bag closes.
     selected = labels[screen.cursor_row]
     current = len(bag) if selected == "CANCEL" else bag.index(selected)
     return [A.PRESS_A if current == target else A.WALK_DOWN if current < target else A.WALK_UP]
+
+
+def _field_allowed(obs, label):
+    matches = [item for item in obs.bag if normalize(item.get("item", "")) == label]
+    return len(matches) == 1 and any(
+        item.get("quantity", 0) > 0
+        and normalize(item.get("item", "")) == label == normalize(entry["item"])
+        and item.get("id") == entry["id"]
+        and (not entry.get("preparing") or obs.policy.get("preparing"))
+        for item in matches
+        for entry in data("walkthrough/field_items.json")
+    )
+
+
+def field_bag_choices(obs):
+    """Shared field inventory choices: scrolling is independent of permission to use an item."""
+    if obs.in_battle:
+        return None
+    menu = _bag_menu(obs)
+    choices = {"back": ("Press B to close the bag", [A.PRESS_B])}
+    if menu is None:
+        screen = parse_screen(obs.screen_rows)
+        if "TOSS" not in screen.menu_rows:
+            return None
+        labels = [normalize(label.split("×")[0]) for label in re.findall(r"▷([^│]+)", " ".join(obs.screen_rows))]
+        selected = [label for label in labels if any(normalize(i.get("item", "")) == label for i in obs.bag)]
+        if len(selected) == 1 and _field_allowed(obs, selected[0]) and "USE" in screen.menu_rows:
+            from nuzlocke.agents.system1 import menu_actions
+
+            slot = screen.menu_rows.index("USE")
+            choices[f"choose_{slot}"] = ("Use the verified field item", menu_actions(f"choose_{slot}", screen.cursor_row))
+        return choices  # TOSS and unverifiable item use remain unavailable.
+    screen, bag, labels = menu
+    current = len(bag) if labels[screen.cursor_row] == "CANCEL" else bag.index(labels[screen.cursor_row])
+    for name, action, names in (("up", A.WALK_UP, bag[:current]), ("down", A.WALK_DOWN, bag[current + 1 :] + ["CANCEL"])):
+        if names and not (name == "down" and current == len(bag)):
+            choices[f"scroll_{name}"] = (
+                f"Scroll {name} one row without using an item; {name}ward items: {', '.join(names)}",
+                [action],
+            )
+    for i, label in enumerate(labels):
+        if label == "CANCEL":
+            choices[f"choose_{i}"] = ("Close the bag", [A.PRESS_B])
+        elif _field_allowed(obs, label):
+            choices[f"choose_{i}"] = (f"Select {screen.menu_rows[i]}", _bag_actions(obs, label))
+    return choices
 
 
 def tm_party_choices(obs):

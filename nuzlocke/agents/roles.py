@@ -13,8 +13,8 @@ from nuzlocke.agents.locomotion import map_context
 from nuzlocke.agents.navigation import parse_route_plan
 from nuzlocke.assets import data
 from nuzlocke.assets import data as asset_data
-from nuzlocke.environment.joypad import is_naming_lock
 from nuzlocke.environment.macros import expand_actions
+from nuzlocke.environment.screen_text import is_naming_screen
 from nuzlocke.knowledge.beats import current_beat, is_intro_boot
 from nuzlocke.llm.base import LLMProvider
 from nuzlocke.orchestration.stuck import (
@@ -65,9 +65,9 @@ def _obs_payload(obs: PlayerObservation, *, vision_only: bool) -> dict[str, Any]
     if grid:
         payload["map"] = grid
     # Bit 5 (dialog) stays out: it reads 0 through real dialog on Red Star.
-    if is_naming_lock(obs.joy_ignore):
+    if is_naming_screen(obs.screen_rows):
         payload["hard_signal"] = (
-            "RAM shows instant-text mode: the NAMING KEYBOARD (letter grid) or a Pokédex page. "
+            "The visible letter grid is the NAMING KEYBOARD. "
             "On the letter grid, walk_* moves the letter cursor, press_a types the highlighted "
             "letter and press_start finishes the name — never skip_dialog there. On a Pokédex "
             "page, press_a turns the page."
@@ -222,7 +222,7 @@ def decide_director(
         )
 
     next_target = _NEXT_GYM_TARGET[min(len(obs.badges), len(_NEXT_GYM_TARGET) - 1)]
-    beat = None if is_naming_lock(obs.joy_ignore) else current_beat(obs)
+    beat = None if is_naming_screen(obs.screen_rows) else current_beat(obs)
     if beat is not None:
         objective = beat.text
     elif vision_only:
